@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ event.name }} - Race Control & Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
+
+  <!-- Admin Header -->
+  <header class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50">
+    <div class="flex items-center space-x-4">
+      <a href="/leaderboard" class="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center text-slate-300 font-bold transition">
+        <i class="fa-solid fa-arrow-left"></i>
+      </a>
+      <div>
+        <h1 class="text-xl font-black tracking-tight text-white flex items-center gap-2">
+          Race Control Center
+          <span class="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded font-mono">Admin</span>
+        </h1>
+        <p class="text-xs text-slate-400">{{ event.name }}</p>
+      </div>
+    </div>
+
+    <!-- Quick Navigation -->
+    <div class="flex items-center space-x-3">
+      <a href="/leaderboard" target="_blank" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 shadow-lg shadow-emerald-600/20">
+        <i class="fa-solid fa-display"></i> Open Big Screen Board
+      </a>
+    </div>
+  </header>
+
+  <!-- Tag Sniffer Notification -->
+  <div id="tagSnifferNotice" class="hidden bg-indigo-950/80 border-b border-indigo-500/40 px-6 py-3 flex items-center justify-between transition-all">
+    <div class="flex items-center space-x-3">
+      <div class="w-3 h-3 rounded-full bg-indigo-400 animate-ping"></div>
+      <div>
+        <span class="text-xs uppercase font-mono text-indigo-300 font-bold">RFID Tag Scanned: </span>
+        <span id="detectedEpc" class="font-mono font-bold text-white text-sm"></span>
+        <span id="detectedRssi" class="text-xs text-indigo-300 ml-2"></span>
+      </div>
+    </div>
+    <button onclick="useDetectedTag()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3 py-1.5 rounded transition">
+      <i class="fa-solid fa-paste mr-1"></i> Auto-fill into Registration
+    </button>
+  </div>
+
+  <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+
+    <!-- Race Timer & Event Actions Card -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      
+      <!-- Event Control -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
+        <div>
+          <h2 class="text-base font-bold text-slate-200 mb-1 flex items-center gap-2">
+            <i class="fa-solid fa-flag text-emerald-400"></i> Event Gun & Timer
+          </h2>
+          <p class="text-xs text-slate-400 mb-4">Start or pause the race clock.</p>
+        </div>
+
+        <div class="flex flex-col items-center justify-center py-4 bg-slate-950/50 rounded-xl border border-slate-800/80 mb-4">
+          <div class="text-xs uppercase font-semibold text-slate-400">Elapsed Time</div>
+          <div id="adminRaceClock" class="text-4xl font-mono font-black text-emerald-400 tabular-nums">00:00:00</div>
+          <div id="adminStatusText" class="text-xs font-bold mt-1 text-slate-400">{% if event.is_active %}RUNNING{% else %}STOPPED{% endif %}</div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-2">
+          <button onclick="startRace()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-3 rounded-xl text-sm transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20">
+            <i class="fa-solid fa-play"></i> Start
+          </button>
+          <button onclick="pauseRace()" class="bg-amber-600 hover:bg-amber-500 text-white font-bold py-2.5 px-3 rounded-xl text-sm transition flex items-center justify-center gap-1.5">
+            <i class="fa-solid fa-pause"></i> Pause
+          </button>
+          <button onclick="resetRace()" class="bg-rose-900/60 hover:bg-rose-800 border border-rose-700/50 text-rose-200 font-bold py-2.5 px-3 rounded-xl text-sm transition flex items-center justify-center gap-1.5">
+            <i class="fa-solid fa-rotate-left"></i> Reset
+          </button>
+        </div>
+      </div>
+
+      <!-- Debounce & Race Settings -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
+        <div>
+          <h2 class="text-base font-bold text-slate-200 mb-1 flex items-center gap-2">
+            <i class="fa-solid fa-sliders text-teal-400"></i> Debounce & Rules
+          </h2>
+          <p class="text-xs text-slate-400 mb-4">Prevent double-counts from lingering runners.</p>
+        </div>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Event Name</label>
+            <input type="text" id="settingName" value="{{ event.name }}" 
+                   onkeydown="if(event.key === 'Enter'){ event.preventDefault(); saveSettings(); }"
+                   class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+          </div>
+
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="block text-xs font-medium text-slate-300">Min Lap Threshold (Debounce)</label>
+              <span id="minLapVal" class="text-xs font-mono font-bold text-emerald-400">{{ event.min_lap_seconds }}s</span>
+            </div>
+            <input type="range" id="settingMinLap" min="10" max="120" step="5" value="{{ event.min_lap_seconds }}" 
+                   oninput="document.getElementById('minLapVal').innerText = this.value + 's'" class="w-full accent-emerald-500 cursor-pointer">
+            <p class="text-[11px] text-slate-500 mt-1">Reads within this interval after previous crossing will be discarded.</p>
+          </div>
+
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="block text-xs font-medium text-slate-300">Auto-Break Threshold (Rest)</label>
+              <span id="maxRestVal" class="text-xs font-mono font-bold text-amber-400">{{ (event.max_lap_rest_seconds / 60) | int }} mins</span>
+            </div>
+            <input type="range" id="settingMaxRest" min="60" max="1800" step="60" value="{{ event.max_lap_rest_seconds }}" 
+                   oninput="document.getElementById('maxRestVal').innerText = Math.round(this.value / 60) + ' mins'" class="w-full accent-amber-500 cursor-pointer">
+            <p class="text-[11px] text-slate-500 mt-1">Crossings after this interval count as rest resume, not a slow lap.</p>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button type="button" onclick="saveSettings()" id="saveSettingsBtn" class="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold py-2 rounded-lg text-xs transition flex items-center justify-center gap-1.5">
+              <i class="fa-solid fa-floppy-disk"></i> Save Settings
+            </button>
+            <span id="saveSettingsToast" class="text-xs text-emerald-400 font-semibold hidden"><i class="fa-solid fa-check"></i> Saved!</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Simulator Controls (Mock Mode) -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
+        <div>
+          <h2 class="text-base font-bold text-slate-200 mb-1 flex items-center gap-2">
+            <i class="fa-solid fa-vial text-purple-400"></i> RFID Simulator
+            {% if is_mock %}<span class="text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded">Active</span>{% endif %}
+          </h2>
+          <p class="text-xs text-slate-400 mb-4">Simulate runner mat crossings.</p>
+        </div>
+
+        <div class="space-y-3">
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="block text-xs font-medium text-slate-300">Simulation Speed</label>
+              <span id="activeSpeedLabel" class="text-xs font-mono font-bold text-purple-400">1x Real</span>
+            </div>
+            <div class="grid grid-cols-4 gap-1.5" id="speedBtnGroup">
+              <button id="speedBtn-1" onclick="setSimSpeed(1.0)" class="speed-btn bg-purple-600 border border-purple-400 text-white font-bold py-1.5 rounded text-xs font-mono shadow-md shadow-purple-600/30">1x Real</button>
+              <button id="speedBtn-2" onclick="setSimSpeed(2.0)" class="speed-btn bg-slate-800 hover:bg-slate-700 py-1.5 rounded text-xs font-mono text-slate-300 border border-transparent">2x</button>
+              <button id="speedBtn-4" onclick="setSimSpeed(4.0)" class="speed-btn bg-slate-800 hover:bg-slate-700 py-1.5 rounded text-xs font-mono text-slate-300 border border-transparent">4x Fast</button>
+              <button id="speedBtn-8" onclick="setSimSpeed(8.0)" class="speed-btn bg-slate-800 hover:bg-slate-700 py-1.5 rounded text-xs font-mono text-slate-300 border border-transparent">8x Max</button>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Trigger Instant Crossing</label>
+            <div class="flex gap-2">
+              <select id="quickSimBib" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white flex-1">
+  {%- set lb_by_bib = {} %}
+              {%- for entry in leaderboard %}{%- if lb_by_bib.update({entry.bib_number: entry}) %}{%- endif %}{%- endfor %}
+              {% for p in participants %}
+                <option value="{{ p.bib_number }}">#{{ p.bib_number }} - {{ p.name }}</option>
+                {% endfor %}
+              </select>
+              <button id="triggerCrossingBtn" onclick="triggerCrossingNow()" class="bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 shadow-md shadow-purple-600/20">
+                <i class="fa-solid fa-bolt"></i> Simulate
+              </button>
+            </div>
+            <div id="simFeedback" class="text-[11px] text-purple-300 mt-1.5 font-medium hidden"></div>
+          </div>
+        </div>
+
+        <div class="text-[11px] text-slate-500 mt-2">
+          Hardware: {% if is_mock %}Mock Driver{% else %}Serial UART ({{ event.serial_port }}){% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Runner Management & Live Tag Sniffer Section -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- Add Runner Form -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+        <h2 class="text-base font-bold text-slate-200 mb-1 flex items-center gap-2">
+          <i class="fa-solid fa-user-plus text-emerald-400"></i> Register Runner / Bib
+        </h2>
+        <p class="text-xs text-slate-400 mb-4">Pair an RFID tag EPC to a runner bib.</p>
+
+        <form id="addRunnerForm" onsubmit="registerRunner(event)" class="space-y-4">
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Bib Number *</label>
+            <input type="number" id="regBib" required placeholder="e.g. 106" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono">
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Runner Name *</label>
+            <input type="text" id="regName" required placeholder="e.g. Jordan Smith" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+          </div>
+
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="block text-xs font-medium text-slate-300">RFID Tag EPC (Hex) *</label>
+              <span class="text-[10px] text-indigo-400"><i class="fa-solid fa-rss"></i> Wave tag to detect</span>
+            </div>
+            <input type="text" id="regEpc" required placeholder="e.g. E28011700000020101010006" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-emerald-500 uppercase">
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Notes / Target (Optional)</label>
+            <input type="text" id="regNotes" placeholder="e.g. 10k pace group" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+          </div>
+
+          <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-sm transition shadow-lg shadow-emerald-600/20">
+            Register Runner
+          </button>
+        </form>
+      </div>
+
+      <!-- Registered Runners List -->
+      <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+        <div class="flex justify-between items-center mb-4">
+          <div>
+            <h2 class="text-base font-bold text-slate-200 flex items-center gap-2">
+              <i class="fa-solid fa-users text-teal-400"></i> Registered Participants ({{ participants | length }})
+            </h2>
+            <p class="text-xs text-slate-400">Manage bib assignments and manual lap adjustments.</p>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto max-h-[380px] overflow-y-auto">
+          <table class="w-full text-left border-collapse">
+            <thead class="sticky top-0 bg-slate-950/90 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+              <tr>
+                <th class="py-2.5 px-4 w-20">Bib #</th>
+                <th class="py-2.5 px-4">Name</th>
+                <th class="py-2.5 px-4">Start Time</th>
+                <th class="py-2.5 px-4 text-center">Laps</th>
+                <th class="py-2.5 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="participantsTableBody" class="divide-y divide-slate-800 text-sm">
+{%- set lb_by_bib = {} %}
+              {%- for entry in leaderboard %}{%- if lb_by_bib.update({entry.bib_number: entry}) %}{%- endif %}{%- endfor %}
+              {% for p in participants %}
+              <tr class="hover:bg-slate-800/40">
+                <td class="py-3 px-4 font-mono font-bold text-emerald-400">#{{ p.bib_number }}</td>
+                <td class="py-3 px-4 font-medium text-white">{{ p.name }}</td>
+                <td class="py-3 px-4 text-xs font-mono">
+                  {% if p.start_time %}
+                    <span class="text-slate-300" id="start-time-{{ p.bib_number }}">
+                      <script>
+                        document.write(new Date({{ p.start_time }} * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+                      </script>
+                    </span>
+                  {% else %}
+                    <span class="text-slate-500 italic">Not started</span>
+                  {% endif %}
+                </td>
+                <td class="py-3 px-4 text-center font-bold text-slate-200">
+                  <a href="/runner/{{ p.bib_number }}" class="hover:text-emerald-400 underline decoration-dotted">View</a>
+                </td>
+                <td class="py-3 px-4 text-right space-x-1.5">
+                  {% if not p.start_time %}
+                  <button onclick="startRunner({{ p.bib_number }})" title="Manually start runner now" class="text-xs bg-emerald-950/50 hover:bg-emerald-900 border border-emerald-700/50 text-emerald-300 px-2 py-1 rounded">
+                    Start
+                  </button>
+                  {% endif %}
+                  <button onclick="promptManualLap({{ p.bib_number }})" title="Add manual lap" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-2 py-1 rounded">
+                    + Lap
+                  </button>
+                  {% if p.start_time %}
+                  <button onclick="resetRunnerStart({{ p.bib_number }})" title="Reset runner start & laps" class="text-xs bg-amber-950/40 hover:bg-amber-900 border border-amber-800/40 text-amber-300 px-2 py-1 rounded">
+                    Reset
+                  </button>
+                  {% endif %}
+                  {%- set rstatus = lb_by_bib.get(p.bib_number, {}).get('status', 'not_started') %}
+                  {% if rstatus == 'on_break' %}
+                  <button onclick="endBreak({{ p.bib_number }})" title="Resume runner from break" class="text-xs bg-emerald-950/50 hover:bg-emerald-900 border border-emerald-700/50 text-emerald-300 px-2 py-1 rounded">
+                    ☕ Resume
+                  </button>
+                  {% elif rstatus == 'active' %}
+                  <button onclick="startBreak({{ p.bib_number }})" title="Put runner on break" class="text-xs bg-amber-950/50 hover:bg-amber-900 border border-amber-700/50 text-amber-300 px-2 py-1 rounded">
+                    ☕ Break
+                  </button>
+                  {% endif %}
+                  <button onclick="deleteParticipant({{ p.bib_number }})" title="Remove runner" class="text-xs bg-rose-950/40 hover:bg-rose-900 text-rose-300 border border-rose-800/40 px-2 py-1 rounded">
+                    <i class="fa-solid fa-trash"></i>
+                  </button>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <script>
+    let latestDetectedEpc = "";
+    let eventState = {{ event | tojson | safe }};
+
+    function formatClock(seconds) {
+      if (!seconds || seconds < 0) return "00:00:00";
+      const hrs = Math.floor(seconds / 3600);
+      const mins = Math.floor((seconds % 3600) / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+
+    function updateTimerDisplay() {
+      const clockEl = document.getElementById("adminRaceClock");
+      const statusEl = document.getElementById("adminStatusText");
+      if (!clockEl || !statusEl) return;
+
+      if (eventState && eventState.start_time) {
+        if (eventState.is_active) {
+          const elapsed = (Date.now() / 1000) - eventState.start_time;
+          clockEl.innerText = formatClock(elapsed);
+          statusEl.innerText = "RUNNING";
+          statusEl.className = "text-xs font-bold mt-1 text-emerald-400";
+        } else {
+          statusEl.innerText = "PAUSED";
+          statusEl.className = "text-xs font-bold mt-1 text-amber-400";
+        }
+      } else {
+        clockEl.innerText = "00:00:00";
+        statusEl.innerText = "STOPPED";
+        statusEl.className = "text-xs font-bold mt-1 text-slate-400";
+      }
+    }
+
+    setInterval(updateTimerDisplay, 500);
+
+    async function startRace() {
+      const res = await fetch("/api/event/start", { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        eventState.is_active = 1;
+        eventState.start_time = data.start_time;
+        updateTimerDisplay();
+      }
+    }
+
+    async function pauseRace() {
+      const res = await fetch("/api/event/pause", { method: "POST" });
+      if (res.ok) {
+        eventState.is_active = 0;
+        updateTimerDisplay();
+      }
+    }
+
+    async function resetRace() {
+      if (confirm("Are you sure you want to reset all lap data? Registered runners will be kept.")) {
+        const res = await fetch("/api/event/reset", { method: "POST" });
+        if (res.ok) {
+          eventState.is_active = 0;
+          eventState.start_time = null;
+          updateTimerDisplay();
+        }
+      }
+    }
+
+    async function saveSettings() {
+      const name = document.getElementById("settingName").value;
+      const min_lap_seconds = parseFloat(document.getElementById("settingMinLap").value);
+      const max_lap_rest_seconds = parseFloat(document.getElementById("settingMaxRest").value);
+      const btn = document.getElementById("saveSettingsBtn");
+      const toast = document.getElementById("saveSettingsToast");
+      if (btn) btn.disabled = true;
+
+      try {
+        const res = await fetch("/api/event/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, min_lap_seconds, max_lap_rest_seconds })
+        });
+        if (res.ok) {
+          if (toast) {
+            toast.classList.remove("hidden");
+            setTimeout(() => toast.classList.add("hidden"), 3000);
+          }
+        }
+      } catch (err) {
+        alert("Error saving settings: " + err);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function startRunner(bib) {
+      const res = await fetch(`/api/participants/${bib}/start`, { method: "POST" });
+      if (res.ok) {
+        window.location.reload();
+      }
+    }
+
+    async function resetRunnerStart(bib) {
+      if (confirm(`Reset start time and laps for Runner #${bib}?`)) {
+        const res = await fetch(`/api/participants/${bib}/reset`, { method: "POST" });
+        if (res.ok) {
+          window.location.reload();
+        }
+      }
+    }
+
+    async function startBreak(bib) {
+      const res = await fetch(`/api/participants/${bib}/break/start`, { method: "POST" });
+      if (res.ok) {
+        window.location.reload();
+      } else {
+        alert("Failed to put runner on break");
+      }
+    }
+
+    async function endBreak(bib) {
+      const res = await fetch(`/api/participants/${bib}/break/end`, { method: "POST" });
+      if (res.ok) {
+        window.location.reload();
+      } else {
+        alert("Failed to resume runner from break");
+      }
+    }
+
+    async function registerRunner(e) {
+      e.preventDefault();
+      const bib_number = parseInt(document.getElementById("regBib").value);
+      const name = document.getElementById("regName").value;
+      const epc = document.getElementById("regEpc").value;
+      const notes = document.getElementById("regNotes").value;
+
+      const res = await fetch("/api/participants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bib_number, name, epc, notes })
+      });
+
+      if (res.ok) {
+        window.location.reload();
+      } else {
+        const err = await res.json();
+        alert("Error: " + err.detail);
+      }
+    }
+
+    async function deleteParticipant(bib) {
+      if (confirm(`Remove Runner #${bib} and their laps?`)) {
+        await fetch(`/api/participants/${bib}`, { method: "DELETE" });
+        window.location.reload();
+      }
+    }
+
+    async function promptManualLap(bib) {
+      const durationStr = prompt(`Enter lap duration in seconds for Runner #${bib} (e.g. 75.5):`, "75.0");
+      if (durationStr) {
+        const duration = parseFloat(durationStr);
+        if (!isNaN(duration) && duration > 0) {
+          await fetch("/api/laps/manual", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ bib_number: bib, lap_duration_seconds: duration })
+          });
+          alert("Manual lap recorded!");
+        }
+      }
+    }
+
+    function updateSpeedButtonUI(speed) {
+      document.querySelectorAll(".speed-btn").forEach(b => {
+        b.className = "speed-btn bg-slate-800 hover:bg-slate-700 py-1.5 rounded text-xs font-mono text-slate-300 border border-transparent";
+      });
+      const activeBtn = document.getElementById(`speedBtn-${Math.round(speed)}`);
+      if (activeBtn) {
+        activeBtn.className = "speed-btn bg-purple-600 border border-purple-400 text-white font-bold py-1.5 rounded text-xs font-mono shadow-md shadow-purple-600/30";
+      }
+      const label = document.getElementById("activeSpeedLabel");
+      if (label) label.innerText = `${speed}x ${speed === 1.0 ? 'Real' : (speed === 8.0 ? 'Max' : 'Fast')}`;
+    }
+
+    async function setSimSpeed(speed) {
+      updateSpeedButtonUI(speed);
+      await fetch("/api/simulator/speed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ speed })
+      });
+    }
+
+    async function triggerCrossingNow() {
+      const bib = document.getElementById("quickSimBib").value;
+      const btn = document.getElementById("triggerCrossingBtn");
+      const fb = document.getElementById("simFeedback");
+
+      btn.disabled = true;
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Triggering...`;
+
+      try {
+        const res = await fetch(`/api/simulator/trigger/${bib}`, { method: "POST" });
+        const data = await res.json();
+        if (fb) {
+          fb.innerText = `⚡ Simulated crossing for #${bib} (${data.runner})!`;
+          fb.classList.remove("hidden");
+          setTimeout(() => fb.classList.add("hidden"), 3500);
+        }
+      } catch (err) {
+        alert("Failed to simulate crossing: " + err);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="fa-solid fa-bolt"></i> Simulate`;
+      }
+    }
+
+    function useDetectedTag() {
+      if (latestDetectedEpc) {
+        document.getElementById("regEpc").value = latestDetectedEpc;
+        document.getElementById("tagSnifferNotice").classList.add("hidden");
+      }
+    }
+
+    // WebSocket listener for live tag sniffing and status
+    function connectWS() {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "event_status") {
+          eventState = msg.event;
+          document.getElementById("adminStatusText").innerText = eventState.is_active ? "RUNNING" : "STOPPED";
+        } else if (msg.type === "sim_speed_updated") {
+          updateSpeedButtonUI(msg.speed);
+        } else if (msg.type === "tag_detected") {
+          latestDetectedEpc = msg.data.epc;
+          document.getElementById("detectedEpc").innerText = msg.data.epc;
+          document.getElementById("detectedRssi").innerText = `(${msg.data.rssi} dBm)`;
+          document.getElementById("tagSnifferNotice").classList.remove("hidden");
+        }
+      };
+
+      ws.onclose = () => setTimeout(connectWS, 2000);
+    }
+    connectWS();
+  </script>
+</body>
+</html>

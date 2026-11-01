@@ -1,0 +1,13 @@
+services:
+  race-timer:
+    build: .
+    container_name: race-timer
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - MOCK_HARDWARE=true
+      - CONFIG_PATH=config.yaml
+      - DB_PATH=data/race.db
+    volumes:
+      - .:/app

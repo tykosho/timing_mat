@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ event.name }} - Live Leaderboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    @keyframes flash-row {
+      0% { background-color: rgba(16, 185, 129, 0.4); }
+      100% { background-color: transparent; }
+    }
+    .flash-highlight {
+      animation: flash-row 2.5s ease-out;
+    }
+    .glow-gold {
+      box-shadow: 0 0 15px rgba(234, 179, 8, 0.3);
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
+
+  <!-- Header Banner -->
+  <header class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50 shadow-lg">
+    <div class="flex items-center space-x-4">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 font-bold shadow-md shadow-emerald-500/20">
+        <i class="fa-solid fa-stopwatch text-xl"></i>
+      </div>
+      <div>
+        <h1 class="text-2xl font-black tracking-tight text-white flex items-center gap-3">
+          {{ event.name }}
+          {% if is_mock %}
+          <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold px-2.5 py-0.5 rounded-full">
+            <i class="fa-solid fa-robot mr-1"></i> Simulator Mode
+          </span>
+          {% endif %}
+        </h1>
+        <p class="text-xs text-slate-400">400m Track Timing Mat • UHF RFID Bib Tracking</p>
+      </div>
+    </div>
+
+    <!-- Clock and Event State -->
+    <div class="flex items-center space-x-6">
+      <div class="text-right">
+        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Race Time</div>
+        <div id="raceTimer" class="text-3xl font-mono font-black text-emerald-400 tabular-nums">00:00:00</div>
+      </div>
+      
+      <div id="statusBadge" class="flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-sm font-semibold 
+        {% if event.is_active %} bg-emerald-950/60 border-emerald-500/40 text-emerald-400 {% else %} bg-slate-800 border-slate-700 text-slate-400 {% endif %}">
+        <span class="w-2.5 h-2.5 rounded-full {% if event.is_active %} bg-emerald-400 animate-pulse {% else %} bg-slate-500 {% endif %}"></span>
+        <span id="statusText">{% if event.is_active %}LIVE{% else %}PAUSED{% endif %}</span>
+      </div>
+
+      <a href="/admin" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3.5 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2">
+        <i class="fa-solid fa-gear"></i> Admin
+      </a>
+    </div>
+  </header>
+
+  <!-- Live Crossing Banner / Toast Alert -->
+  <div id="crossingAlert" class="hidden bg-gradient-to-r from-emerald-600 to-teal-600 text-white px-6 py-3 shadow-md flex items-center justify-between transition-all">
+    <div class="flex items-center space-x-3">
+      <i class="fa-solid fa-flag-checkered text-xl"></i>
+      <span id="alertMessage" class="font-bold text-lg"></span>
+    </div>
+    <span class="text-xs bg-white/20 px-2 py-1 rounded font-mono" id="alertRssi"></span>
+  </div>
+
+  <!-- Main Leaderboard -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-6">
+    <div class="grid grid-cols-1 gap-6">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
+        <div class="px-6 py-4 border-b border-slate-800/80 flex justify-between items-center bg-slate-900/50">
+          <div class="flex items-center space-x-2">
+            <i class="fa-solid fa-trophy text-amber-400"></i>
+            <h2 class="text-lg font-bold text-slate-100">Live Standings</h2>
+          </div>
+          <div class="text-xs text-slate-400 flex items-center space-x-4">
+            <span id="runnerCount">0 Runners</span>
+            <span>•</span>
+            <span id="lapCount">0 Total Laps</span>
+            <button id="soundToggle" onclick="toggleSound()" class="text-slate-400 hover:text-white ml-2">
+              <i class="fa-solid fa-volume-xmark" id="soundIcon"></i> Sound Off
+            </button>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-slate-800 text-xs font-semibold text-slate-400 uppercase tracking-wider bg-slate-950/40">
+                <th class="py-3.5 px-4 text-center w-14">Rank</th>
+                <th class="py-3.5 px-4 w-20">Bib #</th>
+                <th class="py-3.5 px-4">Runner Name</th>
+                <th class="py-3.5 px-4 text-center w-24">Status</th>
+                <th class="py-3.5 px-4 text-center">Start Time</th>
+                <th class="py-3.5 px-4 text-center">Total Laps</th>
+                <th class="py-3.5 px-4 text-right">Last Lap</th>
+                <th class="py-3.5 px-4 text-right">Fastest Lap</th>
+                <th class="py-3.5 px-4 text-right">Active Time</th>
+                <th class="py-3.5 px-4 text-right">Rest Time</th>
+              </tr>
+            </thead>
+            <tbody id="leaderboardBody" class="divide-y divide-slate-800/60 font-medium">
+              <!-- Dynamically populated via WebSocket -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Audio Chime -->
+  <script>
+    let soundEnabled = false;
+    let audioCtx = null;
+    function toggleSound() {
+      soundEnabled = !soundEnabled;
+      const icon = document.getElementById("soundIcon");
+      const btn = document.getElementById("soundToggle");
+      if (soundEnabled) {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        icon.className = "fa-solid fa-volume-high text-emerald-400";
+        btn.innerHTML = `<i class="fa-solid fa-volume-high text-emerald-400 mr-1"></i> Sound On`;
+      } else {
+        icon.className = "fa-solid fa-volume-xmark";
+        btn.innerHTML = `<i class="fa-solid fa-volume-xmark mr-1"></i> Sound Off`;
+      }
+    }
+
+    function playChime(freq = 587.33) {
+      if (!soundEnabled || !audioCtx) return;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15);
+      gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.3);
+    }
+  </script>
+
+  <!-- WebSocket & Client UI Logic -->
+  <script>
+    let eventState = {{ event | tojson | safe }};
+    let initialLeaderboard = {{ leaderboard | tojson | safe }};
+
+    function formatTime(seconds) {
+      if (!seconds || seconds <= 0) return "--:--";
+      const mins = Math.floor(seconds / 60);
+      const secs = (seconds % 60).toFixed(1);
+      return `${mins}:${secs.padStart(4, '0')}`;
+    }
+
+    function formatClock(seconds) {
+      if (!seconds || seconds < 0) return "00:00:00";
+      const hrs = Math.floor(seconds / 3600);
+      const mins = Math.floor((seconds % 3600) / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+
+    // Timer updater
+    setInterval(() => {
+      if (eventState && eventState.is_active && eventState.start_time) {
+        const elapsed = (Date.now() / 1000) - eventState.start_time;
+        document.getElementById("raceTimer").innerText = formatClock(elapsed);
+      } else if (!eventState || !eventState.start_time) {
+        document.getElementById("raceTimer").innerText = "00:00:00";
+      }
+    }, 500);
+
+    function renderLeaderboard(data) {
+      const tbody = document.getElementById("leaderboardBody");
+      tbody.innerHTML = "";
+      
+      let totalLaps = 0;
+      document.getElementById("runnerCount").innerText = `${data.length} Runners`;
+
+      data.forEach((runner, idx) => {
+        totalLaps += (runner.total_laps || 0);
+        const rank = idx + 1;
+        
+        let rankBadge = `<span class="text-slate-400 font-mono">${rank}</span>`;
+        let rankClass = "";
+        if (rank === 1 && runner.total_laps > 0) {
+          rankBadge = `<span class="w-7 h-7 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center font-bold text-xs mx-auto"><i class="fa-solid fa-crown text-amber-400"></i></span>`;
+          rankClass = "glow-gold bg-amber-950/10";
+        } else if (rank === 2 && runner.total_laps > 0) {
+          rankBadge = `<span class="w-6 h-6 rounded-full bg-slate-300/20 text-slate-200 border border-slate-300/30 flex items-center justify-center font-bold text-xs mx-auto">2</span>`;
+        } else if (rank === 3 && runner.total_laps > 0) {
+          rankBadge = `<span class="w-6 h-6 rounded-full bg-amber-700/20 text-amber-500 border border-amber-700/30 flex items-center justify-center font-bold text-xs mx-auto">3</span>`;
+        }
+
+        // Status badge
+        let statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-slate-400 border border-slate-700 block text-center">Waiting</span>`;
+        if (runner.status === 'active') {
+          statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center gap-1 mx-auto"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Running</span>`;
+        } else if (runner.status === 'on_break') {
+          statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center justify-center gap-1 mx-auto"><i class="fa-solid fa-mug-hot text-[9px]"></i> Rest</span>`;
+        }
+
+        // Start time cell
+        let startHtml = `<span class="text-slate-500 text-xs font-mono">--:--</span>`;
+        if (runner.start_time) {
+          const startDate = new Date(runner.start_time * 1000);
+          const timeOfDay = startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          let offsetTag = "";
+          if (eventState && eventState.start_time) {
+            const offsetSec = Math.max(0, runner.start_time - eventState.start_time);
+            offsetTag = `<div class="text-[10px] text-slate-500 font-mono">+${formatClock(offsetSec)}</div>`;
+          }
+          startHtml = `<div class="font-mono text-xs text-slate-300">${timeOfDay}</div>${offsetTag}`;
+        }
+
+        const tr = document.createElement("tr");
+        tr.id = `runner-row-${runner.bib_number}`;
+        tr.className = `hover:bg-slate-800/40 transition-colors ${rankClass}`;
+        tr.innerHTML = `
+          <td class="py-3 px-4 text-center">${rankBadge}</td>
+          <td class="py-3 px-4 font-mono text-emerald-400 font-bold text-base">#${runner.bib_number}</td>
+          <td class="py-3 px-4">
+            <a href="/runner/${runner.bib_number}" class="text-white hover:text-emerald-400 font-bold transition flex items-center gap-2">
+              ${runner.name}
+              <i class="fa-solid fa-arrow-up-right-from-square text-xs text-slate-500"></i>
+            </a>
+          </td>
+          <td class="py-3 px-4 text-center">${statusBadge}</td>
+          <td class="py-3 px-4 text-center">${startHtml}</td>
+          <td class="py-3 px-4 text-center">
+            <span class="text-2xl font-black text-white font-mono">${runner.total_laps}</span>
+          </td>
+          <td class="py-3 px-4 text-right font-mono text-slate-200">
+            ${runner.last_lap_seconds ? formatTime(runner.last_lap_seconds) : '--:--'}
+          </td>
+          <td class="py-3 px-4 text-right font-mono text-amber-400 font-semibold">
+            ${runner.fastest_lap_seconds ? '<i class="fa-solid fa-bolt text-xs mr-1"></i>' + formatTime(runner.fastest_lap_seconds) : '--:--'}
+          </td>
+          <td class="py-3 px-4 text-right font-mono text-slate-300 text-sm">
+            ${runner.total_time_seconds ? formatClock(runner.total_time_seconds) : '--:--'}
+          </td>
+          <td class="py-3 px-4 text-right font-mono text-xs text-amber-300/80">
+            ${runner.total_rest_seconds > 0 ? formatClock(runner.total_rest_seconds) : '-'}
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById("lapCount").innerText = `${totalLaps} Total Laps`;
+    }
+
+    function showBannerAlert(htmlContent, rssiText, alertClass = "from-emerald-600 to-teal-600") {
+      const alert = document.getElementById("crossingAlert");
+      const msg = document.getElementById("alertMessage");
+      const rssi = document.getElementById("alertRssi");
+      
+      alert.className = `bg-gradient-to-r ${alertClass} text-white px-6 py-3 shadow-md flex items-center justify-between transition-all`;
+      msg.innerHTML = htmlContent;
+      rssi.innerText = rssiText ? `RSSI: ${rssiText} dBm` : "";
+      
+      alert.classList.remove("hidden");
+      playChime();
+
+      clearTimeout(window.alertTimeout);
+      window.alertTimeout = setTimeout(() => {
+        alert.classList.add("hidden");
+      }, 4500);
+    }
+
+    function showCrossingAlert(lap) {
+      showBannerAlert(
+        `🎉 <strong>${lap.name}</strong> (#${lap.bib_number}) completed <strong>Lap ${lap.lap_number}</strong> in ${formatTime(lap.lap_duration_seconds)}`,
+        lap.peak_rssi
+      );
+
+      const row = document.getElementById(`runner-row-${lap.bib_number}`);
+      if (row) {
+        row.classList.add("flash-highlight");
+        setTimeout(() => row.classList.remove("flash-highlight"), 2500);
+      }
+    }
+
+    // Connect WebSocket
+    function connectWS() {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "init") {
+          eventState = msg.event;
+          renderLeaderboard(msg.leaderboard);
+        } else if (msg.type === "lap_completed") {
+          renderLeaderboard(msg.leaderboard);
+          showCrossingAlert(msg.lap);
+        } else if (msg.type === "runner_started") {
+          renderLeaderboard(msg.leaderboard);
+          showBannerAlert(
+            `🚀 <strong>${msg.data.name}</strong> (#${msg.data.bib_number}) crossed the mat & began their race!`,
+            msg.data.peak_rssi,
+            "from-indigo-600 to-blue-600"
+          );
+        } else if (msg.type === "runner_resumed") {
+          renderLeaderboard(msg.leaderboard);
+          showBannerAlert(
+            `☕ <strong>${msg.data.name}</strong> (#${msg.data.bib_number}) resumed running after a <strong>${formatTime(msg.data.break_duration_seconds)}</strong> break!`,
+            null,
+            "from-amber-600 to-orange-600"
+          );
+        } else if (msg.type === "leaderboard_update") {
+          renderLeaderboard(msg.leaderboard);
+        } else if (msg.type === "event_status") {
+          eventState = msg.event;
+          if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
+          const badge = document.getElementById("statusBadge");
+          const text = document.getElementById("statusText");
+          if (eventState.is_active) {
+            badge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-sm font-semibold bg-emerald-950/60 border-emerald-500/40 text-emerald-400";
+            text.innerText = "LIVE";
+          } else {
+            badge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-sm font-semibold bg-slate-800 border-slate-700 text-slate-400";
+            text.innerText = "PAUSED";
+          }
+        }
+      };
+
+      ws.onclose = () => {
+        setTimeout(connectWS, 2000); // Auto reconnect
+      };
+    }
+
+    // Initial render
+    renderLeaderboard(initialLeaderboard);
+    connectWS();
+  </script>
+          eventState = msg.event;
+          renderLeaderboard(msg.leaderboard);
+        } else if (msg.type === "lap_completed") {
+          renderLeaderboard(msg.leaderboard);
+          showCrossingAlert(msg.lap);
+        } else if (msg.type === "leaderboard_update") {
+          renderLeaderboard(msg.leaderboard);
+        } else if (msg.type === "event_status") {
+          eventState = msg.event;
+          if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
+          const badge = document.getElementById("statusBadge");
+          const text = document.getElementById("statusText");
+          if (eventState.is_active) {
+            badge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-sm font-semibold bg-emerald-950/60 border-emerald-500/40 text-emerald-400";
+            text.innerText = "LIVE";
+          } else {
+            badge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-sm font-semibold bg-slate-800 border-slate-700 text-slate-400";
+            text.innerText = "PAUSED";
+          }
+        }
+      };
+
+      ws.onclose = () => {
+        setTimeout(connectWS, 2000); // Auto reconnect
+      };
+    }
+
+    // Initial render
+    renderLeaderboard(initialLeaderboard);
+    connectWS();
+  </script>
+</body>
+</html>

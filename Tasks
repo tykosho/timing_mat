@@ -1,0 +1,6 @@
+# Features to consider or implement
+1. Display total distance for each participant
+2. Display cumulative distance for all participants
+3. Separate views for different stats
+4. Set up the ability to pre-register tags before a race starts (with bib number, participant name, tag ID)
+5. Make sure the software stores data on the actual time that laps were completed for each runner. Enable live replay plot of the race (showing laps completed per participant on the mat over time)

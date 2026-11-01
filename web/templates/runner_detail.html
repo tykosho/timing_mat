@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ runner.name }} (#{{ runner.bib_number }}) - Lap Splits</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
+
+  <header class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center justify-between sticky top-0 z-50">
+    <div class="flex items-center space-x-4">
+      <a href="/leaderboard" class="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center text-slate-300 font-bold transition">
+        <i class="fa-solid fa-arrow-left"></i>
+      </a>
+      <div>
+        <h1 class="text-2xl font-black text-white flex items-center gap-2">
+          {{ runner.name }}
+          <span class="text-emerald-400 font-mono text-xl">#{{ runner.bib_number }}</span>
+        </h1>
+        <p class="text-xs text-slate-400 font-mono">EPC: {{ runner.epc }} {% if runner.notes %}• {{ runner.notes }}{% endif %}</p>
+      </div>
+    </div>
+    <div class="flex items-center space-x-3">
+      <a href="/admin" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2 rounded-lg border border-slate-700 font-medium">
+        Admin View
+      </a>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-5xl w-full mx-auto p-6 space-y-6">
+
+    <!-- Runner Timing & Status Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      
+      <!-- Start Time Card -->
+      <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+        <div class="text-xs text-slate-400 uppercase font-semibold">Runner Start Time</div>
+        <div class="text-xl font-black text-indigo-400 font-mono mt-1">
+          {% if runner.start_time %}
+            <script>
+              document.write(new Date({{ runner.start_time }} * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+            </script>
+          {% else %}
+            <span class="text-slate-500">Not Started</span>
+          {% endif %}
+        </div>
+        <div class="text-[11px] text-slate-500 mt-1">
+          {% if runner.start_time and event.start_time %}
+            {% set offset_sec = runner.start_time - event.start_time %}
+            +{{ (offset_sec // 60) | int }}m {{ (offset_sec % 60) | int }}s into event
+          {% else %}
+            Chip Start on 1st crossing
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Total Laps & Distance -->
+      <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+        <div class="text-xs text-slate-400 uppercase font-semibold">Total Laps Completed</div>
+        <div class="text-3xl font-black text-white font-mono mt-1">{{ laps | length }}</div>
+        <div class="text-[11px] text-slate-500 mt-1">{{ ((laps | length) * 0.4) | round(2) }} km (400m track)</div>
+      </div>
+
+      <!-- Fastest Lap -->
+      <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+        <div class="text-xs text-slate-400 uppercase font-semibold">Fastest Lap</div>
+        {% set fastest = laps | map(attribute='lap_duration_seconds') | min if laps else None %}
+        <div class="text-3xl font-black text-amber-400 font-mono mt-1">
+          {% if fastest %}
+            {{ (fastest // 60) | int }}:{{ "%04.1f" | format(fastest % 60) }}
+          {% else %}
+            --:--
+          {% endif %}
+        </div>
+        <div class="text-[11px] text-amber-500/80 mt-1"><i class="fa-solid fa-bolt mr-1"></i> Best Split</div>
+      </div>
+
+      <!-- Active Running Time & Rest -->
+      <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+        <div class="text-xs text-slate-400 uppercase font-semibold">Active Running Time</div>
+        {% set total_sec = laps | sum(attribute='lap_duration_seconds') if laps else 0 %}
+        <div class="text-3xl font-black text-emerald-400 font-mono mt-1">
+          {{ "%02d:%02d:%02d" | format((total_sec // 3600) | int, ((total_sec % 3600) // 60) | int, (total_sec % 60) | int) }}
+        </div>
+        {% set total_rest = breaks | sum(attribute='duration_seconds') if breaks else 0 %}
+        <div class="text-[11px] text-amber-400/80 mt-1">
+          ☕ {{ "%02d:%02d" | format((total_rest // 60) | int, (total_rest % 60) | int) }} rest ({{ breaks | length }} breaks)
+        </div>
+      </div>
+    </div>
+
+    <!-- Rest Breaks Section (if any breaks taken) -->
+    {% if breaks %}
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+      <div class="px-6 py-3.5 border-b border-slate-800 flex items-center justify-between bg-amber-950/20">
+        <div class="flex items-center space-x-2">
+          <i class="fa-solid fa-mug-hot text-amber-400"></i>
+          <h2 class="text-sm font-bold text-amber-200">Rest Breaks Logged ({{ breaks | length }})</h2>
+        </div>
+        <span class="text-xs text-amber-400/80">Automatically detected rest periods</span>
+      </div>
+      <div class="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        {% for b in breaks %}
+        <div class="bg-slate-950/70 border border-amber-900/40 rounded-xl p-3 flex justify-between items-center">
+          <div>
+            <div class="text-xs font-bold text-slate-200">Break #{{ b.break_number }}</div>
+            <div class="text-[11px] text-slate-400 font-mono">
+              <script>
+                document.write(new Date({{ b.start_time }} * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+              </script> 
+              → 
+              <script>
+                document.write(new Date({{ b.end_time }} * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+              </script>
+            </div>
+          </div>
+          <div class="text-right">
+            <div class="text-base font-black font-mono text-amber-400">
+              {{ (b.duration_seconds // 60) | int }}m {{ (b.duration_seconds % 60) | int }}s
+            </div>
+            <div class="text-[10px] text-slate-500">Rest duration</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Lap Split Table -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
+      <div class="px-6 py-4 border-b border-slate-800 flex justify-between items-center">
+        <h2 class="text-base font-bold text-slate-200 flex items-center gap-2">
+          <i class="fa-solid fa-list-ol text-emerald-400"></i> Individual Lap Splits
+        </h2>
+        <span class="text-xs text-slate-400">{{ laps | length }} laps recorded</span>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="border-b border-slate-800 text-xs font-semibold text-slate-400 uppercase tracking-wider bg-slate-950/40">
+              <th class="py-3 px-6 text-center w-20">Lap #</th>
+              <th class="py-3 px-6">Crossing Time</th>
+              <th class="py-3 px-6 text-right">Lap Duration</th>
+              <th class="py-3 px-6 text-right">Est. Pace (/mi)</th>
+              <th class="py-3 px-6 text-center">Peak RSSI</th>
+              <th class="py-3 px-6 text-right w-24">Action</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800 text-sm">
+            {% if not laps %}
+            <tr>
+              <td colspan="6" class="py-8 text-center text-slate-500 text-sm">
+                No laps recorded yet for this runner.
+              </td>
+            </tr>
+            {% endif %}
+
+            {% for lap in laps | reverse %}
+            <tr class="hover:bg-slate-800/40">
+              <td class="py-3 px-6 text-center font-mono font-bold text-white">{{ lap.lap_number }}</td>
+              <td class="py-3 px-6 font-mono text-xs text-slate-400">
+                <script>
+                  document.write(new Date({{ lap.crossing_time }} * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+                </script>
+                {% if lap.manual_entry %}
+                <span class="ml-2 text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded">Manual</span>
+                {% endif %}
+              </td>
+              <td class="py-3 px-6 text-right font-mono font-bold text-white">
+                {{ (lap.lap_duration_seconds // 60) | int }}:{{ "%04.1f" | format(lap.lap_duration_seconds % 60) }}
+              </td>
+              <td class="py-3 px-6 text-right font-mono text-xs text-slate-400">
+                {% set pace_sec_per_mile = (lap.lap_duration_seconds / 0.24855) %}
+                {{ (pace_sec_per_mile // 60) | int }}:{{ "%02d" | format((pace_sec_per_mile % 60) | int) }} /mi
+              </td>
+              <td class="py-3 px-6 text-center font-mono text-xs text-slate-400">
+                {% if lap.peak_rssi %}
+                  {{ lap.peak_rssi }} dBm
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td class="py-3 px-6 text-right">
+                <button onclick="deleteLap({{ lap.id }})" title="Delete Lap" class="text-xs text-rose-400 hover:text-rose-300">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    async function deleteLap(lapId) {
+      if (confirm("Delete this lap entry?")) {
+        await fetch(`/api/laps/${lapId}`, { method: "DELETE" });
+        window.location.reload();
+      }
+    }
+  </script>
+</body>
+</html>
