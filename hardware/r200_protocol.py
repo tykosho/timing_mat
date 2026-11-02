@@ -4,12 +4,13 @@ Protocol format based on official R200 SDK:
 [Header: 0xAA] [Type: 0x00=Cmd, 0x01=Resp, 0x02=Notify] [Command] [Length MSB] [Length LSB] [Payload...] [Checksum] [End: 0xDD]
 """
 import logging
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger("R200Protocol")
 
 HEADER = 0xAA
 FOOTER = 0xDD
+MAX_PAYLOAD_LEN = 255  # tag/response payloads are well under this; larger means a false header
 
 # R200 Commands from SDK
 CMD_HARDWARE_VERSION = 0x03
@@ -39,57 +40,89 @@ READ_MULTI_COMMAND = bytes([0xAA, 0x00, 0x27, 0x00, 0x03, 0x22, 0xFF, 0xFF, 0x4A
 READ_STOP_COMMAND = bytes([0xAA, 0x00, 0x28, 0x00, 0x00, 0x28, 0xDD])
 READ_SINGLE_COMMAND = bytes([0xAA, 0x00, 0x22, 0x00, 0x00, 0x22, 0xDD])
 
-def parse_inventory_response(frame: bytes) -> Optional[Tuple[str, float]]:
+def raw_rssi_to_dbm(raw_rssi: int) -> float:
+    """Converts the raw RSSI byte to an approximate dBm value.
+
+    NOTE: this scale is a best guess and has not been verified against real hardware.
+    Use `python -m hardware.sniffer --raw` to capture real frames and confirm it.
     """
-    Parses R200 notification frame (0xAA 0x02 0x22 ...):
+    return -129.0 + raw_rssi if raw_rssi > 0 else -55.0
+
+def extract_frames(buffer: bytearray) -> Tuple[List[bytes], bytearray]:
+    """
+    Splits a serial byte buffer into complete frames.
+    Frame layout: [0xAA] [type] [cmd] [len MSB] [len LSB] [payload...] [checksum] [0xDD]
+    Returns (frames, remaining_buffer). Bytes that can't start a valid frame are discarded.
+    """
+    frames: List[bytes] = []
+    while buffer:
+        start = buffer.find(HEADER)
+        if start == -1:
+            return frames, bytearray()
+        if start > 0:
+            del buffer[:start]
+
+        if len(buffer) < 5:
+            break  # need the length field
+
+        payload_len = (buffer[3] << 8) | buffer[4]
+        if payload_len > MAX_PAYLOAD_LEN:
+            del buffer[:1]  # implausible length: a stray 0xAA, not a real header
+            continue
+
+        total_len = 5 + payload_len + 2
+        if len(buffer) < total_len:
+            break  # wait for the rest of the frame
+
+        if buffer[total_len - 1] != FOOTER:
+            del buffer[:1]  # false header byte; resync on the next 0xAA
+            continue
+
+        frames.append(bytes(buffer[:total_len]))
+        del buffer[:total_len]
+    return frames, buffer
+
+def parse_tag_frame(frame: bytes) -> Optional[Tuple[str, int]]:
+    """
+    Parses an R200 tag notification frame (0xAA 0x02 0x22 ...) into (epc_hex, raw_rssi):
       - frame[0]: 0xAA (Header)
       - frame[1]: 0x02 (Notification)
       - frame[2]: 0x22 (Tag read)
-      - frame[3..4]: Length
+      - frame[3..4]: Payload length
       - frame[5]: RSSI raw byte
       - frame[6..7]: PC (Protocol Control, 2 bytes)
       - frame[8..8+epc_len]: EPC (typically 12 bytes = 24 hex characters)
-      - frame[-2]: Checksum
-      - frame[-1]: 0xDD (Footer)
+      - then 2 bytes CRC, 1 byte checksum, 0xDD footer
+    Returns None for anything that isn't a well-formed tag read.
     """
-    if len(frame) < 10:
+    if len(frame) < 10 or frame[0] != HEADER or frame[-1] != FOOTER:
         return None
-
-    if frame[0] != HEADER or frame[-1] != FOOTER:
-        return None
-
-    # frame[1] must be 0x02 (notification) and frame[2] must be 0x22 (tag read)
     if frame[1] != 0x02 or frame[2] != CMD_SINGLE_POLLING:
         return None
 
-    try:
-        length = (frame[3] << 8) | frame[4]
-        if len(frame) < 5 + length + 2:
-            return None
-
-        # Verify checksum: sum of bytes from index 1 to len(frame)-3
-        expected_cs = calculate_checksum(frame[1:-2])
-        actual_cs = frame[-2]
-        if expected_cs != actual_cs:
-            logger.debug(f"Checksum mismatch: expected 0x{expected_cs:02X}, got 0x{actual_cs:02X}")
-            # Still attempt parsing if frame structure is intact
-
-        raw_rssi = frame[5]
-        # Invert/offset to realistic dBm
-        rssi_dbm = -129.0 + raw_rssi if raw_rssi > 0 else -55.0
-
-        # Protocol Control bytes give word length (PC bits 15..11 = EPC word count)
-        pc_msb = frame[6]
-        epc_words = (pc_msb >> 3) & 0x1F
-        epc_bytes_count = epc_words * 2
-
-        if epc_bytes_count <= 0 or epc_bytes_count > 64:
-            # Standard Gen2 default: 12 bytes (96-bit EPC)
-            epc_bytes_count = min(12, length - 3)
-
-        epc_bytes = frame[8:8 + epc_bytes_count]
-        epc_hex = epc_bytes.hex().upper()
-        return epc_hex, round(rssi_dbm, 1)
-    except Exception as e:
-        logger.debug(f"Frame parsing error: {e}")
+    length = (frame[3] << 8) | frame[4]
+    if len(frame) != 5 + length + 2 or length < 5:
         return None
+
+    # Checksum and PC are verified leniently (logged, not rejected): the frame structure
+    # is already validated above, and these rules haven't been confirmed on real hardware.
+    if calculate_checksum(frame[1:-2]) != frame[-2]:
+        logger.debug("Tag frame checksum mismatch")
+
+    # Payload = RSSI(1) + PC(2) + EPC(n) + CRC(2)
+    epc_len = length - 5
+    pc_bytes = ((frame[6] >> 3) & 0x1F) * 2  # PC bits 15..11 = EPC length in 16-bit words
+    if pc_bytes != epc_len:
+        logger.debug(f"PC says EPC is {pc_bytes} bytes but frame length implies {epc_len}")
+        if 0 < pc_bytes <= epc_len:
+            epc_len = pc_bytes
+
+    return frame[8:8 + epc_len].hex().upper(), frame[5]
+
+def parse_inventory_response(frame: bytes) -> Optional[Tuple[str, float]]:
+    """Parses a tag notification frame into (epc_hex, rssi_dbm)."""
+    parsed = parse_tag_frame(frame)
+    if not parsed:
+        return None
+    epc_hex, raw_rssi = parsed
+    return epc_hex, round(raw_rssi_to_dbm(raw_rssi), 1)

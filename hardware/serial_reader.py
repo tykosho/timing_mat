@@ -6,7 +6,7 @@ import serial
 from core.models import TagRead
 from hardware.base import BaseRFIDReader
 from hardware.r200_protocol import (
-    HEADER, FOOTER, READ_MULTI_COMMAND, READ_STOP_COMMAND, parse_inventory_response
+    READ_MULTI_COMMAND, READ_STOP_COMMAND, extract_frames, parse_inventory_response
 )
 
 logger = logging.getLogger("SerialReader")
@@ -90,38 +90,13 @@ class SerialReader(BaseRFIDReader):
                 time.sleep(1.0)
 
     def _process_stream(self, buffer: bytearray) -> bytearray:
-        """Finds valid frames starting with 0xAA and ending with 0xDD."""
-        while len(buffer) > 0:
-            # Find frame header (0xAA)
-            start_idx = -1
-            for i, b in enumerate(buffer):
-                if b == HEADER:
-                    start_idx = i
-                    break
-
-            if start_idx == -1:
-                return bytearray()  # No header found, clear buffer
-
-            if start_idx > 0:
-                buffer = buffer[start_idx:]  # Discard preceding garbage
-
-            if len(buffer) < 5:
-                break  # Wait for more bytes to read length
-
-            length = (buffer[3] << 8) | buffer[4]
-            total_frame_len = 5 + length + 2  # header(1) + type(1) + cmd(1) + len(2) + payload + cs(1) + footer(1)
-
-            if len(buffer) < total_frame_len:
-                break  # Wait for complete frame
-
-            frame = bytes(buffer[:total_frame_len])
-            buffer = buffer[total_frame_len:]
-
+        """Emits a TagRead for every complete tag frame in the buffer; returns the unparsed remainder."""
+        frames, buffer = extract_frames(buffer)
+        for frame in frames:
             parsed = parse_inventory_response(frame)
             if parsed:
                 epc_hex, rssi = parsed
                 tag_read = TagRead(epc=epc_hex, timestamp=time.time(), rssi=rssi)
                 if self.on_tag_read:
                     self.on_tag_read(tag_read)
-
         return buffer

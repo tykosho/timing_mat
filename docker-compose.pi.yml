@@ -8,6 +8,7 @@ services:
       - "8000:8000"
     environment:
       - MOCK_HARDWARE=false
+      - SEED_DEMO=false
       - SERIAL_PORT=/dev/ttyUSB0
       - BAUD_RATE=115200
       - CONFIG_PATH=config.yaml

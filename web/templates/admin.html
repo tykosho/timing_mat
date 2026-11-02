@@ -26,6 +26,9 @@
 
     <!-- Quick Navigation -->
     <div class="flex items-center space-x-3">
+      <a href="/prepare" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
+        <i class="fa-solid fa-tags"></i> Prepare Bibs
+      </a>
       <a href="/leaderboard" target="_blank" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 shadow-lg shadow-emerald-600/20">
         <i class="fa-solid fa-display"></i> Open Big Screen Board
       </a>
@@ -58,26 +61,37 @@
           <h2 class="text-base font-bold text-slate-200 mb-1 flex items-center gap-2">
             <i class="fa-solid fa-flag text-emerald-400"></i> Event Gun & Timer
           </h2>
-          <p class="text-xs text-slate-400 mb-4">Start or pause the race clock.</p>
+          <p class="text-xs text-slate-400 mb-4">Start, pause or end the event.</p>
         </div>
 
         <div class="flex flex-col items-center justify-center py-4 bg-slate-950/50 rounded-xl border border-slate-800/80 mb-4">
           <div class="text-xs uppercase font-semibold text-slate-400">Elapsed Time</div>
           <div id="adminRaceClock" class="text-4xl font-mono font-black text-emerald-400 tabular-nums">00:00:00</div>
-          <div id="adminStatusText" class="text-xs font-bold mt-1 text-slate-400">{% if event.is_active %}RUNNING{% else %}STOPPED{% endif %}</div>
+          <div id="adminStatusText" class="text-xs font-bold mt-1 text-slate-400">{{ event.status | upper }}</div>
         </div>
 
         <div class="grid grid-cols-3 gap-2">
-          <button onclick="startRace()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-3 rounded-xl text-sm transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20">
-            <i class="fa-solid fa-play"></i> Start
+          <button id="btnStart" onclick="startRace()" class="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-2.5 px-3 rounded-xl text-sm transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20">
+            <i class="fa-solid fa-play"></i> <span id="btnStartLabel">Start</span>
           </button>
-          <button onclick="pauseRace()" class="bg-amber-600 hover:bg-amber-500 text-white font-bold py-2.5 px-3 rounded-xl text-sm transition flex items-center justify-center gap-1.5">
+          <button id="btnPause" onclick="pauseRace()" class="bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-2.5 px-3 rounded-xl text-sm transition flex items-center justify-center gap-1.5">
             <i class="fa-solid fa-pause"></i> Pause
           </button>
-          <button onclick="resetRace()" class="bg-rose-900/60 hover:bg-rose-800 border border-rose-700/50 text-rose-200 font-bold py-2.5 px-3 rounded-xl text-sm transition flex items-center justify-center gap-1.5">
-            <i class="fa-solid fa-rotate-left"></i> Reset
+          <button id="btnEnd" onclick="endRace()" class="bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-2.5 px-3 rounded-xl text-sm transition flex items-center justify-center gap-1.5">
+            <i class="fa-solid fa-flag-checkered"></i> End
           </button>
         </div>
+        <div class="grid grid-cols-2 gap-2 mt-2">
+          <button id="btnReopen" onclick="reopenRace()" class="hidden bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold py-2 px-3 rounded-xl text-xs transition">
+            <i class="fa-solid fa-rotate-right"></i> Reopen (undo End)
+          </button>
+          <button id="btnReset" onclick="resetRace()" class="bg-slate-900 hover:bg-rose-950 disabled:opacity-40 disabled:cursor-not-allowed border border-rose-900/50 text-rose-300 font-semibold py-2 px-3 rounded-xl text-xs transition col-span-1">
+            <i class="fa-solid fa-eraser"></i> Clear Results
+          </button>
+        </div>
+        <p id="endedNote" class="hidden text-[11px] text-slate-400 mt-3">
+          Event ended. Results are frozen; download them from the Events panel below.
+        </p>
       </div>
 
       <!-- Debounce & Race Settings -->
@@ -95,6 +109,12 @@
             <input type="text" id="settingName" value="{{ event.name }}" 
                    onkeydown="if(event.key === 'Enter'){ event.preventDefault(); saveSettings(); }"
                    class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Track Length (m)</label>
+            <input type="number" id="settingTrackLength" min="1" step="1" value="{{ event.track_length_m | int }}"
+                   class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-emerald-500">
           </div>
 
           <div>
@@ -169,8 +189,64 @@
         </div>
 
         <div class="text-[11px] text-slate-500 mt-2">
-          Hardware: {% if is_mock %}Mock Driver{% else %}Serial UART ({{ event.serial_port }}){% endif %}
+          Hardware: {% if is_mock %}Mock Driver{% else %}Serial UART ({{ serial_port }}){% endif %}
+          • {{ raw_read_count }} raw reads logged
         </div>
+      </div>
+    </div>
+
+    <!-- Events -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
+        <div>
+          <h2 class="text-base font-bold text-slate-200 flex items-center gap-2">
+            <i class="fa-solid fa-calendar-days text-sky-400"></i> Events
+          </h2>
+          <p class="text-xs text-slate-400">Each event has its own runners, bibs, tags and results. The reader times the <span class="text-emerald-300">current</span> event.</p>
+        </div>
+        <form onsubmit="createEvent(event)" class="flex gap-2">
+          <input type="text" id="newEventName" required placeholder="New event name" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-sky-500">
+          <button type="submit" class="bg-sky-600 hover:bg-sky-500 text-white font-semibold text-sm px-3 py-1.5 rounded-lg transition">
+            <i class="fa-solid fa-plus"></i> New Event
+          </button>
+        </form>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse text-sm">
+          <thead class="text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+            <tr>
+              <th class="py-2 px-3">Event</th>
+              <th class="py-2 px-3">Status</th>
+              <th class="py-2 px-3 text-center">Runners (tagged)</th>
+              <th class="py-2 px-3 text-center">Laps</th>
+              <th class="py-2 px-3 text-right">Download CSV</th>
+              <th class="py-2 px-3 text-right w-28"></th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800">
+            {% for ev in events %}
+            <tr class="{% if ev.is_current %}bg-emerald-950/20{% endif %}">
+              <td class="py-2.5 px-3 font-medium text-white">{{ ev.name }}
+                {% if ev.is_current %}<span class="ml-1 text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded">current</span>{% endif %}
+              </td>
+              <td class="py-2.5 px-3 text-xs font-mono text-slate-300">{{ ev.status | upper }}</td>
+              <td class="py-2.5 px-3 text-center font-mono">{{ ev.participant_count }} <span class="text-slate-500">({{ ev.tagged_count }})</span></td>
+              <td class="py-2.5 px-3 text-center font-mono">{{ ev.lap_count }}</td>
+              <td class="py-2.5 px-3 text-right text-xs space-x-2">
+                <a class="text-sky-400 hover:underline" href="/api/events/{{ ev.id }}/results.csv">Results</a>
+                <a class="text-sky-400 hover:underline" href="/api/events/{{ ev.id }}/laps.csv">Laps</a>
+                <a class="text-sky-400 hover:underline" href="/api/events/{{ ev.id }}/registrations.csv">Runners</a>
+                <a class="text-sky-400 hover:underline" href="/api/events/{{ ev.id }}/raw_reads.csv">Raw reads</a>
+              </td>
+              <td class="py-2.5 px-3 text-right">
+                {% if not ev.is_current %}
+                <button onclick="selectEvent({{ ev.id }})" class="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 px-2.5 py-1 rounded">Switch to</button>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -182,7 +258,7 @@
         <h2 class="text-base font-bold text-slate-200 mb-1 flex items-center gap-2">
           <i class="fa-solid fa-user-plus text-emerald-400"></i> Register Runner / Bib
         </h2>
-        <p class="text-xs text-slate-400 mb-4">Pair an RFID tag EPC to a runner bib.</p>
+        <p class="text-xs text-slate-400 mb-4">Add one runner. For many at once, import a CSV on the <a href="/prepare" class="text-indigo-400 underline">Prepare Bibs</a> page.</p>
 
         <form id="addRunnerForm" onsubmit="registerRunner(event)" class="space-y-4">
           <div>
@@ -196,11 +272,16 @@
           </div>
 
           <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Email (Optional)</label>
+            <input type="email" id="regEmail" placeholder="runner@example.com" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+          </div>
+
+          <div>
             <div class="flex justify-between items-center mb-1">
-              <label class="block text-xs font-medium text-slate-300">RFID Tag EPC (Hex) *</label>
-              <span class="text-[10px] text-indigo-400"><i class="fa-solid fa-rss"></i> Wave tag to detect</span>
+              <label class="block text-xs font-medium text-slate-300">RFID Tag EPC (Hex)</label>
+              <span class="text-[10px] text-indigo-400"><i class="fa-solid fa-rss"></i> Wave tag to detect, or leave blank</span>
             </div>
-            <input type="text" id="regEpc" required placeholder="e.g. E28011700000020101010006" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-emerald-500 uppercase">
+            <input type="text" id="regEpc" placeholder="e.g. E28011700000020101010006" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-emerald-500 uppercase">
           </div>
 
           <div>
@@ -231,6 +312,7 @@
               <tr>
                 <th class="py-2.5 px-4 w-20">Bib #</th>
                 <th class="py-2.5 px-4">Name</th>
+                <th class="py-2.5 px-4 text-center">Tag</th>
                 <th class="py-2.5 px-4">Start Time</th>
                 <th class="py-2.5 px-4 text-center">Laps</th>
                 <th class="py-2.5 px-4 text-right">Actions</th>
@@ -243,6 +325,10 @@
               <tr class="hover:bg-slate-800/40">
                 <td class="py-3 px-4 font-mono font-bold text-emerald-400">#{{ p.bib_number }}</td>
                 <td class="py-3 px-4 font-medium text-white">{{ p.name }}</td>
+                <td class="py-3 px-4 text-center text-xs">
+                  {% if p.epc %}<span class="text-emerald-400" title="{{ p.epc }}"><i class="fa-solid fa-check"></i></span>
+                  {% else %}<span class="text-amber-400" title="No tag assigned yet">none</span>{% endif %}
+                </td>
                 <td class="py-3 px-4 text-xs font-mono">
                   {% if p.start_time %}
                     <span class="text-slate-300" id="start-time-{{ p.bib_number }}">
@@ -308,63 +394,94 @@
       return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
     }
 
+    const STATUS_STYLE = {
+      setup:   ["SETUP - NOT STARTED", "text-slate-400"],
+      running: ["RUNNING", "text-emerald-400"],
+      paused:  ["PAUSED", "text-amber-400"],
+      ended:   ["ENDED", "text-rose-400"],
+    };
+
     function updateTimerDisplay() {
       const clockEl = document.getElementById("adminRaceClock");
       const statusEl = document.getElementById("adminStatusText");
-      if (!clockEl || !statusEl) return;
+      if (!clockEl || !statusEl || !eventState) return;
 
-      if (eventState && eventState.start_time) {
-        if (eventState.is_active) {
-          const elapsed = (Date.now() / 1000) - eventState.start_time;
-          clockEl.innerText = formatClock(elapsed);
-          statusEl.innerText = "RUNNING";
-          statusEl.className = "text-xs font-bold mt-1 text-emerald-400";
-        } else {
-          statusEl.innerText = "PAUSED";
-          statusEl.className = "text-xs font-bold mt-1 text-amber-400";
-        }
-      } else {
+      const status = eventState.status;
+      if (status === "running" && eventState.start_time) {
+        clockEl.innerText = formatClock((Date.now() / 1000) - eventState.start_time);
+      } else if (status === "ended" && eventState.start_time && eventState.end_time) {
+        clockEl.innerText = formatClock(eventState.end_time - eventState.start_time);
+      } else if (!eventState.start_time) {
         clockEl.innerText = "00:00:00";
-        statusEl.innerText = "STOPPED";
-        statusEl.className = "text-xs font-bold mt-1 text-slate-400";
       }
+      const [label, color] = STATUS_STYLE[status] || STATUS_STYLE.setup;
+      statusEl.innerText = label;
+      statusEl.className = `text-xs font-bold mt-1 ${color}`;
+
+      const ended = status === "ended";
+      document.getElementById("btnStart").disabled = ended || status === "running";
+      document.getElementById("btnStartLabel").innerText = status === "paused" ? "Resume" : "Start";
+      document.getElementById("btnPause").disabled = status !== "running";
+      document.getElementById("btnEnd").disabled = status === "setup" || ended;
+      document.getElementById("btnReset").disabled = status === "running";
+      document.getElementById("btnReopen").classList.toggle("hidden", !ended);
+      document.getElementById("endedNote").classList.toggle("hidden", !ended);
     }
 
     setInterval(updateTimerDisplay, 500);
+    updateTimerDisplay();
 
-    async function startRace() {
-      const res = await fetch("/api/event/start", { method: "POST" });
-      if (res.ok) {
-        const data = await res.json();
-        eventState.is_active = 1;
-        eventState.start_time = data.start_time;
-        updateTimerDisplay();
+    async function eventAction(path, failMessage) {
+      const res = await fetch(path, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.detail || failMessage);
+        return null;
       }
+      if (data.event) eventState = data.event;
+      updateTimerDisplay();
+      return data;
     }
 
-    async function pauseRace() {
-      const res = await fetch("/api/event/pause", { method: "POST" });
-      if (res.ok) {
-        eventState.is_active = 0;
-        updateTimerDisplay();
-      }
+    function startRace() { return eventAction("/api/event/start", "Could not start the event"); }
+    function pauseRace() { return eventAction("/api/event/pause", "Could not pause the event"); }
+    function reopenRace() { return eventAction("/api/event/reopen", "Could not reopen the event"); }
+
+    async function endRace() {
+      if (!confirm("End this event? Results will be frozen and no more laps will be timed. You can undo this with Reopen.")) return;
+      const data = await eventAction("/api/event/end", "Could not end the event");
+      if (data) window.location.reload();
     }
 
     async function resetRace() {
-      if (confirm("Are you sure you want to reset all lap data? Registered runners will be kept.")) {
-        const res = await fetch("/api/event/reset", { method: "POST" });
-        if (res.ok) {
-          eventState.is_active = 0;
-          eventState.start_time = null;
-          updateTimerDisplay();
-        }
-      }
+      if (!confirm("Clear ALL laps, breaks and raw reads for this event? Registered runners and their tags are kept. A backup is saved first.")) return;
+      const data = await eventAction("/api/event/reset", "Could not clear results");
+      if (data) window.location.reload();
+    }
+
+    async function createEvent(e) {
+      e.preventDefault();
+      const name = document.getElementById("newEventName").value;
+      const res = await fetch("/api/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      if (res.ok) window.location.reload();
+      else alert((await res.json()).detail || "Could not create event");
+    }
+
+    async function selectEvent(id) {
+      const res = await fetch(`/api/events/${id}/select`, { method: "POST" });
+      if (res.ok) window.location.reload();
+      else alert((await res.json()).detail || "Could not switch events");
     }
 
     async function saveSettings() {
       const name = document.getElementById("settingName").value;
       const min_lap_seconds = parseFloat(document.getElementById("settingMinLap").value);
       const max_lap_rest_seconds = parseFloat(document.getElementById("settingMaxRest").value);
+      const track_length_m = parseFloat(document.getElementById("settingTrackLength").value) || null;
       const btn = document.getElementById("saveSettingsBtn");
       const toast = document.getElementById("saveSettingsToast");
       if (btn) btn.disabled = true;
@@ -373,7 +490,7 @@
         const res = await fetch("/api/event/settings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, min_lap_seconds, max_lap_rest_seconds })
+          body: JSON.stringify({ name, min_lap_seconds, max_lap_rest_seconds, track_length_m })
         });
         if (res.ok) {
           if (toast) {
@@ -428,11 +545,12 @@
       const name = document.getElementById("regName").value;
       const epc = document.getElementById("regEpc").value;
       const notes = document.getElementById("regNotes").value;
+      const email = document.getElementById("regEmail").value;
 
       const res = await fetch("/api/participants", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bib_number, name, epc, notes })
+        body: JSON.stringify({ bib_number, name, epc, notes, email })
       });
 
       if (res.ok) {
@@ -526,7 +644,9 @@
         const msg = JSON.parse(event.data);
         if (msg.type === "event_status") {
           eventState = msg.event;
-          document.getElementById("adminStatusText").innerText = eventState.is_active ? "RUNNING" : "STOPPED";
+          updateTimerDisplay();
+        } else if (msg.type === "event_switched") {
+          window.location.reload();
         } else if (msg.type === "sim_speed_updated") {
           updateSpeedButtonUI(msg.speed);
         } else if (msg.type === "tag_detected") {

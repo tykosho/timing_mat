@@ -1,6 +1,19 @@
 # Features to consider or implement
-1. Display total distance for each participant
-2. Display cumulative distance for all participants
-3. Separate views for different stats
-4. Set up the ability to pre-register tags before a race starts (with bib number, participant name, tag ID)
+1. Display total distance for each participant  -- DONE on leaderboard + runner page (laps x event track length)
+2. Display cumulative distance for all participants  -- TODO (data is there: sum of distance_m)
+3. Separate views for different stats  -- TODO
+4. Set up the ability to pre-register tags before a race starts (with bib number, participant name, tag ID)  -- DONE (/prepare: CSV import + hold-tag-to-assign)
 5. Make sure the software stores data on the actual time that laps were completed for each runner. Enable live replay plot of the race (showing laps completed per participant on the mat over time)
+   -- Data stored DONE (lap crossing times + raw read log, CSV export). Replay plot TODO.
+
+# Added
+- Events (multiple, isolated), End / Reopen, results CSV export, backups on End/Reset, raw read log
+- Existing single-event databases migrate automatically
+
+# Ideas still open
+- Admin PIN (anyone on the Wi-Fi can currently reach /admin and the API)
+- Monotonic clock or RTC module so an NTP jump mid-race can't corrupt lap durations
+- Reader health indicator (connected, last read, reads/sec) on the admin page
+- Verify R200 parsing + RSSI scale against captured frames (python -m hardware.sniffer --raw)
+- Set R200 RF power / region from config at startup
+- Pi as its own Wi-Fi hotspot

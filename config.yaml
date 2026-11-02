@@ -3,7 +3,8 @@ event:
   name: "Take Back the Track!"
   min_lap_seconds: 45.0          # Minimum realistic lap time to prevent double-counting
   crossing_window_seconds: 2.5   # Group burst tag reads within this window
-  track_length_meters: 400
+  track_length_meters: 400       # unused: track length is set per event in the Admin page (default 400)
+  seed_demo: null                # true/false to force demo runners; null = only in mock mode
 
 hardware:
   mock: true                     # Set to false on Raspberry Pi with real R200 antenna

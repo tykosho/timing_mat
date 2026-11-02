@@ -2,7 +2,8 @@ import time
 import random
 import asyncio
 import logging
-from typing import Dict, List, Tuple, Callable, Optional, Any
+from collections import deque
+from typing import Deque, Dict, List, Tuple, Callable, Optional, Any
 from core.db import Database
 from core.models import TagRead
 
@@ -22,9 +23,27 @@ class LapEngine:
         self.on_runner_resumed = on_runner_resumed
         self.on_tag_detected = on_tag_detected
         self.speed_multiplier: float = 1.0
-        
+
         # Buffer to aggregate bursts of reads: epc -> list of (timestamp, rssi)
         self.buffers: Dict[str, List[Tuple[float, float]]] = {}
+
+        # Raw read log. The reader thread appends (deque.append is thread-safe) and flush_loop
+        # writes batches to the DB. Only reads while an event is running/paused are kept.
+        self.raw_queue: Deque[Tuple[int, str, float, float]] = deque()
+        self.log_event_id: Optional[int] = None
+
+    def refresh_event(self):
+        """Re-reads the current event so raw reads are tagged with the right event (or dropped)."""
+        event = self.db.get_event()
+        self.log_event_id = event["id"] if event and event["status"] in ("running", "paused") else None
+
+    def flush_raw_reads(self):
+        """Writes queued raw reads to the database."""
+        batch = []
+        while self.raw_queue:
+            batch.append(self.raw_queue.popleft())
+        if batch:
+            self.db.insert_raw_reads(batch)
 
     def process_tag_read(self, tag_read: TagRead):
         """Called whenever the RFID reader (mock or physical) reads an EPC."""
@@ -39,6 +58,10 @@ class LapEngine:
                 "rssi": tag_read.rssi
             })
 
+        event_id = self.log_event_id
+        if event_id is not None:
+            self.raw_queue.append((event_id, epc, now, tag_read.rssi))
+
         if epc not in self.buffers:
             self.buffers[epc] = []
         self.buffers[epc].append((now, tag_read.rssi))
@@ -47,6 +70,8 @@ class LapEngine:
         """Background coroutine that checks buffers and triggers crossings when a burst finishes."""
         while True:
             await asyncio.sleep(0.5)
+            self.refresh_event()
+            self.flush_raw_reads()
             now = time.time()
             epcs_to_process = []
 
@@ -82,9 +107,12 @@ class LapEngine:
         bib = participant["bib_number"]
         name = participant["name"]
 
-        # Only process if race event is active
-        if not event_state.get("is_active"):
-            logger.info(f"Event paused/inactive: {name} (Bib {bib}) crossed mat.")
+        # Only time crossings while the event is running. A crossing that finished just before
+        # End was pressed can still be resolved here (bursts are flushed ~2s after the last read).
+        status = event_state.get("status")
+        ended_in_time = status == "ended" and event_state.get("end_time") and peak_time <= event_state["end_time"]
+        if status != "running" and not ended_in_time:
+            logger.info(f"Event {status}: {name} (Bib {bib}) crossed mat; not timed.")
             return
 
         race_start = event_state.get("start_time")

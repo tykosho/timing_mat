@@ -19,7 +19,7 @@
           {{ runner.name }}
           <span class="text-emerald-400 font-mono text-xl">#{{ runner.bib_number }}</span>
         </h1>
-        <p class="text-xs text-slate-400 font-mono">EPC: {{ runner.epc }} {% if runner.notes %}• {{ runner.notes }}{% endif %}</p>
+        <p class="text-xs text-slate-400 font-mono">EPC: {{ runner.epc or 'no tag assigned' }} {% if runner.notes %}• {{ runner.notes }}{% endif %}</p>
       </div>
     </div>
     <div class="flex items-center space-x-3">
@@ -60,7 +60,7 @@
       <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
         <div class="text-xs text-slate-400 uppercase font-semibold">Total Laps Completed</div>
         <div class="text-3xl font-black text-white font-mono mt-1">{{ laps | length }}</div>
-        <div class="text-[11px] text-slate-500 mt-1">{{ ((laps | length) * 0.4) | round(2) }} km (400m track)</div>
+        <div class="text-[11px] text-slate-500 mt-1">{{ ((laps | length) * event.track_length_m / 1000) | round(2) }} km ({{ event.track_length_m | int }}m track)</div>
       </div>
 
       <!-- Fastest Lap -->

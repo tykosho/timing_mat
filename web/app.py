@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import json
 import asyncio
@@ -8,14 +9,15 @@ from markupsafe import Markup
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from core.db import Database
-from core.models import Participant, Lap, TagRead
+from core import exports
+from core.db import Database, RegistrationError, EventStateError
+from core.registration_import import parse_registration_csv
 from core.lap_engine import LapEngine
 from hardware.mock_reader import MockReader
 from hardware.serial_reader import SerialReader
@@ -30,11 +32,24 @@ if os.path.exists(config_path):
     with open(config_path, "r") as f:
         config = yaml.safe_load(f) or {}
 
-db_path = os.getenv("DB_PATH", config.get("database", {}).get("path", "data/race.db"))
-db = Database(db_path)
+def _flag(env_name: str, config_value: Any, default: bool) -> bool:
+    env = os.getenv(env_name)
+    if env is not None:
+        return env.lower() in ("true", "1", "yes")
+    return default if config_value is None else bool(config_value)
 
-# Ensure demo runners exist for initial testing
-db.seed_demo_runners()
+# Hardware setup (Mock vs Serial)
+use_mock = _flag("MOCK_HARDWARE", config.get("hardware", {}).get("mock"), True)
+serial_port = os.getenv("SERIAL_PORT", config.get("hardware", {}).get("serial_port", "/dev/ttyUSB0"))
+baud_rate = int(os.getenv("BAUD_RATE", config.get("hardware", {}).get("baud_rate", 115200)))
+
+db_path = os.getenv("DB_PATH", config.get("database", {}).get("path", "data/race.db"))
+db = Database(db_path, default_event_name=config.get("event", {}).get("name", "Take Back the Track!"))
+
+# Demo runners match the simulator's tags, so they default to on only in mock mode.
+# Never seeded on real hardware unless explicitly asked for.
+if _flag("SEED_DEMO", config.get("event", {}).get("seed_demo"), use_mock):
+    db.seed_demo_runners()
 
 # Active WebSocket connections
 active_connections: List[WebSocket] = []
@@ -79,6 +94,8 @@ async def on_runner_resumed(resume_data: Dict[str, Any]):
 
 # Callback when any tag is detected (used for Admin auto-fill / registration)
 def on_tag_detected(tag_info: Dict[str, Any]):
+    if main_event_loop is None:
+        return
     asyncio.run_coroutine_threadsafe(
         broadcast_ws({"type": "tag_detected", "data": tag_info}),
         main_event_loop
@@ -86,23 +103,14 @@ def on_tag_detected(tag_info: Dict[str, Any]):
 
 crossing_window = config.get("event", {}).get("crossing_window_seconds", 2.0)
 lap_engine = LapEngine(
-    db=db, 
-    crossing_window=crossing_window, 
+    db=db,
+    crossing_window=crossing_window,
     on_lap_completed=on_lap_completed,
     on_runner_started=on_runner_started,
     on_runner_resumed=on_runner_resumed,
     on_tag_detected=on_tag_detected
 )
-
-# Hardware setup (Mock vs Serial)
-use_mock_env = os.getenv("MOCK_HARDWARE")
-if use_mock_env is not None:
-    use_mock = use_mock_env.lower() in ("true", "1", "yes")
-else:
-    use_mock = config.get("hardware", {}).get("mock", True)
-
-serial_port = os.getenv("SERIAL_PORT", config.get("hardware", {}).get("serial_port", "/dev/ttyUSB0"))
-baud_rate = int(os.getenv("BAUD_RATE", config.get("hardware", {}).get("baud_rate", 115200)))
+lap_engine.refresh_event()
 
 if use_mock:
     reader = MockReader(on_tag_read=lap_engine.process_tag_read, speed_multiplier=1.0)
@@ -117,25 +125,52 @@ main_event_loop = None
 async def lifespan(app: FastAPI):
     global main_event_loop
     main_event_loop = asyncio.get_running_loop()
-    
+
     # Start engine flush loop
     flush_task = asyncio.create_task(lap_engine.flush_loop())
-    
+
     # Start RFID reader
     reader.start()
-    
+
     yield
-    
+
     reader.stop()
     flush_task.cancel()
+    lap_engine.flush_raw_reads()
 
 app = FastAPI(title="Race Timing System", lifespan=lifespan)
 
 # Templates and static setup
+def _tojson(obj) -> Markup:
+    """JSON that's safe to drop inside a <script> tag (names come from registrations)."""
+    text = json.dumps(obj)
+    for char, escaped in (("<", "\\u003c"), (">", "\\u003e"), ("&", "\\u0026"), (" ", "\\u2028"), (" ", "\\u2029")):
+        text = text.replace(char, escaped)
+    return Markup(text)
+
 templates = Jinja2Templates(directory="web/templates")
-templates.env.filters["tojson"] = lambda obj: Markup(json.dumps(obj))
+templates.env.filters["tojson"] = _tojson
 os.makedirs("web/static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="web/static"), name="static")
+
+@app.exception_handler(RegistrationError)
+async def registration_error_handler(request: Request, exc: RegistrationError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+@app.exception_handler(EventStateError)
+async def event_state_error_handler(request: Request, exc: EventStateError):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+async def push_event_status(include_leaderboard: bool = True):
+    """Tells the engine and every open page that the event changed."""
+    lap_engine.refresh_event()
+    message: Dict[str, Any] = {"type": "event_status", "event": db.get_event_state()}
+    if include_leaderboard:
+        message["leaderboard"] = db.get_leaderboard()
+    await broadcast_ws(message)
+
+async def push_leaderboard():
+    await broadcast_ws({"type": "leaderboard_update", "leaderboard": db.get_leaderboard()})
 
 # ----------------- PAGE ROUTES -----------------
 @app.get("/", response_class=HTMLResponse)
@@ -144,30 +179,40 @@ async def index():
 
 @app.get("/leaderboard", response_class=HTMLResponse)
 async def leaderboard_page(request: Request):
-    event_state = db.get_event_state()
-    leaderboard = db.get_leaderboard()
     return templates.TemplateResponse(
         request=request,
         name="leaderboard.html",
         context={
-            "event": event_state,
-            "leaderboard": leaderboard,
+            "event": db.get_event_state(),
+            "leaderboard": db.get_leaderboard(),
             "is_mock": use_mock
         }
     )
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
-    event_state = db.get_event_state()
-    participants = db.get_all_participants()
-    leaderboard = db.get_leaderboard()
     return templates.TemplateResponse(
         request=request,
         name="admin.html",
         context={
-            "event": event_state,
-            "participants": participants,
-            "leaderboard": leaderboard,
+            "event": db.get_event_state(),
+            "events": db.list_events(),
+            "participants": db.get_all_participants(),
+            "leaderboard": db.get_leaderboard(),
+            "is_mock": use_mock,
+            "serial_port": serial_port,
+            "raw_read_count": db.count_raw_reads()
+        }
+    )
+
+@app.get("/prepare", response_class=HTMLResponse)
+async def prepare_page(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="prepare.html",
+        context={
+            "event": db.get_event_state(),
+            "participants": db.get_all_participants(),
             "is_mock": use_mock
         }
     )
@@ -177,16 +222,14 @@ async def runner_page(request: Request, bib: int):
     participant = db.get_participant_by_bib(bib)
     if not participant:
         raise HTTPException(status_code=404, detail="Runner not found")
-    laps = db.get_laps_for_runner(bib)
-    breaks = db.get_breaks_for_runner(bib)
     event_state = db.get_event_state()
     return templates.TemplateResponse(
         request=request,
         name="runner_detail.html",
         context={
             "runner": participant,
-            "laps": laps,
-            "breaks": breaks,
+            "laps": db.get_laps_for_runner(bib),
+            "breaks": db.get_breaks_for_runner(bib),
             "event": event_state
         }
     )
@@ -198,12 +241,10 @@ async def websocket_endpoint(websocket: WebSocket):
     active_connections.append(websocket)
     try:
         # Send initial snapshot
-        event_state = db.get_event_state()
-        leaderboard = db.get_leaderboard()
         await websocket.send_json({
             "type": "init",
-            "event": event_state,
-            "leaderboard": leaderboard
+            "event": db.get_event_state(),
+            "leaderboard": db.get_leaderboard()
         })
         while True:
             # Keepalive / ping
@@ -217,81 +258,180 @@ async def websocket_endpoint(websocket: WebSocket):
 async def get_leaderboard():
     return db.get_leaderboard()
 
+def _elapsed(state: Dict[str, Any]) -> float:
+    if not state["start_time"]:
+        return 0.0
+    if state["status"] == "ended" and state["end_time"]:
+        return state["end_time"] - state["start_time"]
+    return time.time() - state["start_time"]
+
 @app.get("/api/event")
 async def get_event():
     state = db.get_event_state()
-    elapsed = 0.0
-    if state["is_active"] and state["start_time"]:
-        elapsed = time.time() - state["start_time"]
-    return {**state, "elapsed_seconds": round(elapsed, 1), "total_laps": db.get_total_laps_count()}
+    return {**state, "elapsed_seconds": round(_elapsed(state), 1), "total_laps": db.get_total_laps_count()}
 
 @app.post("/api/event/start")
 async def start_event():
-    state = db.get_event_state()
-    start_time = state["start_time"] if state["start_time"] else time.time()
-    db.update_event_state(is_active=True, start_time=start_time)
-    updated = db.get_event_state()
-    await broadcast_ws({"type": "event_status", "event": updated})
-    return {"status": "started", "start_time": start_time}
+    state = db.start_event()
+    await push_event_status()
+    return {"status": "started", "start_time": state["start_time"], "event": state}
 
 @app.post("/api/event/pause")
 async def pause_event():
-    db.update_event_state(is_active=False)
-    updated = db.get_event_state()
-    await broadcast_ws({"type": "event_status", "event": updated})
-    return {"status": "paused"}
+    state = db.pause_event()
+    await push_event_status()
+    return {"status": "paused", "event": state}
+
+@app.post("/api/event/end")
+async def end_event():
+    """Freezes the results. A database backup is written alongside, and results stay available as CSV."""
+    state = db.end_event()
+    lap_engine.flush_raw_reads()
+    backup_path = db.backup("event-ended")
+    await push_event_status()
+    return {"status": "ended", "event": state, "backup": backup_path}
+
+@app.post("/api/event/reopen")
+async def reopen_event():
+    state = db.reopen_event()
+    await push_event_status()
+    return {"status": "paused", "event": state}
 
 @app.post("/api/event/reset")
 async def reset_event():
+    """Wipes laps/breaks/raw reads for the current event (registrations are kept). A backup is taken first."""
+    if db.get_event_state()["status"] == "running":
+        raise EventStateError("Pause or end the event before resetting it.")
+    lap_engine.flush_raw_reads()
+    backup_path = db.backup("pre-reset")
     db.reset_race_data()
-    updated = db.get_event_state()
-    leaderboard = db.get_leaderboard()
-    await broadcast_ws({"type": "event_status", "event": updated, "leaderboard": leaderboard})
-    return {"status": "reset"}
+    await push_event_status()
+    return {"status": "reset", "backup": backup_path}
 
 class SettingsRequest(BaseModel):
     name: Optional[str] = None
-    min_lap_seconds: Optional[float] = None
-    max_lap_rest_seconds: Optional[float] = None
+    min_lap_seconds: Optional[float] = Field(default=None, gt=0)
+    max_lap_rest_seconds: Optional[float] = Field(default=None, gt=0)
+    track_length_m: Optional[float] = Field(default=None, gt=0)
 
 @app.post("/api/event/settings")
 async def update_settings(req: SettingsRequest):
-    db.update_event_state(
-        name=req.name, 
+    db.update_event_settings(
+        name=req.name,
         min_lap_seconds=req.min_lap_seconds,
-        max_lap_rest_seconds=req.max_lap_rest_seconds
+        max_lap_rest_seconds=req.max_lap_rest_seconds,
+        track_length_m=req.track_length_m
     )
-    updated = db.get_event_state()
-    await broadcast_ws({"type": "event_status", "event": updated})
-    return {"status": "updated", "event": updated}
+    await push_event_status(include_leaderboard=False)
+    return {"status": "updated", "event": db.get_event_state()}
+
+# Events
+class NewEventRequest(BaseModel):
+    name: str = Field(min_length=1)
+
+@app.get("/api/events")
+async def list_events():
+    return db.list_events()
+
+@app.post("/api/events")
+async def create_event(req: NewEventRequest):
+    """Creates an event and makes it current (so you can start pre-registering straight away)."""
+    new_id = db.create_event(req.name)
+    db.set_current_event(new_id)
+    await push_event_status()
+    await broadcast_ws({"type": "event_switched"})
+    return {"status": "created", "event": db.get_event(new_id)}
+
+@app.post("/api/events/{event_id}/select")
+async def select_event(event_id: int):
+    db.set_current_event(event_id)
+    await push_event_status()
+    await broadcast_ws({"type": "event_switched"})
+    return {"status": "selected", "event": db.get_event_state()}
+
+def _csv_response(event_id: int, kind: str, content_fn) -> Response:
+    event = db.get_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", event["name"]).strip("-").lower() or "event"
+    return Response(
+        content=content_fn(db, event_id),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{slug}-{kind}.csv"'}
+    )
+
+@app.get("/api/events/{event_id}/results.csv")
+async def export_results(event_id: int):
+    return _csv_response(event_id, "results", exports.results_csv)
+
+@app.get("/api/events/{event_id}/laps.csv")
+async def export_laps(event_id: int):
+    return _csv_response(event_id, "laps", exports.laps_csv)
+
+@app.get("/api/events/{event_id}/registrations.csv")
+async def export_registrations(event_id: int):
+    return _csv_response(event_id, "registrations", exports.registrations_csv)
+
+@app.get("/api/events/{event_id}/raw_reads.csv")
+async def export_raw_reads(event_id: int):
+    return _csv_response(event_id, "raw-reads", exports.raw_reads_csv)
 
 # Participants API
 class ParticipantRequest(BaseModel):
-    bib_number: int
+    bib_number: int = Field(gt=0)
     name: str
-    epc: str
+    epc: Optional[str] = ""
     notes: Optional[str] = ""
+    email: Optional[str] = ""
+
+@app.get("/api/participants")
+async def list_participants():
+    return db.get_all_participants()
 
 @app.post("/api/participants")
 async def add_participant(p: ParticipantRequest):
-    success = db.add_participant(p.bib_number, p.name, p.epc, p.notes)
-    if not success:
-        raise HTTPException(status_code=400, detail="Bib number or EPC already exists")
-    await broadcast_ws({"type": "leaderboard_update", "leaderboard": db.get_leaderboard()})
+    db.add_participant(p.bib_number, p.name, p.epc, p.notes or "", p.email or "")
+    await push_leaderboard()
     return {"status": "created"}
+
+class ImportRequest(BaseModel):
+    csv_text: str
+    first_bib: int = Field(default=1, gt=0)
+
+@app.post("/api/participants/import")
+async def import_participants(req: ImportRequest):
+    """Bulk-registers runners from a CSV (e.g. a Google Forms export). Existing registrations are never overwritten."""
+    rows, errors = parse_registration_csv(req.csv_text)
+    result = db.bulk_add_registrations(rows, first_bib=req.first_bib)
+    await push_leaderboard()
+    return {**result, "errors": errors}
 
 @app.put("/api/participants/{bib}")
 async def edit_participant(bib: int, p: ParticipantRequest):
-    success = db.update_participant(bib, p.name, p.epc, p.notes)
-    if not success:
-        raise HTTPException(status_code=400, detail="Update failed")
-    await broadcast_ws({"type": "leaderboard_update", "leaderboard": db.get_leaderboard()})
+    db.update_participant(bib, p.name, p.epc, p.notes or "", p.email)
+    await push_leaderboard()
     return {"status": "updated"}
+
+class TagRequest(BaseModel):
+    epc: str
+
+@app.put("/api/participants/{bib}/tag")
+async def assign_tag(bib: int, req: TagRequest):
+    """Pairs a scanned tag with a bib. Rejected if another bib in this event already uses the tag."""
+    db.set_participant_tag(bib, req.epc)
+    await push_leaderboard()
+    return {"status": "assigned", "bib": bib, "participant": db.get_participant_by_bib(bib)}
+
+@app.delete("/api/participants/{bib}/tag")
+async def clear_tag(bib: int):
+    db.set_participant_tag(bib, None)
+    await push_leaderboard()
+    return {"status": "cleared", "bib": bib}
 
 @app.delete("/api/participants/{bib}")
 async def remove_participant(bib: int):
     db.delete_participant(bib)
-    await broadcast_ws({"type": "leaderboard_update", "leaderboard": db.get_leaderboard()})
+    await push_leaderboard()
     return {"status": "deleted"}
 
 @app.post("/api/participants/{bib}/start")
@@ -343,11 +483,7 @@ async def reset_runner_start(bib: int):
     if not participant:
         raise HTTPException(status_code=404, detail="Runner not found")
     db.reset_participant_start(bib)
-    leaderboard = db.get_leaderboard()
-    await broadcast_ws({
-        "type": "leaderboard_update",
-        "leaderboard": leaderboard
-    })
+    await push_leaderboard()
     return {"status": "reset", "bib": bib}
 
 # Lap Adjustments
@@ -363,7 +499,7 @@ async def add_manual_lap(req: ManualLapRequest):
     last_lap = db.get_last_lap(req.bib_number)
     lap_number = (last_lap["lap_number"] + 1) if last_lap else 1
     crossing = time.time()
-    
+
     lap_id = db.record_lap(
         bib_number=req.bib_number,
         lap_number=lap_number,
@@ -390,7 +526,7 @@ async def add_manual_lap(req: ManualLapRequest):
 @app.delete("/api/laps/{lap_id}")
 async def delete_lap(lap_id: int):
     db.delete_lap(lap_id)
-    await broadcast_ws({"type": "leaderboard_update", "leaderboard": db.get_leaderboard()})
+    await push_leaderboard()
     return {"status": "lap_deleted"}
 
 # Simulator Controls

@@ -5,7 +5,59 @@ import unittest
 from core.db import Database
 from core.models import TagRead
 from core.lap_engine import LapEngine
-from hardware.r200_protocol import build_command_frame, parse_inventory_response, CMD_INVENTORY
+from hardware.r200_protocol import (
+    build_command_frame, calculate_checksum, extract_frames, parse_inventory_response, parse_tag_frame,
+    CMD_MULTI_POLLING, CMD_STOP_MULTI, READ_MULTI_COMMAND, READ_STOP_COMMAND
+)
+
+def make_tag_frame(epc_hex: str, raw_rssi: int = 0x45, pc_msb: int = 0x30) -> bytes:
+    """Builds an R200 tag notification: AA 02 22 LEN RSSI PC(2) EPC CRC(2) CS DD."""
+    payload = bytes([raw_rssi, pc_msb, 0x00]) + bytes.fromhex(epc_hex) + b"\x12\x34"
+    body = bytes([0x02, 0x22, len(payload) >> 8, len(payload) & 0xFF]) + payload
+    return bytes([0xAA]) + body + bytes([calculate_checksum(body), 0xDD])
+
+class TestR200Protocol(unittest.TestCase):
+    EPC = "E28011700000020101010001"
+
+    def test_command_frames(self):
+        self.assertEqual(build_command_frame(CMD_MULTI_POLLING, b"\x22\xff\xff"), READ_MULTI_COMMAND)
+        self.assertEqual(build_command_frame(CMD_STOP_MULTI), READ_STOP_COMMAND)
+
+    def test_parse_tag_frame(self):
+        self.assertEqual(parse_tag_frame(make_tag_frame(self.EPC, raw_rssi=0x45)), (self.EPC, 0x45))
+        epc, dbm = parse_inventory_response(make_tag_frame(self.EPC, raw_rssi=0x45))
+        self.assertEqual(epc, self.EPC)
+        self.assertLess(dbm, 0)
+
+    def test_rssi_is_not_the_pc_byte(self):
+        """Regression: the old sniffer reported the PC high byte (0x34 = 52) as RSSI."""
+        _, raw = parse_tag_frame(make_tag_frame(self.EPC, raw_rssi=0x2A, pc_msb=0x34))
+        self.assertEqual(raw, 0x2A)
+
+    def test_non_tag_frames_ignored(self):
+        self.assertIsNone(parse_tag_frame(READ_MULTI_COMMAND))
+        response = bytes([0xAA, 0x01, 0x27, 0x00, 0x01, 0x00, 0x29, 0xDD])
+        self.assertIsNone(parse_tag_frame(response))
+
+    def test_frames_emitted_per_chunk_not_after_buffer_fills(self):
+        """Regression: each tag frame must be available as soon as its bytes arrive."""
+        frame = make_tag_frame(self.EPC)
+        buf = bytearray()
+        got = []
+        for i in range(0, len(frame), 5):  # dribble the frame in 5-byte chunks
+            buf.extend(frame[i:i + 5])
+            frames, buf = extract_frames(buf)
+            got.extend(frames)
+        self.assertEqual(got, [frame])
+        self.assertEqual(len(buf), 0)
+
+    def test_extract_frames_resyncs_after_noise(self):
+        f1 = make_tag_frame(self.EPC)
+        f2 = make_tag_frame("E28011700000020101010002")
+        buf = bytearray(b"\x00\xAA\x13" + f1 + b"\xFF\xFF" + f2)
+        frames, rest = extract_frames(buf)
+        self.assertEqual(frames, [f1, f2])
+        self.assertEqual(len(rest), 0)
 
 class TestTimingMat(unittest.TestCase):
     def setUp(self):
@@ -26,21 +78,6 @@ class TestTimingMat(unittest.TestCase):
         self.assertIsNotNone(p101)
         self.assertEqual(p101["name"], "Alex Chen")
 
-    def test_r200_protocol_framing(self):
-        cmd = build_command_frame(CMD_INVENTORY, payload=b"\x00\x00")
-        self.assertEqual(cmd[0], 0xBB)
-        self.assertEqual(cmd[-1], 0x7E)
-
-        # Construct a synthetic R200 inventory response frame:
-        epc_bytes = bytes.fromhex("E28011700000020101010001")
-        payload = bytes([0x45, 0x30, 0x00]) + epc_bytes
-        frame = bytes([0xBB, 0x02, 0x22, 0x00, len(payload)]) + payload + bytes([0x00, 0x7E])
-        
-        parsed = parse_inventory_response(frame)
-        self.assertIsNotNone(parsed)
-        epc, rssi = parsed
-        self.assertEqual(epc, "E28011700000020101010001")
-
     def test_chip_start_and_lap_detection(self):
         laps_recorded = []
         started_runners = []
@@ -48,7 +85,8 @@ class TestTimingMat(unittest.TestCase):
 
         # Event started at t=1000
         t0 = 1000.0
-        self.db.update_event_state(is_active=True, start_time=t0, min_lap_seconds=45.0, max_lap_rest_seconds=300.0)
+        self.db.update_event_settings(min_lap_seconds=45.0, max_lap_rest_seconds=300.0)
+        self.db.start_event(at=t0)
 
         engine = LapEngine(
             db=self.db,

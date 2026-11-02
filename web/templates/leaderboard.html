@@ -47,10 +47,9 @@
         <div id="raceTimer" class="text-3xl font-mono font-black text-emerald-400 tabular-nums">00:00:00</div>
       </div>
       
-      <div id="statusBadge" class="flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-sm font-semibold 
-        {% if event.is_active %} bg-emerald-950/60 border-emerald-500/40 text-emerald-400 {% else %} bg-slate-800 border-slate-700 text-slate-400 {% endif %}">
-        <span class="w-2.5 h-2.5 rounded-full {% if event.is_active %} bg-emerald-400 animate-pulse {% else %} bg-slate-500 {% endif %}"></span>
-        <span id="statusText">{% if event.is_active %}LIVE{% else %}PAUSED{% endif %}</span>
+      <div id="statusBadge" class="flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-sm font-semibold bg-slate-800 border-slate-700 text-slate-400">
+        <span id="statusDot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+        <span id="statusText"></span>
       </div>
 
       <a href="/admin" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3.5 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2">
@@ -97,6 +96,7 @@
                 <th class="py-3.5 px-4 text-center w-24">Status</th>
                 <th class="py-3.5 px-4 text-center">Start Time</th>
                 <th class="py-3.5 px-4 text-center">Total Laps</th>
+                <th class="py-3.5 px-4 text-right">Distance</th>
                 <th class="py-3.5 px-4 text-right">Last Lap</th>
                 <th class="py-3.5 px-4 text-right">Fastest Lap</th>
                 <th class="py-3.5 px-4 text-right">Active Time</th>
@@ -166,13 +166,36 @@
       return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
     }
 
+    // Runner names come from registrations, so never insert them as raw HTML.
+    function esc(value) {
+      const div = document.createElement("div");
+      div.textContent = value == null ? "" : String(value);
+      return div.innerHTML;
+    }
+
+    const STATUS_BADGES = {
+      setup:   { text: "NOT STARTED", badge: "bg-slate-800 border-slate-700 text-slate-400", dot: "bg-slate-500" },
+      running: { text: "LIVE", badge: "bg-emerald-950/60 border-emerald-500/40 text-emerald-400", dot: "bg-emerald-400 animate-pulse" },
+      paused:  { text: "PAUSED", badge: "bg-amber-950/50 border-amber-500/40 text-amber-300", dot: "bg-amber-400" },
+      ended:   { text: "FINAL RESULTS", badge: "bg-rose-950/50 border-rose-500/40 text-rose-300", dot: "bg-rose-400" },
+    };
+
+    function applyEventStatus() {
+      const s = STATUS_BADGES[eventState.status] || STATUS_BADGES.setup;
+      document.getElementById("statusBadge").className = `flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-sm font-semibold ${s.badge}`;
+      document.getElementById("statusDot").className = `w-2.5 h-2.5 rounded-full ${s.dot}`;
+      document.getElementById("statusText").innerText = s.text;
+    }
+
     // Timer updater
     setInterval(() => {
-      if (eventState && eventState.is_active && eventState.start_time) {
-        const elapsed = (Date.now() / 1000) - eventState.start_time;
-        document.getElementById("raceTimer").innerText = formatClock(elapsed);
-      } else if (!eventState || !eventState.start_time) {
-        document.getElementById("raceTimer").innerText = "00:00:00";
+      const timer = document.getElementById("raceTimer");
+      if (!eventState || !eventState.start_time) {
+        timer.innerText = "00:00:00";
+      } else if (eventState.status === "running") {
+        timer.innerText = formatClock((Date.now() / 1000) - eventState.start_time);
+      } else if (eventState.status === "ended" && eventState.end_time) {
+        timer.innerText = formatClock(eventState.end_time - eventState.start_time);
       }
     }, 500);
 
@@ -204,6 +227,8 @@
           statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center gap-1 mx-auto"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Running</span>`;
         } else if (runner.status === 'on_break') {
           statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center justify-center gap-1 mx-auto"><i class="fa-solid fa-mug-hot text-[9px]"></i> Rest</span>`;
+        } else if (runner.status === 'finished') {
+          statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 block text-center"><i class="fa-solid fa-flag-checkered text-[9px]"></i> Finished</span>`;
         }
 
         // Start time cell
@@ -227,7 +252,7 @@
           <td class="py-3 px-4 font-mono text-emerald-400 font-bold text-base">#${runner.bib_number}</td>
           <td class="py-3 px-4">
             <a href="/runner/${runner.bib_number}" class="text-white hover:text-emerald-400 font-bold transition flex items-center gap-2">
-              ${runner.name}
+              ${esc(runner.name)}
               <i class="fa-solid fa-arrow-up-right-from-square text-xs text-slate-500"></i>
             </a>
           </td>
@@ -235,6 +260,9 @@
           <td class="py-3 px-4 text-center">${startHtml}</td>
           <td class="py-3 px-4 text-center">
             <span class="text-2xl font-black text-white font-mono">${runner.total_laps}</span>
+          </td>
+          <td class="py-3 px-4 text-right font-mono text-sky-300">
+            ${runner.distance_m > 0 ? (runner.distance_m / 1000).toFixed(2) + ' km' : '-'}
           </td>
           <td class="py-3 px-4 text-right font-mono text-slate-200">
             ${runner.last_lap_seconds ? formatTime(runner.last_lap_seconds) : '--:--'}
@@ -275,7 +303,7 @@
 
     function showCrossingAlert(lap) {
       showBannerAlert(
-        `🎉 <strong>${lap.name}</strong> (#${lap.bib_number}) completed <strong>Lap ${lap.lap_number}</strong> in ${formatTime(lap.lap_duration_seconds)}`,
+        `🎉 <strong>${esc(lap.name)}</strong> (#${lap.bib_number}) completed <strong>Lap ${lap.lap_number}</strong> in ${formatTime(lap.lap_duration_seconds)}`,
         lap.peak_rssi
       );
 
@@ -295,6 +323,7 @@
         const msg = JSON.parse(event.data);
         if (msg.type === "init") {
           eventState = msg.event;
+          applyEventStatus();
           renderLeaderboard(msg.leaderboard);
         } else if (msg.type === "lap_completed") {
           renderLeaderboard(msg.leaderboard);
@@ -302,14 +331,14 @@
         } else if (msg.type === "runner_started") {
           renderLeaderboard(msg.leaderboard);
           showBannerAlert(
-            `🚀 <strong>${msg.data.name}</strong> (#${msg.data.bib_number}) crossed the mat & began their race!`,
+            `🚀 <strong>${esc(msg.data.name)}</strong> (#${msg.data.bib_number}) crossed the mat & began their race!`,
             msg.data.peak_rssi,
             "from-indigo-600 to-blue-600"
           );
         } else if (msg.type === "runner_resumed") {
           renderLeaderboard(msg.leaderboard);
           showBannerAlert(
-            `☕ <strong>${msg.data.name}</strong> (#${msg.data.bib_number}) resumed running after a <strong>${formatTime(msg.data.break_duration_seconds)}</strong> break!`,
+            `☕ <strong>${esc(msg.data.name)}</strong> (#${msg.data.bib_number}) resumed running after a <strong>${formatTime(msg.data.break_duration_seconds)}</strong> break!`,
             null,
             "from-amber-600 to-orange-600"
           );
@@ -318,15 +347,9 @@
         } else if (msg.type === "event_status") {
           eventState = msg.event;
           if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
-          const badge = document.getElementById("statusBadge");
-          const text = document.getElementById("statusText");
-          if (eventState.is_active) {
-            badge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-sm font-semibold bg-emerald-950/60 border-emerald-500/40 text-emerald-400";
-            text.innerText = "LIVE";
-          } else {
-            badge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-sm font-semibold bg-slate-800 border-slate-700 text-slate-400";
-            text.innerText = "PAUSED";
-          }
+          applyEventStatus();
+        } else if (msg.type === "event_switched") {
+          window.location.reload();
         }
       };
 
@@ -336,37 +359,7 @@
     }
 
     // Initial render
-    renderLeaderboard(initialLeaderboard);
-    connectWS();
-  </script>
-          eventState = msg.event;
-          renderLeaderboard(msg.leaderboard);
-        } else if (msg.type === "lap_completed") {
-          renderLeaderboard(msg.leaderboard);
-          showCrossingAlert(msg.lap);
-        } else if (msg.type === "leaderboard_update") {
-          renderLeaderboard(msg.leaderboard);
-        } else if (msg.type === "event_status") {
-          eventState = msg.event;
-          if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
-          const badge = document.getElementById("statusBadge");
-          const text = document.getElementById("statusText");
-          if (eventState.is_active) {
-            badge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-sm font-semibold bg-emerald-950/60 border-emerald-500/40 text-emerald-400";
-            text.innerText = "LIVE";
-          } else {
-            badge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-sm font-semibold bg-slate-800 border-slate-700 text-slate-400";
-            text.innerText = "PAUSED";
-          }
-        }
-      };
-
-      ws.onclose = () => {
-        setTimeout(connectWS, 2000); // Auto reconnect
-      };
-    }
-
-    // Initial render
+    applyEventStatus();
     renderLeaderboard(initialLeaderboard);
     connectWS();
   </script>

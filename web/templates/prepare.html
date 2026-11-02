@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ event.name }} - Prepare Bibs</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
+
+  <header class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50">
+    <div class="flex items-center space-x-4">
+      <a href="/admin" class="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center text-slate-300 transition">
+        <i class="fa-solid fa-arrow-left"></i>
+      </a>
+      <div>
+        <h1 class="text-xl font-black tracking-tight text-white">Prepare Bibs</h1>
+        <p class="text-xs text-slate-400">{{ event.name }} &bull; pair RFID tags with registered runners before the event</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-4">
+      <div class="text-right">
+        <div class="text-xs uppercase font-semibold text-slate-400">Tagged</div>
+        <div class="text-2xl font-mono font-black text-emerald-400"><span id="taggedCount">0</span> / <span id="totalCount">0</span></div>
+      </div>
+      <a href="/api/events/{{ event.id }}/registrations.csv" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 px-3 py-2 rounded-lg text-sm font-medium transition">
+        <i class="fa-solid fa-download mr-1"></i> Runner list (CSV)
+      </a>
+    </div>
+  </header>
+
+  {% if is_mock %}
+  <div class="bg-amber-950/60 border-b border-amber-700/40 text-amber-200 text-xs px-6 py-2">
+    <i class="fa-solid fa-robot mr-1"></i> Simulator mode: tag reads come from simulated demo runners, not a real reader.
+  </div>
+  {% endif %}
+  {% if event.status != 'setup' %}
+  <div class="bg-sky-950/60 border-b border-sky-700/40 text-sky-200 text-xs px-6 py-2">
+    This event is <strong>{{ event.status }}</strong>. You can still change tags, but laps already timed keep their old tag.
+  </div>
+  {% endif %}
+
+  <main class="flex-1 max-w-7xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <!-- Left column: assignment + import -->
+    <div class="space-y-6">
+
+      <!-- Tag assignment -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+        <h2 class="text-base font-bold text-slate-200 mb-1 flex items-center gap-2">
+          <i class="fa-solid fa-tags text-indigo-400"></i> Assign Tags
+        </h2>
+        <p class="text-xs text-slate-400 mb-4">
+          Turn assignment on, then hold each bib's tag at the antenna. It's paired with the runner below and the list advances.
+          Keep other tags away from the antenna while you do this.
+        </p>
+
+        <button id="assignToggle" onclick="toggleAssign()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-sm transition shadow-lg shadow-indigo-600/20">
+          <i class="fa-solid fa-play mr-1"></i> Start Assigning
+        </button>
+
+        <div class="mt-4 bg-slate-950/60 border border-slate-800 rounded-xl p-4">
+          <div class="text-xs uppercase font-semibold text-slate-400">Next up</div>
+          <div id="nextUp" class="text-lg font-black text-white mt-1">-</div>
+          <div id="nextUpHint" class="text-[11px] text-slate-500 mt-0.5"></div>
+        </div>
+
+        <div id="assignMsg" class="mt-3 text-sm min-h-[2.5rem] text-slate-400">Assignment is off.</div>
+
+        <div class="mt-3 text-[11px] text-slate-500 font-mono">
+          Last tag seen: <span id="lastSeen" class="text-slate-300">none</span>
+        </div>
+      </div>
+
+      <!-- CSV import -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+        <h2 class="text-base font-bold text-slate-200 mb-1 flex items-center gap-2">
+          <i class="fa-solid fa-file-csv text-emerald-400"></i> Import Registrations
+        </h2>
+        <p class="text-xs text-slate-400 mb-3">
+          Export your sign-up form (Google Forms &rarr; Sheets &rarr; Download CSV) and import it here.
+          Needs a <code class="text-slate-300">Name</code> (or First + Last Name) column. <code class="text-slate-300">Email</code>,
+          <code class="text-slate-300">Bib</code>, <code class="text-slate-300">Notes</code> and <code class="text-slate-300">Tag EPC</code> are optional.
+          Blank bibs are auto-numbered; people already registered are skipped, never overwritten.
+        </p>
+
+        <input type="file" id="csvFile" accept=".csv,text/csv,text/plain" onchange="loadCsvFile()"
+               class="block w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 mb-3">
+        <textarea id="csvText" rows="5" placeholder="...or paste CSV text here" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-emerald-500"></textarea>
+
+        <div class="flex items-center gap-3 mt-3">
+          <label class="text-xs text-slate-300">First bib #</label>
+          <input type="number" id="firstBib" value="1" min="1" class="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-white font-mono">
+          <button onclick="importCsv()" id="importBtn" class="ml-auto bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-lg text-sm transition">
+            Import
+          </button>
+        </div>
+        <div id="importResult" class="mt-3 text-xs space-y-1"></div>
+      </div>
+    </div>
+
+    <!-- Right: runner table -->
+    <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
+        <div>
+          <h2 class="text-base font-bold text-slate-200 flex items-center gap-2">
+            <i class="fa-solid fa-users text-teal-400"></i> Registered Runners
+          </h2>
+          <p class="text-xs text-slate-400">Click a row's <em>Tag this</em> to pick who gets the next tag, or to replace an existing tag.</p>
+        </div>
+        <label class="text-xs text-slate-300 flex items-center gap-2">
+          <input type="checkbox" id="onlyUntagged" onchange="renderTable()" class="accent-indigo-500"> Show only untagged
+        </label>
+      </div>
+
+      <div class="overflow-x-auto max-h-[70vh] overflow-y-auto">
+        <table class="w-full text-left border-collapse">
+          <thead class="sticky top-0 bg-slate-950/90 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+            <tr>
+              <th class="py-2.5 px-4 w-20">Bib #</th>
+              <th class="py-2.5 px-4">Name</th>
+              <th class="py-2.5 px-4">Email</th>
+              <th class="py-2.5 px-4">Tag EPC</th>
+              <th class="py-2.5 px-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="runnerRows" class="divide-y divide-slate-800 text-sm"></tbody>
+        </table>
+        <div id="emptyNote" class="hidden py-10 text-center text-slate-500 text-sm">No runners yet. Import a CSV or add one from the Admin page.</div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let participants = {{ participants | tojson | safe }};
+    let assigning = false;
+    let selectedBib = null;          // explicit target chosen by the user; null = first untagged runner
+    let pending = {};                // epc -> strongest rssi seen in the current 600ms window
+    let pendingTimer = null;
+    const quietUntil = {};           // epc -> time before which repeat messages about it are suppressed
+    let audioCtx = null;
+
+    function esc(value) {
+      const div = document.createElement("div");
+      div.textContent = value == null ? "" : String(value);
+      return div.innerHTML;
+    }
+
+    function beep(freq, ms) {
+      try {
+        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+        osc.frequency.value = freq; gain.gain.value = 0.12;
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(); osc.stop(audioCtx.currentTime + ms / 1000);
+      } catch (e) { /* audio is optional */ }
+    }
+
+    function tagOwner(epc) { return participants.find(p => p.epc === epc); }
+
+    function targetRunner() {
+      if (selectedBib !== null) return participants.find(p => p.bib_number === selectedBib) || null;
+      return participants.find(p => !p.epc) || null;
+    }
+
+    function setMsg(html, cls) {
+      const el = document.getElementById("assignMsg");
+      el.className = "mt-3 text-sm min-h-[2.5rem] " + (cls || "text-slate-400");
+      el.innerHTML = html;
+    }
+
+    function updateSummary() {
+      const tagged = participants.filter(p => p.epc).length;
+      document.getElementById("taggedCount").innerText = tagged;
+      document.getElementById("totalCount").innerText = participants.length;
+      const t = targetRunner();
+      const nextUp = document.getElementById("nextUp"), hint = document.getElementById("nextUpHint");
+      if (t) {
+        nextUp.innerHTML = `<span class="text-emerald-400 font-mono">#${t.bib_number}</span> ${esc(t.name)}`;
+        hint.innerText = t.epc ? "Already has a tag - the next scan will REPLACE it." : (selectedBib !== null ? "Chosen manually." : "First runner without a tag.");
+      } else {
+        nextUp.innerText = participants.length ? "All runners are tagged" : "No runners yet";
+        hint.innerText = "";
+      }
+    }
+
+    function renderTable() {
+      const onlyUntagged = document.getElementById("onlyUntagged").checked;
+      const rows = participants.filter(p => !onlyUntagged || !p.epc);
+      const t = targetRunner();
+      document.getElementById("emptyNote").classList.toggle("hidden", participants.length > 0);
+      document.getElementById("runnerRows").innerHTML = rows.map(p => `
+        <tr class="${t && t.bib_number === p.bib_number ? 'bg-indigo-950/40' : 'hover:bg-slate-800/40'}">
+          <td class="py-2.5 px-4 font-mono font-bold text-emerald-400">#${p.bib_number}</td>
+          <td class="py-2.5 px-4 font-medium text-white">${esc(p.name)}</td>
+          <td class="py-2.5 px-4 text-xs text-slate-400">${esc(p.email)}</td>
+          <td class="py-2.5 px-4 font-mono text-xs">${p.epc ? `<span class="text-emerald-300">${esc(p.epc)}</span>` : '<span class="text-amber-400">not tagged</span>'}</td>
+          <td class="py-2.5 px-4 text-right space-x-1.5 whitespace-nowrap">
+            <button onclick="selectTarget(${p.bib_number})" class="text-xs bg-indigo-950/60 hover:bg-indigo-900 border border-indigo-700/50 text-indigo-300 px-2 py-1 rounded">Tag this</button>
+            ${p.epc ? `<button onclick="clearTag(${p.bib_number})" class="text-xs bg-rose-950/40 hover:bg-rose-900 border border-rose-800/40 text-rose-300 px-2 py-1 rounded">Clear</button>` : ''}
+          </td>
+        </tr>`).join("");
+      updateSummary();
+    }
+
+    function selectTarget(bib) {
+      selectedBib = bib;
+      renderTable();
+    }
+
+    async function refreshParticipants() {
+      const res = await fetch("/api/participants");
+      if (res.ok) { participants = await res.json(); renderTable(); }
+    }
+
+    function toggleAssign() {
+      assigning = !assigning;
+      const btn = document.getElementById("assignToggle");
+      if (assigning) {
+        btn.className = "w-full bg-rose-600 hover:bg-rose-500 text-white font-bold py-3 rounded-xl text-sm transition";
+        btn.innerHTML = '<i class="fa-solid fa-stop mr-1"></i> Stop Assigning';
+        setMsg("Listening... hold a tag at the antenna.", "text-indigo-300");
+        beep(660, 80); // also unlocks audio (browsers need a click first)
+      } else {
+        btn.className = "w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-sm transition shadow-lg shadow-indigo-600/20";
+        btn.innerHTML = '<i class="fa-solid fa-play mr-1"></i> Start Assigning';
+        setMsg("Assignment is off.");
+        pending = {};
+      }
+    }
+
+    function onTagRead(tag) {
+      document.getElementById("lastSeen").innerText = tag.epc;
+      if (!assigning) return;
+      pending[tag.epc] = Math.max(pending[tag.epc] ?? -Infinity, tag.rssi);
+      if (!pendingTimer) pendingTimer = setTimeout(resolvePending, 600);
+    }
+
+    async function resolvePending() {
+      pendingTimer = null;
+      const seen = Object.entries(pending).map(([epc, rssi]) => ({ epc, rssi }));
+      pending = {};
+      const now = Date.now();
+
+      const fresh = seen.filter(t => !tagOwner(t.epc));
+      if (!fresh.length) {
+        // Only tags that are already assigned. Say so once, not on every burst.
+        const repeat = seen.find(t => !(quietUntil[t.epc] > now));
+        if (repeat) {
+          const owner = tagOwner(repeat.epc);
+          quietUntil[repeat.epc] = now + 4000;
+          setMsg(`That tag is already assigned to <strong>#${owner.bib_number} ${esc(owner.name)}</strong>.`, "text-amber-300");
+          beep(220, 200);
+        }
+        return;
+      }
+
+      fresh.sort((a, b) => b.rssi - a.rssi);
+      if (fresh.length > 1 && fresh[0].rssi - fresh[1].rssi < 6) {
+        setMsg(`${fresh.length} new tags are in range at once - move the others away and try again.`, "text-amber-300");
+        beep(220, 200);
+        return;
+      }
+
+      const target = targetRunner();
+      if (!target) { setMsg("Nobody left to tag. Import or add runners first.", "text-amber-300"); return; }
+
+      const epc = fresh[0].epc;
+      const res = await fetch(`/api/participants/${target.bib_number}/tag`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ epc })
+      });
+      if (res.ok) {
+        target.epc = epc;
+        quietUntil[epc] = Date.now() + 4000;
+        selectedBib = null;
+        beep(880, 120);
+        const next = targetRunner();
+        setMsg(`<i class="fa-solid fa-check"></i> Tag paired with <strong>#${target.bib_number} ${esc(target.name)}</strong>.` +
+               (next ? ` Next: #${next.bib_number} ${esc(next.name)}` : " All runners tagged!"), "text-emerald-300");
+        renderTable();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        beep(220, 300);
+        setMsg(esc(err.detail || "Could not assign that tag."), "text-rose-300");
+        await refreshParticipants();
+      }
+    }
+
+    async function clearTag(bib) {
+      const res = await fetch(`/api/participants/${bib}/tag`, { method: "DELETE" });
+      if (res.ok) { selectedBib = bib; await refreshParticipants(); }
+    }
+
+    function loadCsvFile() {
+      const file = document.getElementById("csvFile").files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => { document.getElementById("csvText").value = reader.result; };
+      reader.readAsText(file);
+    }
+
+    async function importCsv() {
+      const csv_text = document.getElementById("csvText").value;
+      const out = document.getElementById("importResult");
+      if (!csv_text.trim()) { out.innerHTML = '<div class="text-amber-300">Choose a CSV file or paste its contents first.</div>'; return; }
+      const btn = document.getElementById("importBtn");
+      btn.disabled = true;
+      try {
+        const res = await fetch("/api/participants/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ csv_text, first_bib: parseInt(document.getElementById("firstBib").value) || 1 })
+        });
+        const data = await res.json();
+        if (!res.ok) { out.innerHTML = `<div class="text-rose-300">${esc(data.detail || "Import failed")}</div>`; return; }
+        const problems = [...data.skipped.map(s => `Line ${s.line} (${esc(s.name)}): ${esc(s.reason)}`),
+                          ...data.errors.map(e => `Line ${e.line}${e.name ? ' (' + esc(e.name) + ')' : ''}: ${esc(e.reason)}`)];
+        out.innerHTML = `<div class="text-emerald-300 font-semibold">Imported ${data.imported.length} runner(s).</div>` +
+          (problems.length ? `<div class="text-amber-300">Skipped ${problems.length}:</div>` +
+            problems.map(p => `<div class="text-slate-400">${p}</div>`).join("") : "");
+        document.getElementById("csvText").value = "";
+        document.getElementById("csvFile").value = "";
+        await refreshParticipants();
+      } catch (err) {
+        out.innerHTML = `<div class="text-rose-300">${esc(err)}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function connectWS() {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "tag_detected") onTagRead(msg.data);
+        else if (msg.type === "leaderboard_update") refreshParticipants();
+        else if (msg.type === "event_switched") window.location.reload();
+      };
+      ws.onclose = () => setTimeout(connectWS, 2000);
+    }
+
+    renderTable();
+    connectWS();
+  </script>
+</body>
+</html>
