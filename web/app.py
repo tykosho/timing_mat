@@ -140,7 +140,21 @@ app.mount("/static", StaticFiles(directory="web/static"), name="static")
 # ----------------- PAGE ROUTES -----------------
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return RedirectResponse(url="/leaderboard")
+    return RedirectResponse(url="/crossings")
+
+@app.get("/crossings", response_class=HTMLResponse)
+async def crossings_page(request: Request):
+    event_state = db.get_event_state()
+    leaderboard = db.get_leaderboard()
+    return templates.TemplateResponse(
+        request=request,
+        name="crossings.html",
+        context={
+            "event": event_state,
+            "leaderboard": leaderboard,
+            "is_mock": use_mock
+        }
+    )
 
 @app.get("/leaderboard", response_class=HTMLResponse)
 async def leaderboard_page(request: Request):
@@ -350,10 +364,82 @@ async def reset_runner_start(bib: int):
     })
     return {"status": "reset", "bib": bib}
 
-# Lap Adjustments
 class ManualLapRequest(BaseModel):
     bib_number: int
     lap_duration_seconds: float
+
+class QuickLapAdjustRequest(BaseModel):
+    bib_number: int
+    lap_duration_seconds: Optional[float] = None
+
+@app.post("/api/participants/{bib}/quick-add-lap")
+async def quick_add_lap(bib: int, req: Optional[QuickLapAdjustRequest] = None):
+    """Quickly increments a runner's lap count, estimating split from average or time difference."""
+    participant = db.get_participant_by_bib(bib)
+    if not participant:
+        raise HTTPException(status_code=404, detail="Runner not found")
+        
+    last_lap = db.get_last_lap(bib)
+    lap_number = (last_lap["lap_number"] + 1) if last_lap else 1
+    now = time.time()
+    
+    # Calculate sensible duration
+    last_crossing = participant.get("last_crossing_time") or participant.get("start_time")
+    if req and req.lap_duration_seconds and req.lap_duration_seconds > 0:
+        duration = req.lap_duration_seconds
+    elif last_crossing and (now - last_crossing) > 10.0:
+        duration = min(300.0, now - last_crossing)
+    elif last_lap and last_lap.get("lap_duration_seconds"):
+        duration = last_lap["lap_duration_seconds"]
+    else:
+        duration = 75.0
+        
+    lap_id = db.record_lap(
+        bib_number=bib,
+        lap_number=lap_number,
+        crossing_time=now,
+        lap_duration_seconds=round(duration, 2),
+        peak_rssi=0.0,
+        manual_entry=True
+    )
+    db.update_participant_last_crossing(bib, now)
+    
+    # If participant hasn't started yet, set start time
+    if not participant.get("start_time"):
+        db.set_participant_start(bib, now - duration)
+        
+    leaderboard = db.get_leaderboard()
+    lap_data = {
+        "id": lap_id,
+        "bib_number": bib,
+        "name": participant["name"],
+        "lap_number": lap_number,
+        "lap_duration_seconds": round(duration, 2),
+        "crossing_time": now,
+        "peak_rssi": 0.0,
+        "manual_entry": True
+    }
+    await broadcast_ws({
+        "type": "lap_completed",
+        "lap": lap_data,
+        "leaderboard": leaderboard
+    })
+    return {"status": "lap_added", "lap": lap_data}
+
+@app.post("/api/participants/{bib}/quick-remove-lap")
+async def quick_remove_lap(bib: int):
+    """Quickly removes the most recent lap for a runner (undoing false/duplicate crossing)."""
+    removed = db.delete_last_lap_for_runner(bib)
+    if not removed:
+        raise HTTPException(status_code=400, detail="No laps to remove for this runner")
+    leaderboard = db.get_leaderboard()
+    await broadcast_ws({
+        "type": "lap_removed",
+        "bib_number": bib,
+        "removed_lap": removed,
+        "leaderboard": leaderboard
+    })
+    return {"status": "lap_removed", "removed_lap": removed}
 
 @app.post("/api/laps/manual")
 async def add_manual_lap(req: ManualLapRequest):

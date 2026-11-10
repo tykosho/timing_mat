@@ -5,7 +5,13 @@ import unittest
 from core.db import Database
 from core.models import TagRead
 from core.lap_engine import LapEngine
-from hardware.r200_protocol import build_command_frame, parse_inventory_response, CMD_INVENTORY
+from hardware.r200_protocol import (
+    build_command_frame,
+    parse_inventory_response,
+    CMD_SINGLE_POLLING,
+    HEADER,
+    FOOTER,
+)
 
 class TestTimingMat(unittest.TestCase):
     def setUp(self):
@@ -27,14 +33,14 @@ class TestTimingMat(unittest.TestCase):
         self.assertEqual(p101["name"], "Alex Chen")
 
     def test_r200_protocol_framing(self):
-        cmd = build_command_frame(CMD_INVENTORY, payload=b"\x00\x00")
-        self.assertEqual(cmd[0], 0xBB)
-        self.assertEqual(cmd[-1], 0x7E)
+        cmd = build_command_frame(CMD_SINGLE_POLLING, payload=b"\x00\x00")
+        self.assertEqual(cmd[0], HEADER)
+        self.assertEqual(cmd[-1], FOOTER)
 
         # Construct a synthetic R200 inventory response frame:
         epc_bytes = bytes.fromhex("E28011700000020101010001")
         payload = bytes([0x45, 0x30, 0x00]) + epc_bytes
-        frame = bytes([0xBB, 0x02, 0x22, 0x00, len(payload)]) + payload + bytes([0x00, 0x7E])
+        frame = bytes([HEADER, 0x02, CMD_SINGLE_POLLING, 0x00, len(payload)]) + payload + bytes([0x00, FOOTER])
         
         parsed = parse_inventory_response(frame)
         self.assertIsNotNone(parsed)

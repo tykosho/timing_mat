@@ -1,1 +1,6 @@
 R200_SDK(EN)/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.db
+*.db-journal

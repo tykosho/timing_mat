@@ -1,6 +1,48 @@
 # Features to consider or implement
-1. Display total distance for each participant
-2. Display cumulative distance for all participants
-3. Separate views for different stats
-4. Set up the ability to pre-register tags before a race starts (with bib number, participant name, tag ID)
-5. Make sure the software stores data on the actual time that laps were completed for each runner. Enable live replay plot of the race (showing laps completed per participant on the mat over time)
+
+## 1. Mat Crossing Feed & Instant Verification View (High Priority)
+- **"Mat Crossing Feed" / Recent Finishers Deck**:
+  - As runners come across the mat (individually or in packs), show their cards prominently on screen.
+  - Keep recently completed runner stats persistent on screen for a configurable duration (e.g. 1–3 minutes, or last 6–8 runners) so runners passing by can clearly see and verify:
+    - Bib #, Name, and Photo/Avatar
+    - Time for last lap split (e.g., `1:14.2`) & comparison with their average/fastest
+    - Updated total lap count & total distance
+    - Current standing / rank change
+  - **Quick Error Correction on Crossing Cards**:
+    - **Add Missed Lap** button right on their active crossing card (`+1 Lap` with automatic time split).
+    - **Remove Erroneous / Double Lap** button (`-1 Lap` / delete last crossing) quickly without having to hunt through the admin table.
+
+## 2. Multi-Level Simulator Architecture
+- **Level 1: Raw Hardware / Serial Stream Injection**:
+  - Emulate binary UART packets (`0xAA ... 0xDD`), checksum errors, RSSI jitter, and dropped frames.
+- **Level 2: Race Dynamics & Flaw Injection**:
+  - Pack crossings (runners crossing within fractions of a second).
+  - Common hardware flaws:
+    - **Missed readings** (tag occlusion, antenna dead zone, water absorption).
+    - **Phantom / isolated single reads** (stray spectator walking 10m away; single read with weak RSSI to be filtered).
+    - **Loitering / standing on mat** (extended burst without departing).
+- **Level 3: Session Replay / UI Demonstration**:
+  - Replay recorded race sessions or synthetic GPX/JSON logs directly to WebSocket clients.
+
+## 3. Participant Registration & Profiles
+- Pre-register tags before a race starts (Bib number, participant name, RFID tag EPC, optional team).
+- Participant photos (upload image or auto-generated initials avatar placeholder).
+- Import / export runner roster via CSV or JSON.
+
+## 4. Participant & Team Goals
+- **Personal Goals**:
+  - Lap count goal (e.g., target 50 laps / 20 km): show countdown to goal and surplus/deficit pacing.
+  - Time duration goal (e.g., 1-hour run): remaining time countdown with projected lap total.
+- **Team / Relay Tracking**:
+  - Group runners into teams / relay squads.
+  - Team aggregated laps, cumulative team distance, and team leaderboard.
+
+## 5. Stats, Analytics & Distance
+- Display total distance for each participant (laps × track meters).
+- Display cumulative distance for all participants combined (e.g. mapped to landmarks: "Total Earth Distance").
+- Separate dedicated views for different display needs:
+  - Big-screen Live Mat Crossing HUD (for trackside monitor facing runners).
+  - Overall Ranked Leaderboard (for spectators).
+  - Admin & Control Center (with quick manual lap corrections).
+- Store exact timestamps of lap completions for race replay plots (laps completed per participant over time).
+- Post-race verification / comparison against Strava / GPS data (GPX import).

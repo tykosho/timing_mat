@@ -240,6 +240,38 @@ class Database:
             conn.commit()
             return True
 
+    def delete_last_lap_for_runner(self, bib_number: int) -> Optional[Dict[str, Any]]:
+        """Deletes the most recent lap for a runner and updates last_crossing_time."""
+        with self.get_connection() as conn:
+            last = conn.execute("""
+                SELECT * FROM laps 
+                WHERE bib_number = ? 
+                ORDER BY lap_number DESC 
+                LIMIT 1;
+            """, (bib_number,)).fetchone()
+            if not last:
+                return None
+            last_dict = dict(last)
+            conn.execute("DELETE FROM laps WHERE id = ?;", (last_dict["id"],))
+            
+            # Fetch previous crossing
+            prev_lap = conn.execute("""
+                SELECT crossing_time FROM laps 
+                WHERE bib_number = ? 
+                ORDER BY lap_number DESC 
+                LIMIT 1;
+            """, (bib_number,)).fetchone()
+            
+            if prev_lap:
+                new_last_time = prev_lap["crossing_time"]
+            else:
+                participant = self.get_participant_by_bib(bib_number)
+                new_last_time = participant["start_time"] if participant else None
+                
+            conn.execute("UPDATE participants SET last_crossing_time = ? WHERE bib_number = ?;", (new_last_time, bib_number))
+            conn.commit()
+            return last_dict
+
     def get_total_laps_count(self) -> int:
         with self.get_connection() as conn:
             row = conn.execute("SELECT COUNT(*) as count FROM laps;").fetchone()
