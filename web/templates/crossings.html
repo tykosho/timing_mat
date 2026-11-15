@@ -19,8 +19,85 @@
     .crossing-row-enter {
       animation: slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1), pulse-glow 1.4s ease-out;
     }
+    :root {
+      --ui-scale: 1.25;
+      --bg-page: #020617;
+      --bg-header: #0f172a;
+      --border-header: #1e293b;
+      --bg-row: #0f172a;
+      --border-row: #1e293b;
+      --bg-newest: rgba(6, 44, 35, 0.45);
+      --border-newest: #10b981;
+      --bg-bib: #022c22;
+      --fg-bib: #34d399;
+      --border-bib: rgba(16, 185, 129, 0.4);
+      --fg-name: #ffffff;
+      --fg-muted: #94a3b8;
+      --bg-lap: #1e293b;
+      --fg-lap: #f8fafc;
+      --fg-split: #34d399;
+    }
+    body[data-theme="high-contrast"] {
+      --bg-page: #000000;
+      --bg-header: #000000;
+      --border-header: #52525b;
+      --bg-row: #09090b;
+      --border-row: #52525b;
+      --bg-newest: #052e16;
+      --border-newest: #facc15;
+      --bg-bib: #facc15;
+      --fg-bib: #000000;
+      --border-bib: #fef08a;
+      --fg-name: #ffffff;
+      --fg-muted: #d4d4d8;
+      --bg-lap: #27272a;
+      --fg-lap: #ffffff;
+      --fg-split: #bef264;
+    }
+    body[data-theme="light"] {
+      --bg-page: #f1f5f9;
+      --bg-header: #ffffff;
+      --border-header: #cbd5e1;
+      --bg-row: #ffffff;
+      --border-row: #cbd5e1;
+      --bg-newest: #ecfdf5;
+      --border-newest: #059669;
+      --bg-bib: #065f46;
+      --fg-bib: #ffffff;
+      --border-bib: #059669;
+      --fg-name: #0f172a;
+      --fg-muted: #475569;
+      --bg-lap: #e2e8f0;
+      --fg-lap: #0f172a;
+      --fg-split: #059669;
+    }
+    body[data-theme="amber"] {
+      --bg-page: #0c0a09;
+      --bg-header: #1c1917;
+      --border-header: #44403c;
+      --bg-row: #1c1917;
+      --border-row: #292524;
+      --bg-newest: rgba(120, 53, 15, 0.35);
+      --border-newest: #f59e0b;
+      --bg-bib: #451a03;
+      --fg-bib: #fbbf24;
+      --border-bib: rgba(245, 158, 11, 0.45);
+      --fg-name: #fef3c7;
+      --fg-muted: #a8a29e;
+      --bg-lap: #292524;
+      --fg-lap: #fde68a;
+      --fg-split: #fbbf24;
+    }
+    body.trackside-body {
+      background-color: var(--bg-page);
+      color: var(--fg-name);
+    }
+    header.trackside-header {
+      background-color: var(--bg-header);
+      border-bottom-color: var(--border-header);
+    }
     .trackside-shell {
-      max-width: 960px;
+      max-width: 1120px;
       width: 100%;
       margin: 0 auto;
     }
@@ -29,80 +106,99 @@
       align-items: center;
       justify-content: space-between;
       gap: 1rem;
-      padding: 0.9rem 1.25rem;
+      padding: calc(0.85rem * var(--ui-scale)) calc(1.15rem * var(--ui-scale));
       border-radius: 1rem;
-      background-color: rgb(15 23 42);
-      border: 2px solid rgb(30 41 59);
+      background-color: var(--bg-row);
+      border: 2px solid var(--border-row);
       transition: border-color 0.2s ease, background-color 0.2s ease;
     }
     .crossing-row.is-newest {
-      background-color: rgb(6 44 35 / 0.45);
-      border-color: rgb(16 185 129);
+      background-color: var(--bg-newest);
+      border-color: var(--border-newest);
     }
     .bib-pill {
-      min-width: 4.5rem;
+      min-width: calc(4.25rem * var(--ui-scale));
       text-align: center;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-weight: 900;
-      font-size: 1.5rem;
+      font-size: calc(1.45rem * var(--ui-scale));
       line-height: 1;
-      padding: 0.55rem 0.75rem;
+      padding: calc(0.5rem * var(--ui-scale)) calc(0.7rem * var(--ui-scale));
       border-radius: 0.75rem;
-      background-color: rgb(2 44 34);
-      color: rgb(52 211 153);
-      border: 1px solid rgb(16 185 129 / 0.4);
+      background-color: var(--bg-bib);
+      color: var(--fg-bib);
+      border: 1px solid var(--border-bib);
       flex-shrink: 0;
     }
     .runner-name {
-      font-size: 1.5rem;
+      font-size: calc(1.55rem * var(--ui-scale));
       line-height: 1.2;
       font-weight: 900;
-      color: #ffffff;
+      color: var(--fg-name);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .card-time-ago {
+      color: var(--fg-muted);
+      font-size: calc(0.75rem * max(1, var(--ui-scale) * 0.85));
+    }
     .lap-count-pill {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-weight: 900;
-      font-size: 1.35rem;
+      font-size: calc(1.3rem * var(--ui-scale));
       line-height: 1;
-      padding: 0.45rem 0.85rem;
+      padding: calc(0.45rem * var(--ui-scale)) calc(0.8rem * var(--ui-scale));
       border-radius: 0.65rem;
-      background-color: rgb(30 41 59);
-      color: #f8fafc;
+      background-color: var(--bg-lap);
+      color: var(--fg-lap);
       white-space: nowrap;
     }
     .split-value {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-weight: 900;
-      font-size: 2rem;
+      font-size: calc(1.85rem * var(--ui-scale));
       line-height: 1;
-      color: rgb(52 211 153);
+      color: var(--fg-split);
       font-variant-numeric: tabular-nums;
-      min-width: 6.25rem;
+      min-width: calc(5.8rem * var(--ui-scale));
       text-align: right;
     }
     .quick-btn {
-      width: 2.25rem;
-      height: 2.25rem;
+      width: 2.35rem;
+      height: 2.35rem;
       border-radius: 0.5rem;
       font-weight: 800;
-      font-size: 0.85rem;
+      font-size: 0.9rem;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       transition: background-color 0.15s ease, color 0.15s ease;
+    }
+    .settings-preset-btn {
+      padding: 0.4rem 0.7rem;
+      border-radius: 0.5rem;
+      font-size: 0.78rem;
+      font-weight: 700;
+      border: 1px solid rgb(51 65 85);
+      background: rgb(30 41 59);
+      color: rgb(226 232 240);
+      cursor: pointer;
+    }
+    .settings-preset-btn.is-active {
+      background: rgb(16 185 129);
+      color: rgb(2 44 34);
+      border-color: rgb(52 211 153);
     }
     @media (max-width: 640px) {
       .crossing-row {
         flex-wrap: wrap;
         padding: 0.75rem 1rem;
       }
-      .runner-name { font-size: 1.25rem; }
-      .bib-pill { font-size: 1.2rem; min-width: 3.5rem; padding: 0.45rem 0.5rem; }
-      .split-value { font-size: 1.5rem; min-width: 5rem; }
-      .lap-count-pill { font-size: 1.1rem; }
+      .runner-name { font-size: calc(1.2rem * var(--ui-scale)); }
+      .bib-pill { font-size: calc(1.1rem * var(--ui-scale)); min-width: 3.5rem; padding: 0.45rem 0.5rem; }
+      .split-value { font-size: calc(1.4rem * var(--ui-scale)); min-width: 5rem; }
+      .lap-count-pill { font-size: calc(1.05rem * var(--ui-scale)); }
     }
     .sim-dock {
       position: fixed;
@@ -211,12 +307,44 @@
       color: rgb(203 213 225);
       white-space: nowrap;
     }
+    .header-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .header-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.45rem 0.75rem;
+      border-radius: 0.65rem;
+      background-color: rgb(30 41 59);
+      border: 1px solid rgb(51 65 85);
+      color: #f1f5f9;
+      font-size: 0.82rem;
+      font-weight: 700;
+      line-height: 1.1;
+      text-decoration: none;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background-color 0.15s ease, border-color 0.15s ease;
+    }
+    .header-btn:hover {
+      background-color: rgb(51 65 85);
+      border-color: rgb(100 116 139);
+    }
+    .header-btn svg {
+      width: 15px;
+      height: 15px;
+      flex-shrink: 0;
+    }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
+<body class="trackside-body bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased" data-theme="dark">
 
   <!-- Minimal Trackside Header -->
-  <header class="bg-slate-900 border-b border-slate-800 px-4 md:px-6 py-3 sticky top-0 z-40">
+  <header class="trackside-header bg-slate-900 border-b border-slate-800 px-4 md:px-6 py-3 sticky top-0 z-40">
     <div class="trackside-shell flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-3">
         <div id="statusDot" class="w-3.5 h-3.5 rounded-full bg-slate-500 flex-shrink-0"></div>
@@ -231,39 +359,48 @@
         </div>
       </div>
 
-      <div class="flex items-center gap-2 md:gap-3">
+      <div class="header-actions">
         <!-- Big Event Clock -->
         <div id="raceTimer" class="text-2xl md:text-3xl font-mono font-black text-emerald-400 tabular-nums bg-slate-950 border border-slate-800 px-3.5 py-1 rounded-xl">
           00:00:00
         </div>
 
         <!-- Find Runner / Edit Laps -->
-        <button onclick="openSearchModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 px-3 py-2 rounded-xl text-sm font-bold transition flex items-center gap-2" title="Find Runner / Edit Laps (⌘K)">
-          <i class="fa-solid fa-magnifying-glass text-emerald-400"></i>
-          <span class="hidden sm:inline">Find Runner</span>
+        <button onclick="openSearchModal()" class="header-btn" title="Find Runner / Edit Laps (⌘K)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <span>Find Runner</span>
         </button>
 
         <!-- Sound Toggle -->
-        <button id="soundToggle" onclick="toggleSound()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 p-2.5 rounded-xl text-sm transition" title="Toggle Chime">
-          <i class="fa-solid fa-volume-xmark" id="soundIcon"></i>
+        <button id="soundToggle" onclick="toggleSound()" class="header-btn" title="Toggle Crossing Chime">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>
+          <span>Sound Off</span>
         </button>
 
-        <a href="/leaderboard" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 p-2.5 rounded-xl text-sm transition" title="Full Leaderboard">
-          <i class="fa-solid fa-trophy"></i>
+        <!-- Display Settings -->
+        <button onclick="openSettingsModal()" class="header-btn" title="Display Settings (Font Size, Theme)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+          <span>Display</span>
+        </button>
+
+        <a href="/leaderboard" class="header-btn" title="Full Standings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+          <span>Standings</span>
         </a>
-        <a href="/admin" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 p-2.5 rounded-xl text-sm transition" title="Race Admin">
-          <i class="fa-solid fa-gear"></i>
+        <a href="/admin" class="header-btn" title="Race Admin">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>Admin</span>
         </a>
       </div>
     </div>
   </header>
 
-  <!-- Single-Column 10 Most Recent Crossings -->
+  <!-- Single-Column Most Recent Crossings -->
   <main class="flex-1 px-4 md:px-6 py-5">
     <div class="trackside-shell flex flex-col gap-3">
       <div class="flex items-center justify-between px-1">
         <span class="text-xs font-bold uppercase tracking-wider text-slate-400">
-          Most Recent Crossings (Last 10)
+          Most Recent Crossings (Last <span id="feedLimitLabel">10</span>)
         </span>
         <span id="trackLengthLabel" class="text-xs font-mono text-slate-500">
           {{ event.track_length_m | int }}m Track
@@ -298,6 +435,79 @@
       <div class="bg-slate-950/90 px-4 py-2.5 border-t border-slate-800 flex justify-between items-center text-xs text-slate-500">
         <span>Adjust lap count for runners with a missed or bad tag</span>
         <button onclick="closeSearchModal()" class="hover:text-slate-300 font-semibold">Done [ESC]</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Display Settings Modal -->
+  <div id="settingsModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-start justify-center p-4 pt-16" onclick="if (event.target === this) closeSettingsModal()">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden text-slate-100">
+      <div class="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
+        <div class="flex items-center gap-2.5">
+          <i class="fa-solid fa-sliders text-emerald-400"></i>
+          <h2 class="font-black text-base text-white">Display Settings</h2>
+        </div>
+        <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-white p-1 rounded-lg">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+
+      <div class="p-4 space-y-5 text-sm">
+        <!-- Font Size -->
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <label class="font-bold text-slate-200">Font Size</label>
+            <span id="fontScaleReadout" class="font-mono text-xs text-emerald-400 font-bold">1.25x</span>
+          </div>
+          <input id="fontScaleSlider" type="range" min="0.9" max="2.0" step="0.05" value="1.25"
+                 oninput="updateSetting('fontScale', parseFloat(this.value))"
+                 class="w-full accent-emerald-500 cursor-pointer mb-2">
+          <div class="grid grid-cols-4 gap-2" id="fontPresetButtons">
+            <button type="button" onclick="updateSetting('fontScale', 1.0)" data-scale="1.0" class="settings-preset-btn">Normal</button>
+            <button type="button" onclick="updateSetting('fontScale', 1.25)" data-scale="1.25" class="settings-preset-btn">Large</button>
+            <button type="button" onclick="updateSetting('fontScale', 1.5)" data-scale="1.5" class="settings-preset-btn">XL</button>
+            <button type="button" onclick="updateSetting('fontScale', 1.8)" data-scale="1.8" class="settings-preset-btn">XXL</button>
+          </div>
+        </div>
+
+        <!-- Color Scheme -->
+        <div>
+          <label class="block font-bold text-slate-200 mb-2">Color Scheme</label>
+          <div class="grid grid-cols-2 gap-2" id="themePresetButtons">
+            <button type="button" onclick="updateSetting('theme', 'dark')" data-theme-opt="dark" class="settings-preset-btn">Trackside Dark</button>
+            <button type="button" onclick="updateSetting('theme', 'high-contrast')" data-theme-opt="high-contrast" class="settings-preset-btn">High Contrast</button>
+            <button type="button" onclick="updateSetting('theme', 'light')" data-theme-opt="light" class="settings-preset-btn">Daylight Light</button>
+            <button type="button" onclick="updateSetting('theme', 'amber')" data-theme-opt="amber" class="settings-preset-btn">Night Amber</button>
+          </div>
+        </div>
+
+        <!-- Rows Shown -->
+        <div>
+          <label class="block font-bold text-slate-200 mb-2">Crossings Shown</label>
+          <div class="grid grid-cols-4 gap-2" id="rowsPresetButtons">
+            <button type="button" onclick="updateSetting('maxRows', 5)" data-rows="5" class="settings-preset-btn">5</button>
+            <button type="button" onclick="updateSetting('maxRows', 8)" data-rows="8" class="settings-preset-btn">8</button>
+            <button type="button" onclick="updateSetting('maxRows', 10)" data-rows="10" class="settings-preset-btn">10</button>
+            <button type="button" onclick="updateSetting('maxRows', 15)" data-rows="15" class="settings-preset-btn">15</button>
+          </div>
+        </div>
+
+        <!-- Visibility Toggles -->
+        <div class="space-y-2.5 pt-1 border-t border-slate-800">
+          <label class="flex items-center justify-between cursor-pointer">
+            <span class="font-semibold text-slate-200">Show +1 / -1 Quick Buttons</span>
+            <input id="toggleQuickButtons" type="checkbox" checked onchange="updateSetting('showQuickButtons', this.checked)" class="w-4 h-4 accent-emerald-500">
+          </label>
+          <label class="flex items-center justify-between cursor-pointer">
+            <span class="font-semibold text-slate-200">Show Time Ago Subtitle</span>
+            <input id="toggleTimeAgo" type="checkbox" checked onchange="updateSetting('showTimeAgo', this.checked)" class="w-4 h-4 accent-emerald-500">
+          </label>
+        </div>
+      </div>
+
+      <div class="bg-slate-950/90 px-4 py-3 border-t border-slate-800 flex justify-between items-center text-xs">
+        <button onclick="resetDisplaySettings()" class="text-slate-400 hover:text-amber-300 font-semibold">Reset Defaults</button>
+        <button onclick="closeSettingsModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3.5 py-1.5 rounded-lg">Done</button>
       </div>
     </div>
   </div>
@@ -364,9 +574,9 @@
       const btn = document.getElementById("soundToggle");
       if (soundEnabled) {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        btn.innerHTML = `<i class="fa-solid fa-volume-high text-emerald-400" id="soundIcon"></i>`;
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg><span>Sound On</span>`;
       } else {
-        btn.innerHTML = `<i class="fa-solid fa-volume-xmark" id="soundIcon"></i>`;
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg><span>Sound Off</span>`;
       }
     }
 
@@ -392,7 +602,84 @@
     function raceNowSec() { return Date.now() / 1000 + clockOffsetSec; }
     let eventState = {{ event | tojson | safe }};
     let currentLeaderboard = {{ leaderboard | tojson | safe }};
-    const MAX_CROSSINGS = 10;
+    const MAX_CROSSINGS = 15;
+    const DISPLAY_SETTINGS_KEY = "tracksideDisplaySettings_v1";
+    const DEFAULT_DISPLAY_SETTINGS = {
+      fontScale: 1.25,
+      theme: "dark",
+      maxRows: 10,
+      showQuickButtons: true,
+      showTimeAgo: true,
+    };
+
+    function loadDisplaySettings() {
+      try {
+        const raw = localStorage.getItem(DISPLAY_SETTINGS_KEY);
+        if (!raw) return { ...DEFAULT_DISPLAY_SETTINGS };
+        return { ...DEFAULT_DISPLAY_SETTINGS, ...JSON.parse(raw) };
+      } catch (e) {
+        return { ...DEFAULT_DISPLAY_SETTINGS };
+      }
+    }
+
+    let displaySettings = loadDisplaySettings();
+
+    function saveDisplaySettings() {
+      try {
+        localStorage.setItem(DISPLAY_SETTINGS_KEY, JSON.stringify(displaySettings));
+      } catch (e) {}
+    }
+
+    function applyDisplaySettings() {
+      const scale = Math.max(0.9, Math.min(2.0, Number(displaySettings.fontScale) || 1.25));
+      document.documentElement.style.setProperty("--ui-scale", scale.toFixed(2));
+      document.body.setAttribute("data-theme", displaySettings.theme || "dark");
+
+      const readout = document.getElementById("fontScaleReadout");
+      if (readout) readout.innerText = `${scale.toFixed(2).replace(/\.00$/, "")}x`;
+      const slider = document.getElementById("fontScaleSlider");
+      if (slider) slider.value = scale;
+      const limitLabel = document.getElementById("feedLimitLabel");
+      if (limitLabel) limitLabel.innerText = displaySettings.maxRows || 10;
+
+      const quickToggle = document.getElementById("toggleQuickButtons");
+      if (quickToggle) quickToggle.checked = !!displaySettings.showQuickButtons;
+      const agoToggle = document.getElementById("toggleTimeAgo");
+      if (agoToggle) agoToggle.checked = !!displaySettings.showTimeAgo;
+
+      document.querySelectorAll("#fontPresetButtons [data-scale]").forEach(btn => {
+        btn.classList.toggle("is-active", Math.abs(parseFloat(btn.getAttribute("data-scale")) - scale) < 0.03);
+      });
+      document.querySelectorAll("#themePresetButtons [data-theme-opt]").forEach(btn => {
+        btn.classList.toggle("is-active", btn.getAttribute("data-theme-opt") === displaySettings.theme);
+      });
+      document.querySelectorAll("#rowsPresetButtons [data-rows]").forEach(btn => {
+        btn.classList.toggle("is-active", parseInt(btn.getAttribute("data-rows"), 10) === displaySettings.maxRows);
+      });
+    }
+
+    function updateSetting(key, value) {
+      displaySettings[key] = value;
+      saveDisplaySettings();
+      applyDisplaySettings();
+      renderCrossingFeed(false);
+    }
+
+    function resetDisplaySettings() {
+      displaySettings = { ...DEFAULT_DISPLAY_SETTINGS };
+      saveDisplaySettings();
+      applyDisplaySettings();
+      renderCrossingFeed(false);
+    }
+
+    function openSettingsModal() {
+      applyDisplaySettings();
+      document.getElementById("settingsModal").classList.remove("hidden");
+    }
+
+    function closeSettingsModal() {
+      document.getElementById("settingsModal").classList.add("hidden");
+    }
 
     // Seed with the 10 most recent crossings from the DB
     let recentCrossings = ({{ recent_crossings | tojson | safe }} || []).map(l => ({
@@ -508,32 +795,20 @@
       empty.classList.add("hidden");
       feed.innerHTML = "";
       const ended = isEventEnded();
+      const visibleCrossings = recentCrossings.slice(0, displaySettings.maxRows || 10);
 
-      recentCrossings.forEach((c, idx) => {
+      visibleCrossings.forEach((c, idx) => {
         const isNewest = idx === 0;
         const row = document.createElement("div");
         row.className = `crossing-row${isNewest ? ' is-newest' : ''}${isNewest && animateNewest ? ' crossing-row-enter' : ''}`;
 
         const lapLabel = c.is_start ? "START" : `Lap ${c.lap_number}`;
         const splitText = c.is_start ? "--:--" : formatTime(c.lap_duration_seconds);
-
-        row.innerHTML = `
-          <div class="flex items-center gap-3 md:gap-4 min-w-0 flex-1">
-            <div class="bib-pill">#${c.bib_number}</div>
-            <div class="min-w-0 flex-1">
-              <a href="/runner/${c.bib_number}" class="runner-name block hover:text-emerald-400 transition">
-                ${esc(c.name)}
-              </a>
-              <div class="text-xs font-mono text-slate-400 card-time-ago mt-0.5" data-added="${c.added_at}">
-                ${formatAgo(c.added_at)}
-              </div>
-            </div>
-          </div>
-
-          <div class="flex items-center gap-3 md:gap-5 flex-shrink-0">
-            <div class="lap-count-pill">${lapLabel}</div>
-            <div class="split-value">${splitText}</div>
-            <div class="flex items-center gap-1.5 pl-2 border-l border-slate-800">
+        const timeAgoHtml = displaySettings.showTimeAgo
+          ? `<div class="font-mono card-time-ago mt-0.5" data-added="${c.added_at}">${formatAgo(c.added_at)}</div>`
+          : "";
+        const quickButtonsHtml = displaySettings.showQuickButtons
+          ? `<div class="flex items-center gap-1.5 pl-2 border-l border-slate-800">
               <button onclick="quickAddLap(${c.bib_number})" ${ended ? "disabled" : ""} title="Add 1 Lap"
                       class="quick-btn bg-emerald-600/20 hover:bg-emerald-600 disabled:opacity-30 text-emerald-300 hover:text-white border border-emerald-500/40">
                 +1
@@ -542,7 +817,24 @@
                       class="quick-btn bg-rose-900/25 hover:bg-rose-700 disabled:opacity-30 text-rose-300 hover:text-white border border-rose-700/40">
                 -1
               </button>
+            </div>`
+          : "";
+
+        row.innerHTML = `
+          <div class="flex items-center gap-3 md:gap-4 min-w-0 flex-1">
+            <div class="bib-pill">#${c.bib_number}</div>
+            <div class="min-w-0 flex-1">
+              <a href="/runner/${c.bib_number}" class="runner-name block hover:text-emerald-400 transition">
+                ${esc(c.name)}
+              </a>
+              ${timeAgoHtml}
             </div>
+          </div>
+
+          <div class="flex items-center gap-3 md:gap-5 flex-shrink-0">
+            <div class="lap-count-pill">${lapLabel}</div>
+            <div class="split-value">${splitText}</div>
+            ${quickButtonsHtml}
           </div>
         `;
         feed.appendChild(row);
@@ -591,6 +883,7 @@
         openSearchModal();
       } else if (e.key === "Escape") {
         closeSearchModal();
+        closeSettingsModal();
       }
     });
 
@@ -893,6 +1186,7 @@
       } catch (e) {}
     }
 
+    applyDisplaySettings();
     applyEventStatus();
     renderCrossingFeed(false);
     connectWS();
