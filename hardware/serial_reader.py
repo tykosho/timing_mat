@@ -11,18 +11,40 @@ from hardware.r200_protocol import (
 
 logger = logging.getLogger("SerialReader")
 
+# The multi-poll command asks for 0xFFFF = 65,535 polling rounds, after which the R200 most
+# likely stops scanning on its own (issue #5). Re-arm well before that, and also whenever the
+# module has gone quiet, in case it stopped for any other reason.
+DEFAULT_REARM_INTERVAL = 300.0   # seconds between routine stop + restart of the inventory
+DEFAULT_SILENCE_REARM = 30.0     # re-arm if no frame of any kind arrived for this long
+
+
 class SerialReader(BaseRFIDReader):
     """
     Connects to the R200 UHF RFID module over USB-UART serial.
     Sends real-time inventory scan commands and processes incoming tag notifications.
     """
-    def __init__(self, port: str = "/dev/ttyUSB0", baud_rate: int = 115200, on_tag_read: Callable[[TagRead], None] = None):
+    def __init__(self, port: str = "/dev/ttyUSB0", baud_rate: int = 115200,
+                 on_tag_read: Callable[[TagRead], None] = None,
+                 rearm_interval: float = DEFAULT_REARM_INTERVAL,
+                 silence_rearm: float = DEFAULT_SILENCE_REARM,
+                 serial_factory: Callable[..., serial.Serial] = serial.Serial,
+                 clock: Callable[[], float] = time.monotonic):
         super().__init__(on_tag_read)
         self.port = port
         self.baud_rate = baud_rate
+        self.rearm_interval = rearm_interval
+        self.silence_rearm = silence_rearm
+        self._serial_factory = serial_factory
+        self._clock = clock
         self.serial_conn: Optional[serial.Serial] = None
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+
+        # Watchdog state (monotonic clock, so wall-clock jumps don't matter)
+        self.last_arm_at: float = 0.0
+        self.last_frame_at: float = 0.0
+        self.rearm_count: int = 0
+        self._silence_logged = False
 
     def start(self):
         if self.is_running:
@@ -38,7 +60,7 @@ class SerialReader(BaseRFIDReader):
             return
         self.is_running = False
         self._stop_event.set()
-        
+
         # Send stop inventory command if open
         if self.serial_conn and self.serial_conn.is_open:
             try:
@@ -52,24 +74,54 @@ class SerialReader(BaseRFIDReader):
             self._thread.join(timeout=2.0)
         logger.info("R200 Serial Reader stopped.")
 
+    # --- inventory control / watchdog ---
+    def _arm(self, restart: bool = False):
+        """Starts continuous inventory. With restart=True, stops the current one first."""
+        if restart:
+            self.serial_conn.write(READ_STOP_COMMAND)
+        self.serial_conn.write(READ_MULTI_COMMAND)
+        self.serial_conn.flush()
+        now = self._clock()
+        self.last_arm_at = now
+        # Count silence from the (re)arm, so a quiet field doesn't re-arm on every pass
+        self.last_frame_at = max(self.last_frame_at, now)
+
+    def _maybe_rearm(self) -> Optional[str]:
+        """Re-sends the inventory command if it's due. Returns the reason, or None."""
+        now = self._clock()
+        if self.rearm_interval and now - self.last_arm_at >= self.rearm_interval:
+            reason = "routine"
+            logger.info(f"Re-arming R200 inventory (routine, every {self.rearm_interval:.0f}s)")
+        elif self.silence_rearm and now - self.last_frame_at >= self.silence_rearm:
+            reason = "silence"
+            # A field with no tags may be silent for a long time: say so once per quiet spell
+            log = logger.debug if self._silence_logged else logger.info
+            log(f"No frames from the R200 for {now - self.last_frame_at:.0f}s; re-arming inventory")
+            self._silence_logged = True
+        else:
+            return None
+        self._arm(restart=True)
+        self.rearm_count += 1
+        return reason
+
     def _read_loop(self):
         buffer = bytearray()
         while not self._stop_event.is_set():
             # Connection management with automatic reconnection
             if not self.serial_conn or not self.serial_conn.is_open:
                 try:
-                    self.serial_conn = serial.Serial(
+                    self.serial_conn = self._serial_factory(
                         port=self.port,
                         baudrate=self.baud_rate,
                         timeout=0.1
                     )
                     logger.info(f"Connected to R200 RFID reader on {self.port}")
-                    # Send continuous multi-polling inventory command
-                    self.serial_conn.write(READ_MULTI_COMMAND)
-                    self.serial_conn.flush()
+                    buffer = bytearray()
+                    self._arm()
                 except Exception as e:
                     logger.warning(f"Could not connect to {self.port}: {e}. Retrying in 2 seconds...")
-                    time.sleep(2.0)
+                    self.serial_conn = None
+                    self._stop_event.wait(2.0)
                     continue
 
             try:
@@ -79,6 +131,7 @@ class SerialReader(BaseRFIDReader):
                     buffer = self._process_stream(buffer)
                 else:
                     time.sleep(0.01)
+                self._maybe_rearm()
             except Exception as e:
                 logger.error(f"Serial read error on {self.port}: {e}")
                 if self.serial_conn:
@@ -87,11 +140,14 @@ class SerialReader(BaseRFIDReader):
                     except Exception:
                         pass
                 self.serial_conn = None
-                time.sleep(1.0)
+                self._stop_event.wait(1.0)
 
     def _process_stream(self, buffer: bytearray) -> bytearray:
         """Emits a TagRead for every complete tag frame in the buffer; returns the unparsed remainder."""
         frames, buffer = extract_frames(buffer)
+        if frames:
+            self.last_frame_at = self._clock()
+            self._silence_logged = False
         for frame in frames:
             parsed = parse_inventory_response(frame)
             if parsed:

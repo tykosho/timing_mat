@@ -20,7 +20,7 @@ from core.db import Database, RegistrationError, EventStateError
 from core.registration_import import parse_registration_csv
 from core.lap_engine import LapEngine
 from hardware.mock_reader import MockReader
-from hardware.serial_reader import SerialReader
+from hardware.serial_reader import SerialReader, DEFAULT_REARM_INTERVAL, DEFAULT_SILENCE_REARM
 from web import auth
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -121,7 +121,17 @@ if use_mock:
     reader = MockReader(on_tag_read=lap_engine.process_tag_read, speed_multiplier=1.0)
     logger.info("Operating in MOCK reader mode (Simulated runners active).")
 else:
-    reader = SerialReader(port=serial_port, baud_rate=baud_rate, on_tag_read=lap_engine.process_tag_read)
+    hw = config.get("hardware") or {}
+
+    def _seconds(key: str, default: float) -> float:
+        value = hw.get(key)
+        return default if value is None else float(value)  # 0 turns that re-arm off
+
+    reader = SerialReader(
+        port=serial_port, baud_rate=baud_rate, on_tag_read=lap_engine.process_tag_read,
+        rearm_interval=_seconds("rearm_interval_seconds", DEFAULT_REARM_INTERVAL),
+        silence_rearm=_seconds("silence_rearm_seconds", DEFAULT_SILENCE_REARM),
+    )
     logger.info(f"Operating in PHYSICAL reader mode on {serial_port}.")
 
 main_event_loop = None

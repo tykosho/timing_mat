@@ -14,6 +14,8 @@ hardware:
   mock: true                     # Set to false on Raspberry Pi with real R200 antenna
   serial_port: "/dev/ttyUSB0"    # Default Linux/Pi serial port
   baud_rate: 115200
+  rearm_interval_seconds: 300    # Restart the reader's inventory this often (it stops after 65,535 polls); 0 = off
+  silence_rearm_seconds: 30      # Also restart it if no frames at all arrive for this long; 0 = off
 
 server:
   host: "0.0.0.0"
