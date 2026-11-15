@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import secrets
 import asyncio
 import logging
 import yaml
@@ -27,6 +28,7 @@ from web.reader_health import ReaderHealth
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("RaceApp")
+SERVER_BOOT_ID = secrets.token_hex(6)
 
 # Load configuration
 config_path = os.getenv("CONFIG_PATH", "config.yaml")
@@ -492,6 +494,7 @@ async def websocket_endpoint(websocket: WebSocket, channel: str = "public"):
         # Send initial snapshot
         init_payload: Dict[str, Any] = {
             "type": "init",
+            "boot_id": SERVER_BOOT_ID,
             "event": db.get_event_state(),
             "leaderboard": db.get_leaderboard()
         }

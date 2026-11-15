@@ -820,7 +820,7 @@
         recentCrossings = recentCrossings.slice(0, MAX_CROSSINGS);
       }
       renderCrossingFeed(true);
-      playCrossingSound(crossing.is_start);
+      playCrossingSound(crossing.is_start || crossing.is_resume);
     }
 
     function renderCrossingFeed(animateNewest = false) {
@@ -843,8 +843,10 @@
         const row = document.createElement("div");
         row.className = `crossing-row${isNewest ? ' is-newest' : ''}${isNewest && animateNewest ? ' crossing-row-enter' : ''}`;
 
-        const lapLabel = c.is_start ? "START" : `Lap ${c.lap_number}`;
-        const splitText = c.is_start ? "--:--" : formatTime(c.lap_duration_seconds);
+        const lapLabel = c.is_start ? "START" : (c.is_resume ? "RESUMED" : `Lap ${c.lap_number}`);
+        const splitText = c.is_start
+          ? "--:--"
+          : (c.is_resume ? `☕ ${formatTime(c.break_duration_seconds || 0)} break` : formatTime(c.lap_duration_seconds));
         const timeAgoHtml = displaySettings.showTimeAgo
           ? `<div class="font-mono card-time-ago mt-0.5" data-added="${c.added_at}">${formatAgo(c.added_at)}</div>`
           : "";
@@ -969,6 +971,7 @@
       });
     }
 
+    let knownBootId = null;
     function connectWS() {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live?channel=admin`);  // + unassigned tag prompts (#52)
@@ -976,6 +979,13 @@
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         if (msg.type === "init") {
+          if (msg.boot_id) {
+            if (knownBootId && knownBootId !== msg.boot_id) {
+              window.location.reload();
+              return;
+            }
+            knownBootId = msg.boot_id;
+          }
           eventState = msg.event;
           currentLeaderboard = msg.leaderboard || currentLeaderboard;
           applyEventStatus();
@@ -1003,7 +1013,21 @@
             lap_number: 0,
             lap_duration_seconds: 0,
             added_at: (msg.data.start_time ? msg.data.start_time * 1000 : raceNowSec() * 1000),
-            is_start: true
+            is_start: true,
+            is_resume: false
+          });
+        } else if (msg.type === "runner_resumed") {
+          currentLeaderboard = msg.leaderboard || currentLeaderboard;
+          addCrossing({
+            id: null,
+            bib_number: msg.data.bib_number,
+            name: msg.data.name || `Bib #${msg.data.bib_number}`,
+            lap_number: 0,
+            lap_duration_seconds: 0,
+            break_duration_seconds: msg.data.break_duration_seconds || 0,
+            added_at: (msg.data.crossing_time ? msg.data.crossing_time * 1000 : raceNowSec() * 1000),
+            is_start: false,
+            is_resume: true
           });
         } else if (msg.type === "lap_removed") {
           currentLeaderboard = msg.leaderboard || currentLeaderboard;

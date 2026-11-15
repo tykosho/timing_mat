@@ -142,6 +142,17 @@ class AdminChannelTest(unittest.TestCase):
             with open(os.path.join("web", "templates", name)) as f:
                 self.assertNotIn("channel=admin", f.read(), name)
 
+    def test_init_includes_boot_id_and_templates_reload_on_change(self):
+        client = TestClient(self.app.app)
+        with client.websocket_connect("/ws/live") as ws:
+            init = ws.receive_json()
+            self.assertEqual(init["type"], "init")
+            self.assertEqual(init["boot_id"], self.app.SERVER_BOOT_ID)
+            self.assertTrue(init["boot_id"])
+        for name in ("crossings.html", "admin.html", "prepare.html", "leaderboard.html", "replay.html"):
+            with open(os.path.join("web", "templates", name)) as f:
+                self.assertIn("knownBootId", f.read(), name)
+
 
 if __name__ == "__main__":
     unittest.main()

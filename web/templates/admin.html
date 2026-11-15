@@ -831,13 +831,22 @@
       if (silent >= 7) setReaderHealth("stale", `No update from the timer for ${silent}s: is the Pi still reachable?`);
     }, 2000);
 
+    let knownBootId = null;
     function connectWS() {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live?channel=admin`);  // + raw tag reads
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
-        if (msg.type === "event_status") {
+        if (msg.type === "init") {
+          if (msg.boot_id) {
+            if (knownBootId && knownBootId !== msg.boot_id) {
+              window.location.reload();
+              return;
+            }
+            knownBootId = msg.boot_id;
+          }
+        } else if (msg.type === "event_status") {
           eventState = msg.event;
           updateTimerDisplay();
         } else if (msg.type === "event_switched") {
