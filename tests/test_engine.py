@@ -160,5 +160,11 @@ class TestTimingMat(unittest.TestCase):
         finally:
             mock.stop()
 
+    def test_gpx_sample_lap_extraction(self):
+        from hardware.mock_reader import load_gpx_lap_durations, DEFAULT_SAMPLE_GPX
+        laps = load_gpx_lap_durations(DEFAULT_SAMPLE_GPX)
+        self.assertGreaterEqual(len(laps), 50)
+        self.assertTrue(all(dur > 60.0 for dur in laps))
+
 if __name__ == "__main__":
     unittest.main()
