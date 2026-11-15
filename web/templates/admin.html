@@ -146,16 +146,21 @@
         </div>
       </div>
 
-      <!-- Simulator Controls (Mock Mode) -->
+      <!-- Simulator Controls (controls only in mock mode; the API rejects them on real hardware) -->
       <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
         <div>
           <h2 class="text-base font-bold text-slate-200 mb-1 flex items-center gap-2">
             <i class="fa-solid fa-vial text-purple-400"></i> RFID Simulator
             {% if is_mock %}<span class="text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded">Active</span>{% endif %}
           </h2>
+          {% if is_mock %}
           <p class="text-xs text-slate-400 mb-4">Simulate runner mat crossings.</p>
+          {% else %}
+          <p class="text-xs text-slate-400 mb-4">Off: a real reader is connected.</p>
+          {% endif %}
         </div>
 
+        {% if is_mock %}
         <div class="space-y-3">
           <div>
             <div class="flex justify-between items-center mb-1">
@@ -187,6 +192,7 @@
             <div id="simFeedback" class="text-[11px] text-purple-300 mt-1.5 font-medium hidden"></div>
           </div>
         </div>
+        {% endif %}
 
         <div class="text-[11px] text-slate-500 mt-2">
           Hardware: {% if is_mock %}Mock Driver{% else %}Serial UART ({{ serial_port }}){% endif %}
@@ -616,7 +622,9 @@
         const res = await fetch(`/api/simulator/trigger/${bib}`, { method: "POST" });
         const data = await res.json();
         if (fb) {
-          fb.innerText = `⚡ Simulated crossing for #${bib} (${data.runner})!`;
+          fb.innerText = res.ok
+            ? `⚡ Simulated crossing for #${bib} (${data.runner}): ${data.outcome}`
+            : `✋ ${data.detail || "Crossing rejected"}`;
           fb.classList.remove("hidden");
           setTimeout(() => fb.classList.add("hidden"), 3500);
         }

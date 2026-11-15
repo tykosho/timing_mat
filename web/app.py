@@ -532,10 +532,21 @@ async def delete_lap(lap_id: int):
 # Simulator Controls
 @app.post("/api/simulator/trigger/{bib}")
 async def trigger_simulated_crossing(bib: int):
+    if not isinstance(reader, MockReader):
+        raise HTTPException(status_code=400, detail="Hardware is not in mock mode")
     result = await lap_engine.trigger_manual_crossing(bib, force=True)
     if not result:
         raise HTTPException(status_code=404, detail="Runner not found")
-    return {"status": "crossing_simulated", "runner": result["name"], "bib": bib}
+    name = result["participant"]["name"]
+    outcome = result["outcome"]
+    if outcome == "debounced":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Too soon since #{bib}'s last crossing; no lap recorded",
+        )
+    if outcome is None:
+        raise HTTPException(status_code=409, detail="Event is not running; crossing ignored")
+    return {"status": "crossing_simulated", "outcome": outcome, "runner": name, "bib": bib}
 
 class SpeedRequest(BaseModel):
     speed: float
