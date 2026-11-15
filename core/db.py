@@ -90,7 +90,8 @@ class Database:
                 min_lap_seconds REAL DEFAULT 45.0,
                 max_lap_rest_seconds REAL DEFAULT 600.0,
                 track_length_m REAL DEFAULT 400.0,
-                created_at REAL NOT NULL
+                created_at REAL NOT NULL,
+                paused_at REAL DEFAULT NULL
             );
 
             CREATE TABLE IF NOT EXISTS participants (
@@ -145,6 +146,11 @@ class Database:
 
             if legacy:
                 self._migrate_legacy_data(conn)
+
+            # Added after the events table first shipped (issue #11)
+            event_cols = [r["name"] for r in conn.execute("PRAGMA table_info(events);")]
+            if "paused_at" not in event_cols:
+                conn.execute("ALTER TABLE events ADD COLUMN paused_at REAL DEFAULT NULL;")
 
             if not conn.execute("SELECT 1 FROM events LIMIT 1;").fetchone():
                 self._insert_event(conn, self.default_event_name)
@@ -310,10 +316,10 @@ class Database:
                 ev["id"]))
 
     def _set_status(self, ev: Dict[str, Any], status: str, start_time: Optional[float] = None,
-                    end_time: Optional[float] = None):
+                    end_time: Optional[float] = None, paused_at: Optional[float] = None):
         with self.connect() as conn:
-            conn.execute("UPDATE events SET status = ?, start_time = ?, end_time = ? WHERE id = ?;",
-                         (status, start_time, end_time, ev["id"]))
+            conn.execute("UPDATE events SET status = ?, start_time = ?, end_time = ?, paused_at = ? WHERE id = ?;",
+                         (status, start_time, end_time, paused_at, ev["id"]))
 
     def start_event(self, at: Optional[float] = None) -> Dict[str, Any]:
         """setup/paused -> running. The race clock keeps its original start across pauses."""
@@ -321,15 +327,31 @@ class Database:
         if ev["status"] == "ended":
             raise EventStateError("This event has ended. Reopen it to continue timing.")
         if ev["status"] != "running":
-            self._set_status(ev, "running", ev["start_time"] or at or clock.now(), None)
+            now = at or clock.now()
+            if ev["status"] == "paused" and ev.get("paused_at"):
+                self._skip_pause(ev["id"], max(0.0, now - ev["paused_at"]))
+            self._set_status(ev, "running", ev["start_time"] or now, None)
         return self.get_event()
+
+    def _skip_pause(self, event_id: int, pause_seconds: float):
+        """Moves every started runner's last crossing forward by the pause (issue #11).
+
+        Crossings aren't timed while paused, so without this the first lap after resuming
+        would include the whole pause. Open manual breaks are left alone.
+        """
+        if pause_seconds <= 0:
+            return
+        with self.connect() as conn:
+            conn.execute("""UPDATE participants SET last_crossing_time = last_crossing_time + ?
+                            WHERE event_id = ? AND last_crossing_time IS NOT NULL;""",
+                         (pause_seconds, event_id))
 
     def pause_event(self) -> Dict[str, Any]:
         ev = self.get_event()
         if ev["status"] == "ended":
             raise EventStateError("This event has already ended.")
         if ev["status"] == "running":
-            self._set_status(ev, "paused", ev["start_time"], None)
+            self._set_status(ev, "paused", ev["start_time"], None, paused_at=clock.now())
         return self.get_event()
 
     def end_event(self, at: Optional[float] = None) -> Dict[str, Any]:
@@ -351,7 +373,8 @@ class Database:
         """ended -> paused, for an End pressed by mistake."""
         ev = self.get_event()
         if ev["status"] == "ended":
-            self._set_status(ev, "paused", ev["start_time"], None)
+            # Timing stopped at end_time, so the "pause" runs from then until Start
+            self._set_status(ev, "paused", ev["start_time"], None, paused_at=ev["end_time"])
         return self.get_event()
 
     # ------------------------------------------------------------------ participants
