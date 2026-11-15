@@ -5,6 +5,7 @@ services:
     container_name: race-timer
     restart: unless-stopped
     ports:
+      - "80:8000"     # http://race.lan on the Pi's hotspot (deploy/pi/hotspot.sh), no :8000 needed
       - "8000:8000"
     environment:
       - MOCK_HARDWARE=false
@@ -15,6 +16,10 @@ services:
       # `ls -l /dev/serial/by-id/` and put SERIAL_PORT=/dev/serial/by-id/... in .env
       - SERIAL_PORT=${SERIAL_PORT:-/dev/ttyUSB0}
       - BAUD_RATE=115200
+      # The race Wi-Fi from deploy/pi/hotspot.sh, for the printable /join page's QR codes
+      - HOTSPOT_SSID=${HOTSPOT_SSID:-}
+      - HOTSPOT_PASSWORD=${HOTSPOT_PASSWORD:-}
+      - HOTSPOT_HOSTNAME=${HOTSPOT_HOSTNAME:-race.lan}
       - CONFIG_PATH=config.yaml
       - DB_PATH=data/race.db
     # USB-serial access without `privileged`: /dev is shared so a reader that's unplugged

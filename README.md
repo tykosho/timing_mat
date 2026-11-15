@@ -96,6 +96,31 @@ Everything (runners, bibs, tags, laps, raw reads) belongs to an **event**. The r
    ```
 5. If the Pi reboots or power is briefly interrupted, Docker's `restart: unless-stopped` policy will automatically bring the race timer and database back online. `docker ps` shows the container as `healthy` once the app is answering.
 
+### 📶 Race Wi-Fi (the Pi as its own hotspot)
+
+The Pi can run its own Wi-Fi network, so the TV, the admin's phone and runners' phones don't need a phone hotspot or the venue's Wi-Fi. (A phone hotspot with internet is also what makes the Pi's clock jump; see #2.)
+
+1. Add the network to `.env` (next to `docker-compose.pi.yml`):
+   ```bash
+   HOTSPOT_SSID=TimingMat
+   HOTSPOT_PASSWORD='choose-8-to-63-chars'   # single-quote it if it contains $
+   HOTSPOT_COUNTRY=US                        # your Wi-Fi country; Pi OS blocks Wi-Fi without it
+   HOTSPOT_HOSTNAME=race.lan                 # what people type in the browser
+   ```
+2. With the Pi on **Ethernet, or with a keyboard and screen** (an SSH session over Wi-Fi drops when the hotspot starts):
+   ```bash
+   sudo deploy/pi/hotspot.sh setup      # also starts it on every boot
+   docker compose -f docker-compose.pi.yml up -d
+   ```
+3. Open the admin page → **Join QR** (`/join`) and print it. One QR code joins the Wi-Fi, the other opens `http://race.lan/leaderboard`.
+
+Good to know:
+- `sudo deploy/pi/hotspot.sh status` shows whether it's up and how many devices are connected. `sudo deploy/pi/hotspot.sh remove` goes back to normal Wi-Fi. `DRY_RUN=1` prints what it would do without doing it.
+- Phones will say the network has **no internet**. Tell people to stay connected. If the Pi also has Ethernet with internet, connected devices get internet through it.
+- **How many devices:** the Pi's built-in Wi-Fi is commonly reported to handle only around 8–10 devices well. Test with the phones you expect. For a big field, use a cheap travel router as the Wi-Fi instead: plug the Pi into it by Ethernet, skip `hotspot.sh`, and either open the Pi's IP or add a local DNS entry for `race.lan` on the router (most have one).
+- It uses 2.4 GHz (channel 6 by default, `HOTSPOT_CHANNEL` to change it) for range outdoors. Keep the Pi up off the ground and away from the antenna mat's cable if you can.
+- Needs Raspberry Pi OS Bookworm or later (NetworkManager).
+
 ### 🔒 Admin access
 
 Runners' phones are on the same Wi-Fi as the timer, so race control is behind a PIN:
