@@ -201,6 +201,31 @@ class LiveUpdatesTest(BrowserTestCase):
         self.assertEqual(errors, [])
         ctx.close()
 
+    def test_crossings_cumulative_laps_banner(self):
+        """#49: total laps banner sits between the top bar and the feed, and counts up live."""
+        ctx = self.admin_context()
+        page, errors = self.open(ctx, "/crossings")
+        order = page.evaluate("""() => {
+            const header = document.querySelector('header'), banner = document.getElementById('cumulativeBanner'),
+                  feed = document.getElementById('crossingFeed');
+            const after = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+            return after(header, banner) && after(banner, feed);
+        }""")
+        self.assertTrue(order, "banner must be below the top bar and above the crossing feed")
+
+        def shown():
+            return int(page.inner_text("#cumulativeLaps").replace(",", ""))
+
+        start = shown()
+        page.wait_for_function(f"() => parseInt(document.getElementById('cumulativeLaps').innerText.replace(/,/g, '')) > {start}",
+                               timeout=60_000)
+        # Matches the server's own total (allowing for a lap landing in between)
+        server_total = sum(r["total_laps"] for r in _get_json("/api/leaderboard"))
+        self.assertLessEqual(abs(shown() - server_total), 2)
+        self.assertIn("km", page.inner_text("#cumulativeDistance"))
+        self.assertEqual(errors, [])
+        ctx.close()
+
     def test_raw_tag_reads_reach_admin_only(self):
         """#12: tag_detected goes to the logged-in admin page, not to public screens."""
         counts = {"admin": 0, "public": 0}
