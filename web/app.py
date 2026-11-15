@@ -231,6 +231,55 @@ async def prepare_page(request: Request):
         }
     )
 
+@app.get("/replay", response_class=HTMLResponse)
+async def replay_page(request: Request):
+    event_state = db.get_event_state()
+    return templates.TemplateResponse(
+        request=request,
+        name="replay.html",
+        context={
+            "event": event_state,
+            "is_mock": use_mock
+        }
+    )
+
+@app.get("/api/replay")
+async def get_replay_data():
+    """Returns race replay time-series data: crossing timestamps and lap numbers per runner."""
+    event_state = db.get_event_state()
+    start_time = event_state.get("start_time")
+    laps = db.get_all_laps()
+    participants = {p["bib_number"]: p["name"] for p in db.get_all_participants()}
+    
+    runners_data = {}
+    for bib, name in participants.items():
+        runners_data[bib] = {
+            "bib": bib,
+            "name": name,
+            "points": [{"elapsed": 0.0, "laps": 0}]  # start at 0 laps
+        }
+
+    for lap in laps:
+        bib = lap["bib_number"]
+        if bib not in runners_data:
+            runners_data[bib] = {
+                "bib": bib,
+                "name": lap.get("name") or f"Bib #{bib}",
+                "points": [{"elapsed": 0.0, "laps": 0}]
+            }
+        elapsed = round(lap["crossing_time"] - start_time, 1) if start_time else round(lap["crossing_time"], 1)
+        runners_data[bib]["points"].append({
+            "elapsed": max(0.0, elapsed),
+            "laps": lap["lap_number"],
+            "lap_duration": lap["lap_duration_seconds"]
+        })
+
+    return {
+        "event": event_state,
+        "runners": list(runners_data.values()),
+        "total_laps": len(laps)
+    }
+
 @app.get("/runner/{bib}", response_class=HTMLResponse)
 async def runner_page(request: Request, bib: int):
     participant = db.get_participant_by_bib(bib)
