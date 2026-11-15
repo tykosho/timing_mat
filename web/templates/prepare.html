@@ -331,12 +331,21 @@
       }
     }
 
+    let knownBootId = null;
     function connectWS() {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live?channel=admin`);  // + raw tag reads
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
-        if (msg.type === "tag_detected") onTagRead(msg.data);
+        if (msg.type === "init") {
+          if (msg.boot_id) {
+            if (knownBootId && knownBootId !== msg.boot_id) {
+              window.location.reload();
+              return;
+            }
+            knownBootId = msg.boot_id;
+          }
+        } else if (msg.type === "tag_detected") onTagRead(msg.data);
         else if (msg.type === "leaderboard_update") refreshParticipants();
         else if (msg.type === "event_switched") window.location.reload();
       };
