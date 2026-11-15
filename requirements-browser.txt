@@ -1,0 +1,2 @@
+# Browser smoke tests (tests/test_browser.py). After installing: python -m playwright install chromium
+playwright==1.65.2
