@@ -10,7 +10,7 @@ from hardware.r200_protocol import (
     CMD_MULTI_POLLING, CMD_STOP_MULTI, READ_MULTI_COMMAND, READ_STOP_COMMAND
 )
 
-def make_tag_frame(epc_hex: str, raw_rssi: int = 0x45, pc_msb: int = 0x30) -> bytes:
+def make_tag_frame(epc_hex: str, raw_rssi: int = 0xC9, pc_msb: int = 0x30) -> bytes:
     """Builds an R200 tag notification: AA 02 22 LEN RSSI PC(2) EPC CRC(2) CS DD."""
     payload = bytes([raw_rssi, pc_msb, 0x00]) + bytes.fromhex(epc_hex) + b"\x12\x34"
     body = bytes([0x02, 0x22, len(payload) >> 8, len(payload) & 0xFF]) + payload
@@ -24,10 +24,10 @@ class TestR200Protocol(unittest.TestCase):
         self.assertEqual(build_command_frame(CMD_STOP_MULTI), READ_STOP_COMMAND)
 
     def test_parse_tag_frame(self):
-        self.assertEqual(parse_tag_frame(make_tag_frame(self.EPC, raw_rssi=0x45)), (self.EPC, 0x45))
-        epc, dbm = parse_inventory_response(make_tag_frame(self.EPC, raw_rssi=0x45))
+        self.assertEqual(parse_tag_frame(make_tag_frame(self.EPC, raw_rssi=0xC9)), (self.EPC, 0xC9))
+        epc, dbm = parse_inventory_response(make_tag_frame(self.EPC, raw_rssi=0xC9))
         self.assertEqual(epc, self.EPC)
-        self.assertLess(dbm, 0)
+        self.assertLess(dbm, 0)  # 0xC9 = -55 dBm per R200 user protocol V2.3.3 p.42
 
     def test_rssi_is_not_the_pc_byte(self):
         """Regression: the old sniffer reported the PC high byte (0x34 = 52) as RSSI."""
