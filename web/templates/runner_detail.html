@@ -147,7 +147,7 @@
               <th class="py-3 px-6 text-right">Lap Duration</th>
               <th class="py-3 px-6 text-right">Est. Pace (/mi)</th>
               <th class="py-3 px-6 text-center">Peak RSSI</th>
-              <th class="py-3 px-6 text-right w-24">Action</th>
+              {% if is_admin %}<th class="py-3 px-6 text-right w-24">Action</th>{% endif %}
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-800 text-sm">
@@ -187,11 +187,13 @@
                   -
                 {% endif %}
               </td>
+              {% if is_admin %}
               <td class="py-3 px-6 text-right">
                 <button onclick="deleteLap({{ lap.id }})" title="Delete Lap" class="text-xs text-rose-400 hover:text-rose-300">
                   <i class="fa-solid fa-trash"></i>
                 </button>
               </td>
+              {% endif %}
             </tr>
             {% endfor %}
           </tbody>
@@ -204,7 +206,11 @@
   <script>
     async function deleteLap(lapId) {
       if (confirm("Delete this lap entry?")) {
-        await fetch(`/api/laps/${lapId}`, { method: "DELETE" });
+        const res = await fetch(`/api/laps/${lapId}`, { method: "DELETE" });
+        if (!res.ok) {
+          alert(res.status === 401 ? "Log in as admin to delete laps." : "Could not delete the lap.");
+          return;
+        }
         window.location.reload();
       }
     }

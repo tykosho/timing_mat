@@ -1,6 +1,8 @@
 # Take Back the Track! 🏁
 ### UHF RFID Race Timing Mat & Leaderboard System
 
+[![CI](https://github.com/tykosho/timing_mat/actions/workflows/ci.yml/badge.svg)](https://github.com/tykosho/timing_mat/actions/workflows/ci.yml)
+
 An end-to-end race timing mat and bib tracking system built for track & running club events. Designed to run on a Raspberry Pi powered by a portable USB battery, or locally on your computer inside Docker.
 
 ---
@@ -77,11 +79,26 @@ Everything (runners, bibs, tags, laps, raw reads) belongs to an **event**. The r
 
 1. Plug your USB-to-UART adapter (connected to the R200 board) into the Raspberry Pi.
 2. Clone or copy this repository to the Pi.
-3. Run with the Raspberry Pi profile (which maps `/dev/ttyUSB0` into Docker):
+3. Choose an admin PIN (6+ digits) and put it in a `.env` file next to `docker-compose.pi.yml` (it's git-ignored):
+   ```bash
+   echo "ADMIN_PIN=482913" > .env
+   ```
+   Compose refuses to start without it. See [Admin access](#-admin-access) below.
+4. Run with the Raspberry Pi profile (which maps `/dev/ttyUSB0` into Docker):
    ```bash
    docker compose -f docker-compose.pi.yml up --build -d
    ```
-4. If the Pi reboots or power is briefly interrupted, Docker's `restart: unless-stopped` policy will automatically bring the race timer and database back online.
+5. If the Pi reboots or power is briefly interrupted, Docker's `restart: unless-stopped` policy will automatically bring the race timer and database back online.
+
+### 🔒 Admin access
+
+Runners' phones are on the same Wi-Fi as the timer, so race control is behind a PIN:
+
+- **Open to everyone:** the leaderboard (`/leaderboard`), runner pages (`/runner/<bib>`), the live WebSocket, and the read-only `GET /api/leaderboard` and `GET /api/event`.
+- **Admin only:** `/admin`, `/prepare`, every change (start/pause/end, runners, tags, laps, settings), runner lists and CSV exports (they contain emails). Opening an admin page asks for the PIN, and the login lasts 7 days on that device. The log-out button is in the admin header.
+- **Setting the PIN:** `ADMIN_PIN` env var (or `admin.pin` in `config.yaml`). Changing it logs everyone out.
+- **No PIN set:** in mock mode the admin is left open (with a warning banner) for local development. With a real reader, the app makes up a PIN and prints it in the log (`docker compose logs race-timer`).
+- Five wrong PINs from one device lock it out for a minute.
 
 ---
 
@@ -135,6 +152,23 @@ python3 -m unittest discover tests
 No local Python? Run the tests in Docker from the project folder:
 ```bash
 docker run --rm -v "$PWD:/app" -w /app python:3.11-slim sh -c "pip install -q -r requirements.txt -r requirements-dev.txt && python -B -m unittest discover tests"
+```
+
+### Continuous integration
+
+Every pull request (and every push to `main`) runs `.github/workflows/ci.yml`:
+
+| Check | What it runs |
+|---|---|
+| `tests` | `python -m unittest discover tests` on Python 3.11 |
+| `lint` | `ruff check .`, using the bug-only rules in `ruff.toml` (syntax errors, undefined names) |
+| `docker` | builds the `Dockerfile` (nothing is pushed) |
+
+Run the same checks before you push:
+```bash
+python3 -m unittest discover tests
+pip install ruff==0.17.5 && ruff check .
+docker build -t timing-mat .
 ```
 
 > **Not yet verified on real hardware:** the R200 frame parsing and the RSSI-to-dBm conversion (`raw_rssi_to_dbm` in `hardware/r200_protocol.py`) are covered by tests built from the documented frame layout, not from captured frames. Run `python -m hardware.sniffer --raw` with the reader attached to check them.

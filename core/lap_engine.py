@@ -1,5 +1,4 @@
 import time
-import random
 import asyncio
 import logging
 from collections import deque
@@ -88,8 +87,12 @@ class LapEngine:
                 if reads:
                     await self._resolve_crossing(epc, reads)
 
-    async def _resolve_crossing(self, epc: str, reads: List[Tuple[float, float]], force: bool = False):
-        """Determines peak timestamp and updates participant state (start, lap, or break resume)."""
+    async def _resolve_crossing(self, epc: str, reads: List[Tuple[float, float]], force: bool = False) -> Optional[str]:
+        """Determines peak timestamp and updates participant state (start, lap, or break resume).
+
+        Returns what happened: "started", "lap", "resumed", "debounced", or None when the
+        crossing was ignored (unknown tag, event not running).
+        """
         peak_time, peak_rssi = max(reads, key=lambda r: r[1])
 
         event_state = self.db.get_event_state()
@@ -102,7 +105,7 @@ class LapEngine:
         participant = self.db.get_participant_by_epc(epc)
         if not participant:
             logger.info(f"Tag read for unassigned EPC: {epc} (Peak RSSI: {peak_rssi:.1f} dBm)")
-            return
+            return None
 
         bib = participant["bib_number"]
         name = participant["name"]
@@ -113,12 +116,12 @@ class LapEngine:
         ended_in_time = status == "ended" and event_state.get("end_time") and peak_time <= event_state["end_time"]
         if status != "running" and not ended_in_time:
             logger.info(f"Event {status}: {name} (Bib {bib}) crossed mat; not timed.")
-            return
+            return None
 
         race_start = event_state.get("start_time")
         if not race_start:
             logger.warning(f"Event active but no start_time set!")
-            return
+            return None
 
         runner_start = participant.get("start_time")
 
@@ -141,7 +144,7 @@ class LapEngine:
                     await self.on_runner_started(start_data)
                 else:
                     self.on_runner_started(start_data)
-            return
+            return "started"
 
         # -------------------------------------------------------------
         # CASE 2: Runner HAS started -> Evaluate Lap or Break Resume
@@ -149,12 +152,13 @@ class LapEngine:
         last_crossing = participant.get("last_crossing_time") or runner_start
         time_since_last = peak_time - last_crossing
 
-        if not force:
-            # Debounce check (runner lingering near antenna)
-            if time_since_last < effective_min_lap:
-                logger.info(f"Debounce: Bib {bib} ({name}) read ignored. Only {time_since_last:.1f}s since last crossing (min {effective_min_lap:.1f}s).")
-                return
+        # Debounce check (runner lingering near antenna). This applies to forced crossings too:
+        # a lap time is always the real time since the last crossing, never an invented one.
+        if time_since_last < effective_min_lap:
+            logger.info(f"Debounce: Bib {bib} ({name}) {'forced crossing rejected' if force else 'read ignored'}. Only {time_since_last:.1f}s since last crossing (min {effective_min_lap:.1f}s).")
+            return "debounced"
 
+        if not force:
             # Break / Rest detection: if time since last crossing exceeds threshold
             if time_since_last > effective_max_rest:
                 break_duration = time_since_last * self.speed_multiplier
@@ -178,13 +182,13 @@ class LapEngine:
                         await self.on_runner_resumed(resumed_data)
                     else:
                         self.on_runner_resumed(resumed_data)
-                return
+                return "resumed"
 
             # Normal lap duration
             lap_duration = max(30.0, time_since_last * self.speed_multiplier)
         else:
-            # Force manual trigger from UI
-            lap_duration = (time_since_last * self.speed_multiplier) if time_since_last >= 15.0 else random.uniform(62.0, 85.0)
+            # Forced crossing from the admin UI: skip break detection, but time it for real.
+            lap_duration = time_since_last * self.speed_multiplier
 
         # Record completed lap
         last_lap = self.db.get_last_lap(bib)
@@ -227,14 +231,19 @@ class LapEngine:
                 await self.on_lap_completed(lap_data)
             else:
                 self.on_lap_completed(lap_data)
+        return "lap"
 
     async def trigger_manual_crossing(self, bib_number: int, force: bool = True) -> Optional[Dict[str, Any]]:
-        """Allows admin UI to manually trigger an immediate crossing for testing or missed bib."""
+        """Allows admin UI to manually trigger an immediate crossing for testing or missed bib.
+
+        Returns None if the bib doesn't exist, otherwise {"participant": ..., "outcome": ...}
+        where outcome is the value returned by _resolve_crossing.
+        """
         participant = self.db.get_participant_by_bib(bib_number)
         if not participant:
             return None
         epc = participant["epc"]
         now = time.time()
         reads = [(now, -42.0)]
-        await self._resolve_crossing(epc, reads, force=force)
-        return participant
+        outcome = await self._resolve_crossing(epc, reads, force=force)
+        return {"participant": participant, "outcome": outcome}

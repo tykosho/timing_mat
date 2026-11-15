@@ -9,6 +9,8 @@ services:
     environment:
       - MOCK_HARDWARE=false
       - SEED_DEMO=false
+      # Required: put ADMIN_PIN=<6+ digits> in a .env file next to this one (not committed)
+      - ADMIN_PIN=${ADMIN_PIN:?Set ADMIN_PIN in .env before starting the race timer}
       - SERIAL_PORT=/dev/ttyUSB0
       - BAUD_RATE=115200
       - CONFIG_PATH=config.yaml

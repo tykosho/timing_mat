@@ -9,7 +9,7 @@ from markupsafe import Markup
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -21,6 +21,7 @@ from core.registration_import import parse_registration_csv
 from core.lap_engine import LapEngine
 from hardware.mock_reader import MockReader
 from hardware.serial_reader import SerialReader
+from web import auth
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("RaceApp")
@@ -42,6 +43,10 @@ def _flag(env_name: str, config_value: Any, default: bool) -> bool:
 use_mock = _flag("MOCK_HARDWARE", config.get("hardware", {}).get("mock"), True)
 serial_port = os.getenv("SERIAL_PORT", config.get("hardware", {}).get("serial_port", "/dev/ttyUSB0"))
 baud_rate = int(os.getenv("BAUD_RATE", config.get("hardware", {}).get("baud_rate", 115200)))
+
+# Admin PIN (issue #3). Env wins over config.yaml; see web/auth.py for what's protected.
+admin_auth = auth.AdminAuth(auth.resolve_pin(
+    os.getenv("ADMIN_PIN", (config.get("admin") or {}).get("pin")), use_mock))
 
 db_path = os.getenv("DB_PATH", config.get("database", {}).get("path", "data/race.db"))
 db = Database(db_path, default_event_name=config.get("event", {}).get("name", "Take Back the Track!"))
@@ -139,6 +144,8 @@ async def lifespan(app: FastAPI):
     lap_engine.flush_raw_reads()
 
 app = FastAPI(title="Race Timing System", lifespan=lifespan)
+# Looked up per request so tests can swap admin_auth.
+app.middleware("http")(auth.make_middleware(lambda: admin_auth))
 
 # Templates and static setup
 def _tojson(obj) -> Markup:
@@ -171,6 +178,36 @@ async def push_event_status(include_leaderboard: bool = True):
 
 async def push_leaderboard():
     await broadcast_ws({"type": "leaderboard_update", "leaderboard": db.get_leaderboard()})
+
+# ----------------- LOGIN -----------------
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, next: str = "/admin"):
+    if admin_auth.is_admin(request):
+        return RedirectResponse(url=auth.safe_next(next), status_code=303)
+    return templates.TemplateResponse(request=request, name="login.html",
+                                      context={"next": auth.safe_next(next), "error": None})
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(request: Request, pin: str = Form(""), next: str = Form("/admin")):
+    client = request.client.host if request.client else "unknown"
+    target = auth.safe_next(next)
+    if not admin_auth.enabled:
+        return RedirectResponse(url=target, status_code=303)
+    if admin_auth.check_pin(client, pin):
+        res = RedirectResponse(url=target, status_code=303)
+        res.set_cookie(auth.COOKIE_NAME, admin_auth.session_token(), max_age=auth.COOKIE_MAX_AGE,
+                       httponly=True, samesite="lax")
+        return res
+    error = ("Too many wrong PINs. Wait a minute and try again." if admin_auth.locked_out(client)
+             else "Wrong PIN.")
+    return templates.TemplateResponse(request=request, name="login.html", status_code=401,
+                                      context={"next": target, "error": error})
+
+@app.post("/logout")
+async def logout():
+    res = RedirectResponse(url="/leaderboard", status_code=303)
+    res.delete_cookie(auth.COOKIE_NAME)
+    return res
 
 # ----------------- PAGE ROUTES -----------------
 @app.get("/", response_class=HTMLResponse)
@@ -215,7 +252,8 @@ async def admin_page(request: Request):
             "leaderboard": db.get_leaderboard(),
             "is_mock": use_mock,
             "serial_port": serial_port,
-            "raw_read_count": db.count_raw_reads()
+            "raw_read_count": db.count_raw_reads(),
+            "auth_enabled": admin_auth.enabled
         }
     )
 
@@ -293,7 +331,8 @@ async def runner_page(request: Request, bib: int):
             "runner": participant,
             "laps": db.get_laps_for_runner(bib),
             "breaks": db.get_breaks_for_runner(bib),
-            "event": event_state
+            "event": event_state,
+            "is_admin": admin_auth.is_admin(request)
         }
     )
 
@@ -700,10 +739,21 @@ async def delete_lap(lap_id: int):
 # Simulator Controls
 @app.post("/api/simulator/trigger/{bib}")
 async def trigger_simulated_crossing(bib: int):
+    if not isinstance(reader, MockReader):
+        raise HTTPException(status_code=400, detail="Hardware is not in mock mode")
     result = await lap_engine.trigger_manual_crossing(bib, force=True)
     if not result:
         raise HTTPException(status_code=404, detail="Runner not found")
-    return {"status": "crossing_simulated", "runner": result["name"], "bib": bib}
+    name = result["participant"]["name"]
+    outcome = result["outcome"]
+    if outcome == "debounced":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Too soon since #{bib}'s last crossing; no lap recorded",
+        )
+    if outcome is None:
+        raise HTTPException(status_code=409, detail="Event is not running; crossing ignored")
+    return {"status": "crossing_simulated", "outcome": outcome, "runner": name, "bib": bib}
 
 class SpeedRequest(BaseModel):
     speed: float
