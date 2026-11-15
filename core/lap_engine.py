@@ -123,10 +123,12 @@ class LapEngine:
 
         event_state = self.db.get_event_state()
         min_lap_sec = event_state.get("min_lap_seconds", 45.0)
-        max_rest_sec = event_state.get("max_lap_rest_seconds", 600.0)
+        max_rest_sec = event_state.get("max_lap_rest_seconds")
+        if max_rest_sec is None:
+            max_rest_sec = 600.0
 
         effective_min_lap = min_lap_sec / max(0.1, self.speed_multiplier)
-        effective_max_rest = max_rest_sec / max(0.1, self.speed_multiplier)
+        effective_max_rest = (max_rest_sec / max(0.1, self.speed_multiplier)) if max_rest_sec > 0 else 0.0
 
         participant = self.db.get_participant_by_epc(epc)
         if not participant:
@@ -195,8 +197,8 @@ class LapEngine:
             return "debounced"
 
         if not force:
-            # Break / Rest detection: if time since last crossing exceeds threshold
-            if time_since_last > effective_max_rest:
+            # Break / Rest detection: if enabled (max_rest_sec > 0) and time since last crossing exceeds threshold
+            if max_rest_sec > 0 and time_since_last > effective_max_rest:
                 break_duration = time_since_last * self.speed_multiplier
                 self.db.record_break(
                     bib_number=bib,

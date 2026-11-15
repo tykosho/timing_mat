@@ -299,10 +299,13 @@ class Database:
     def create_event(self, name: str) -> int:
         """Creates an event in 'setup', inheriting rules (lap debounce, rest, track length) from the current one."""
         base = self.get_event() or {}
+        max_rest = base.get("max_lap_rest_seconds")
+        if max_rest is None:
+            max_rest = 600.0
         with self.connect() as conn:
             return self._insert_event(
                 conn, name, min_lap_seconds=base.get("min_lap_seconds", 45.0),
-                max_lap_rest_seconds=base.get("max_lap_rest_seconds", 600.0),
+                max_lap_rest_seconds=max_rest,
                 track_length_m=base.get("track_length_m", 400.0))
 
     def set_current_event(self, event_id: int):
@@ -839,7 +842,9 @@ class Database:
     def get_leaderboard(self, event_id: Optional[int] = None) -> List[Dict[str, Any]]:
         eid = self._eid(event_id)
         ev = self.get_event(eid)
-        max_rest = ev.get("max_lap_rest_seconds", 600.0)
+        max_rest = ev.get("max_lap_rest_seconds")
+        if max_rest is None:
+            max_rest = 600.0
         track_m = ev.get("track_length_m") or 400.0
         now = clock.now()
 
@@ -878,7 +883,7 @@ class Database:
                 item["status"] = "finished"
             elif item["bib_number"] in on_break:
                 item["status"] = "on_break"
-            elif item["last_crossing_time"] and (now - item["last_crossing_time"]) > max_rest:
+            elif max_rest > 0 and item["last_crossing_time"] and (now - item["last_crossing_time"]) > max_rest:
                 item["status"] = "on_break"
             elif ev["status"] == "running":
                 item["status"] = "active"
