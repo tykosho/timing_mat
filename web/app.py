@@ -104,6 +104,13 @@ async def on_runner_resumed(resume_data: Dict[str, Any]):
         "leaderboard": leaderboard
     })
 
+# Callback when an unrecognized/unassigned tag crosses the mat (issue #45)
+async def on_unassigned_tag(tag_data: Dict[str, Any]):
+    await broadcast_ws({
+        "type": "unassigned_tag_detected",
+        "data": tag_data,
+    })
+
 # Callback when any tag is detected (used for Admin auto-fill / registration)
 # Raw tag reads arrive 5-20 per crossing per runner. Only the admin and Prepare Bibs pages use
 # them, so they go only to admin connections, combined per tag: one message per tag every
@@ -145,7 +152,8 @@ lap_engine = LapEngine(
     on_lap_completed=on_lap_completed,
     on_runner_started=on_runner_started,
     on_runner_resumed=on_runner_resumed,
-    on_tag_detected=on_tag_detected
+    on_tag_detected=on_tag_detected,
+    on_unassigned_tag=on_unassigned_tag
 )
 # A Pi without an RTC can boot with an older time than what's already stored (issue #2)
 clock.clock.ensure_not_before(db.latest_timestamp())
@@ -618,6 +626,27 @@ async def add_participant(p: ParticipantRequest):
     db.add_participant(p.bib_number, p.name, p.epc, p.notes or "", p.email or "")
     await push_leaderboard()
     return {"status": "created"}
+
+class SelfRegisterRequest(BaseModel):
+    name: str
+    epc: str
+    bib_number: Optional[int] = Field(default=None, gt=0)
+
+@app.post("/api/self-register")
+async def self_register_participant(req: SelfRegisterRequest):
+    """Registers a runner for a previously unrecognized tag EPC, auto-assigning a bib if omitted."""
+    epc = (req.epc or "").strip()
+    if not epc:
+        raise RegistrationError("Tag EPC is required")
+    bib = req.bib_number
+    if bib is None:
+        used_bibs = {p["bib_number"] for p in db.get_all_participants()}
+        bib = 1
+        while bib in used_bibs:
+            bib += 1
+    db.add_participant(bib, req.name, epc)
+    await push_leaderboard()
+    return {"status": "created", "bib_number": bib, "participant": db.get_participant_by_bib(bib)}
 
 class ImportRequest(BaseModel):
     csv_text: str
