@@ -124,9 +124,17 @@ cmd_setup() {
 
   echo "Setting Wi-Fi country to $COUNTRY"
   if [ "$DRY_RUN" = "1" ] || command -v raspi-config >/dev/null; then
-    run raspi-config nonint do_wifi_country "$COUNTRY"
+    # After setting the country, raspi-config tells the desktop's Wi-Fi panel. With no
+    # desktop session (systemd, cron, some sudo setups) that last step fails and it exits 1
+    # even though the country is set, so check the result below instead of trusting it.
+    run raspi-config nonint do_wifi_country "$COUNTRY" \
+      || echo "raspi-config reported an error; checking whether the country was set anyway"
   else
     run iw reg set "$COUNTRY"
+  fi
+  if [ "$DRY_RUN" != "1" ] && command -v iw >/dev/null; then
+    iw reg get | grep -q "^country $COUNTRY:" \
+      || die "Wi-Fi country is not $COUNTRY after setting it (see: iw reg get)."
   fi
   run rfkill unblock wifi
 
