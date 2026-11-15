@@ -145,7 +145,7 @@ class PagesLoadTest(BrowserTestCase):
 
     def test_admin_pages_have_no_js_errors(self):
         ctx = self.admin_context()
-        for path in ["/admin", "/prepare", "/crossings", "/replay", "/simulator", "/runner/101"]:
+        for path in ["/admin", "/prepare", "/crossings", "/replay", "/simulator", "/join", "/runner/101"]:
             with self.subTest(path=path):
                 page, errors = self.open(ctx, path)
                 self.assertEqual(errors, [], path)

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Join - {{ event.name }}</title>
+  <style>
+    /* Self-contained so it prints the same everywhere (no Tailwind build needed) */
+    :root { --ink: #0f172a; --muted: #475569; --line: #cbd5e1; --accent: #059669; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: #fff; }
+    main { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+    h1 { font-size: 40px; margin: 0 0 4px; text-align: center; }
+    .sub { text-align: center; color: var(--muted); margin: 0 0 28px; font-size: 18px; }
+    .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+    .step { border: 2px solid var(--line); border-radius: 20px; padding: 24px; text-align: center; break-inside: avoid; }
+    .num { display: inline-flex; width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: #fff;
+           font-weight: 800; font-size: 22px; align-items: center; justify-content: center; }
+    h2 { font-size: 26px; margin: 10px 0 14px; }
+    .qr { width: 100%; max-width: 320px; margin: 0 auto; }
+    .qr svg { width: 100%; height: auto; display: block; }
+    .detail { font-size: 20px; margin: 14px 0 0; }
+    .detail code { font-size: 24px; font-weight: 700; word-break: break-all; }
+    .hint { color: var(--muted); font-size: 15px; margin: 8px 0 0; }
+    .warn { max-width: 640px; margin: 0 auto 24px; padding: 12px 16px; border-radius: 12px;
+            background: #fef3c7; border: 1px solid #f59e0b; color: #78350f; font-size: 15px; }
+    .actions { text-align: center; margin-top: 28px; }
+    button { font-size: 16px; padding: 10px 20px; border-radius: 10px; border: 0; background: var(--ink); color: #fff; cursor: pointer; }
+    @media print { .actions, .warn { display: none; } main { padding: 0; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{{ event.name }}</h1>
+    <p class="sub">Live lap times on your phone</p>
+
+    {% if not wifi_qr %}
+    <p class="warn" role="note">
+      The race Wi-Fi isn't configured here, so only the leaderboard link is shown. Set <code>HOTSPOT_SSID</code>,
+      <code>HOTSPOT_PASSWORD</code> and <code>HOTSPOT_HOSTNAME</code> in <code>.env</code>
+      (see <code>deploy/pi/hotspot.sh</code>) and restart the timer.
+    </p>
+    {% endif %}
+
+    <div class="steps">
+      {% if wifi_qr %}
+      <section class="step" id="join-wifi">
+        <span class="num">1</span>
+        <h2>Join the Wi-Fi</h2>
+        <div class="qr" aria-label="QR code to join the {{ hotspot.ssid }} Wi-Fi network">{{ wifi_qr }}</div>
+        <p class="detail">Network <code>{{ hotspot.ssid }}</code></p>
+        {% if hotspot.password %}<p class="detail">Password <code>{{ hotspot.password }}</code></p>{% endif %}
+        <p class="hint">Point your camera at the code. It has no internet; stay connected when your phone asks.</p>
+      </section>
+      {% endif %}
+
+      <section class="step" id="open-leaderboard">
+        <span class="num">{{ 2 if wifi_qr else 1 }}</span>
+        <h2>Open the leaderboard</h2>
+        <div class="qr" aria-label="QR code for {{ url }}/leaderboard">{{ url_qr }}</div>
+        <p class="detail"><code>{{ url }}</code></p>
+        <p class="hint">Tap your name to see every lap.</p>
+      </section>
+    </div>
+
+    <div class="actions"><button type="button" onclick="window.print()">Print</button></div>
+  </main>
+</body>
+</html>

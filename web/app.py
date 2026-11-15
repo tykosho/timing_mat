@@ -21,7 +21,7 @@ from core.registration_import import parse_registration_csv
 from core.lap_engine import LapEngine
 from hardware.mock_reader import MockReader
 from hardware.serial_reader import SerialReader, DEFAULT_REARM_INTERVAL, DEFAULT_SILENCE_REARM
-from web import auth
+from web import auth, join
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("RaceApp")
@@ -346,6 +346,21 @@ async def admin_page(request: Request):
             "auth_enabled": admin_auth.enabled
         }
     )
+
+@app.get("/join", response_class=HTMLResponse)
+async def join_page(request: Request):
+    """Printable poster: QR to join the race Wi-Fi, QR to open the leaderboard (issue #42).
+    Admin-only because it shows the Wi-Fi password (which is meant to be shared, on paper)."""
+    hotspot = join.hotspot_settings()
+    url = join.site_url(hotspot["hostname"], str(request.base_url))
+    wifi_qr = join.qr_svg(join.wifi_qr_payload(hotspot["ssid"], hotspot["password"])) if hotspot["ssid"] else None
+    return templates.TemplateResponse(request=request, name="join.html", context={
+        "event": db.get_event_state(),
+        "hotspot": hotspot,
+        "url": url,
+        "wifi_qr": wifi_qr,
+        "url_qr": join.qr_svg(url + "/leaderboard"),
+    })
 
 @app.get("/prepare", response_class=HTMLResponse)
 async def prepare_page(request: Request):
