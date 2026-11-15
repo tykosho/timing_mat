@@ -94,10 +94,67 @@ class TestApi(unittest.TestCase):
     def test_pages_render_and_escape_names(self):
         evil = "</script><script>alert(1)</script>"
         self.client.post("/api/participants", json={"bib_number": 9, "name": evil})
-        for path in ("/leaderboard", "/admin", "/prepare", "/runner/9"):
+        for path in ("/crossings", "/leaderboard", "/admin", "/prepare", "/runner/9"):
             r = self.client.get(path)
             self.assertEqual(r.status_code, 200, path)
             self.assertNotIn(evil, r.text, f"{path} must not emit the name unescaped")
+
+    def test_quick_lap_adjustments_and_event_isolation(self):
+        self.client.post("/api/participants", json={"bib_number": 10, "name": "Alex"})
+        self.client.post("/api/event/start")
+
+        # Quick add 2 laps
+        r1 = self.client.post("/api/participants/10/quick-add-lap")
+        self.assertEqual(r1.status_code, 200, r1.text)
+        self.assertEqual(r1.json()["lap"]["lap_number"], 1)
+        p_after_1 = {p["bib_number"]: p for p in self.client.get("/api/participants").json()}[10]
+        self.assertIsNotNone(p_after_1["start_time"])
+        self.assertGreater(p_after_1["last_crossing_time"], p_after_1["start_time"])
+
+        r2 = self.client.post("/api/participants/10/quick-add-lap", json={"lap_duration_seconds": 62.5})
+        self.assertEqual(r2.status_code, 200, r2.text)
+        self.assertEqual(r2.json()["lap"]["lap_number"], 2)
+        self.assertEqual(r2.json()["lap"]["lap_duration_seconds"], 62.5)
+
+        # Ending the event freezes quick lap adjustments
+        self.client.post("/api/event/end")
+        self.assertEqual(self.client.post("/api/participants/10/quick-add-lap").status_code, 409)
+        self.assertEqual(self.client.post("/api/participants/10/quick-remove-lap").status_code, 409)
+
+        # Reopening allows removing laps cleanly
+        self.client.post("/api/event/reopen")
+        rem1 = self.client.post("/api/participants/10/quick-remove-lap")
+        self.assertEqual(rem1.status_code, 200, rem1.text)
+        self.assertEqual(rem1.json()["removed_lap"]["lap_number"], 2)
+
+        # Switching to a new event isolates laps so removing bib 10 in event A doesn't touch event B
+        other_res = self.client.post("/api/events", json={"name": "Second Event"})
+        self.assertEqual(other_res.status_code, 200)
+        self.client.post("/api/participants", json={"bib_number": 10, "name": "Alex Again"})
+        self.assertEqual(self.client.post("/api/participants/10/quick-remove-lap").status_code, 400)
+        self.assertEqual(self.client.post("/api/participants/999/quick-remove-lap").status_code, 404)
+        # First event still has 1 lap recorded
+        self.assertIn("Alex", self.client.get(f"/api/events/{self.event_id}/laps.csv").text)
+
+    def test_simulator_playback_and_scaled_speed(self):
+        state = self.client.get("/api/simulator/state")
+        self.assertEqual(state.status_code, 200)
+        body = state.json()
+        self.assertEqual(len(body["runners"]), 5)
+        self.assertFalse(body["paused"])
+
+        paused = self.client.post("/api/simulator/pause")
+        self.assertEqual(paused.status_code, 200)
+        self.assertTrue(paused.json()["sim"]["paused"])
+
+        speed = self.client.post("/api/simulator/speed", json={"speed": 20.0})
+        self.assertEqual(speed.status_code, 200)
+        self.assertEqual(speed.json()["speed"], 20.0)
+
+        resumed = self.client.post("/api/simulator/play")
+        self.assertEqual(resumed.status_code, 200)
+        self.assertFalse(resumed.json()["sim"]["paused"])
+        self.assertEqual(resumed.json()["sim"]["speed"], 20.0)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ event.name }} - Race Replay & Progression</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/fontawesome/all.min.css">
+  <script src="/static/chart.umd.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
+
+  <!-- Header -->
+  <header class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50">
+    <div class="flex items-center space-x-4">
+      <a href="/leaderboard" class="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center text-slate-300 font-bold transition">
+        <i class="fa-solid fa-arrow-left"></i>
+      </a>
+      <div>
+        <h1 class="text-xl font-black tracking-tight text-white flex items-center gap-2">
+          Race Replay & Step Chart
+          <span class="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded font-mono">Live</span>
+        </h1>
+        <p class="text-xs text-slate-400">{{ event.name }} • Laps Completed vs. Elapsed Time</p>
+      </div>
+    </div>
+
+    <!-- Quick Navigation -->
+    <div class="flex items-center space-x-3">
+      <a href="/crossings" class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3.5 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
+        <i class="fa-solid fa-person-running"></i> Trackside Feed
+      </a>
+      <a href="/leaderboard" class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3.5 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
+        <i class="fa-solid fa-display"></i> Leaderboard
+      </a>
+      <button onclick="fetchAndRender()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20">
+        <i class="fa-solid fa-rotate-right"></i> Refresh
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Chart Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl flex flex-col">
+      <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
+        <div>
+          <h2 class="text-base font-bold text-slate-200 flex items-center gap-2">
+            <i class="fa-solid fa-chart-line text-emerald-400"></i> Progression Curve
+          </h2>
+          <p class="text-xs text-slate-400">Visual step chart comparing runner paces and lead changes throughout the event.</p>
+        </div>
+        <div class="flex items-center gap-2 text-xs font-mono text-slate-400">
+          <span id="chartRunnerCount">0 Runners</span>
+          <span>•</span>
+          <span id="chartLapCount">0 Laps Plotted</span>
+        </div>
+      </div>
+
+      <!-- Canvas -->
+      <div class="relative w-full h-[520px]">
+        <canvas id="replayChart"></canvas>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let replayChart = null;
+
+    const RUNNER_COLORS = [
+      '#10b981', '#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6',
+      '#06b6d4', '#f97316', '#14b8a6', '#6366f1', '#e11d48'
+    ];
+
+    function formatElapsed(sec) {
+      const mins = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${mins}:${String(s).padStart(2, '0')}`;
+    }
+
+    async function fetchAndRender() {
+      try {
+        const res = await fetch("/api/replay");
+        if (!res.ok) throw new Error("Could not load replay data");
+        const data = await res.json();
+
+        document.getElementById("chartRunnerCount").innerText = `${data.runners.length} Runners`;
+        document.getElementById("chartLapCount").innerText = `${data.total_laps} Laps Plotted`;
+
+        renderChart(data.runners);
+      } catch (e) {
+        console.error("Replay fetch error:", e);
+      }
+    }
+
+    function renderChart(runners) {
+      const ctx = document.getElementById("replayChart").getContext("2d");
+
+      const datasets = runners.map((runner, index) => {
+        const color = RUNNER_COLORS[index % RUNNER_COLORS.length];
+        return {
+          label: `#${runner.bib} ${runner.name}`,
+          data: runner.points.map(pt => ({ x: pt.elapsed, y: pt.laps })),
+          borderColor: color,
+          backgroundColor: color,
+          stepped: 'before',
+          borderWidth: 2.5,
+          pointRadius: 3,
+          pointHoverRadius: 6,
+        };
+      });
+
+      if (replayChart) {
+        replayChart.destroy();
+      }
+
+      replayChart = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            mode: 'nearest',
+            intersect: false,
+          },
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: {
+                color: '#cbd5e1',
+                font: { family: 'ui-sans-serif, system-ui', weight: 'bold', size: 12 },
+                boxWidth: 16,
+                padding: 16
+              }
+            },
+            tooltip: {
+              backgroundColor: '#0f172a',
+              titleColor: '#f8fafc',
+              bodyColor: '#cbd5e1',
+              borderColor: '#334155',
+              borderWidth: 1,
+              callbacks: {
+                title: (items) => {
+                  const x = items[0].parsed.x;
+                  return `Elapsed: ${formatElapsed(x)} (${Math.round(x)}s)`;
+                },
+                label: (item) => {
+                  return ` ${item.dataset.label}: Lap ${item.parsed.y}`;
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              type: 'linear',
+              title: {
+                display: true,
+                text: 'Elapsed Race Time',
+                color: '#94a3b8',
+                font: { size: 12, weight: 'bold' }
+              },
+              ticks: {
+                color: '#64748b',
+                callback: (val) => formatElapsed(val)
+              },
+              grid: { color: 'rgba(51, 65, 85, 0.4)' }
+            },
+            y: {
+              title: {
+                display: true,
+                text: 'Total Laps Completed',
+                color: '#94a3b8',
+                font: { size: 12, weight: 'bold' }
+              },
+              ticks: {
+                color: '#64748b',
+                precision: 0
+              },
+              grid: { color: 'rgba(51, 65, 85, 0.4)' }
+            }
+          }
+        }
+      });
+    }
+
+    // Connect WebSocket to live-refresh progression
+    function connectWS() {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "lap_completed" || msg.type === "lap_removed" || msg.type === "event_status") {
+          fetchAndRender();
+        }
+      };
+      ws.onclose = () => setTimeout(connectWS, 3000);
+    }
+
+    fetchAndRender();
+    connectWS();
+  </script>
+</body>
+</html>

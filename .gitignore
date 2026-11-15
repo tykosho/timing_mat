@@ -1,7 +1,10 @@
 R200_SDK(EN)/
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
 .DS_Store
+*.db
+*.db-journal
 data/*.db
 data/backups/
 .env

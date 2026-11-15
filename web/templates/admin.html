@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ event.name }} - Race Control & Admin</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/fontawesome/all.min.css">
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
 
@@ -29,8 +29,11 @@
       <a href="/prepare" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
         <i class="fa-solid fa-tags"></i> Prepare Bibs
       </a>
-      <a href="/leaderboard" target="_blank" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 shadow-lg shadow-emerald-600/20">
-        <i class="fa-solid fa-display"></i> Open Big Screen Board
+      <a href="/crossings" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 shadow-lg shadow-emerald-600/20">
+        <i class="fa-solid fa-person-running"></i> Trackside Feed
+      </a>
+      <a href="/leaderboard" target="_blank" class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
+        <i class="fa-solid fa-display"></i> Leaderboard
       </a>
       {% if auth_enabled %}
       <form method="post" action="/logout">
@@ -106,6 +109,29 @@
         <p id="endedNote" class="hidden text-[11px] text-slate-400 mt-3">
           Event ended. Results are frozen; download them from the Events panel below.
         </p>
+      </div>
+
+      <!-- Needs Review: Flagged Laps Card -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <h2 class="text-base font-bold text-slate-200 flex items-center gap-2">
+              <i class="fa-solid fa-triangle-exclamation text-amber-400"></i> Needs Review
+            </h2>
+            <span id="flaggedCountBadge" class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono font-bold">
+              0
+            </span>
+          </div>
+          <p class="text-xs text-slate-400 mb-3">Laps flagged for suspected missed reads or pacing anomalies.</p>
+        </div>
+
+        <div id="flaggedLapsList" class="space-y-2 overflow-y-auto max-h-52 pr-1">
+          <div class="text-xs text-slate-500 italic py-4 text-center">No laps currently flagged for review.</div>
+        </div>
+
+        <div class="pt-3 border-t border-slate-800/80 text-[11px] text-slate-500">
+          Click <strong>Split</strong> to turn a 2x-duration lap into 2 equal laps.
+        </div>
       </div>
 
       <!-- Debounce & Race Settings -->
@@ -657,6 +683,56 @@
       }
     }
 
+    async function fetchFlaggedLaps() {
+      try {
+        const res = await fetch("/api/laps/flagged");
+        if (!res.ok) return;
+        const laps = await res.json();
+        const container = document.getElementById("flaggedLapsList");
+        const badge = document.getElementById("flaggedCountBadge");
+        if (badge) badge.innerText = laps.length;
+        if (!container) return;
+        if (laps.length === 0) {
+          container.innerHTML = `<div class="text-xs text-slate-500 italic py-4 text-center">No laps currently flagged for review.</div>`;
+          return;
+        }
+        container.innerHTML = "";
+        laps.forEach(l => {
+          const row = document.createElement("div");
+          row.className = "bg-slate-950/70 border border-amber-900/40 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs";
+          row.innerHTML = `
+            <div>
+              <div class="font-bold text-white flex items-center gap-1.5">
+                <span class="text-amber-400 font-mono">#${l.bib_number}</span> ${l.name || ''} &bull; Lap ${l.lap_number}
+              </div>
+              <div class="text-[11px] text-slate-400 font-mono mt-0.5">${l.lap_duration_seconds}s &bull; ${l.flag_reason || 'Anomaly'}</div>
+            </div>
+            <div class="flex items-center gap-1.5 flex-shrink-0">
+              <button onclick="splitLap(${l.id})" title="Split into 2 equal laps" class="bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
+                Split
+              </button>
+              <button onclick="acceptLap(${l.id})" title="Accept split as-is" class="bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
+                Accept
+              </button>
+            </div>
+          `;
+          container.appendChild(row);
+        });
+      } catch (e) {
+        console.error("Flagged laps fetch error:", e);
+      }
+    }
+
+    async function splitLap(id) {
+      const res = await fetch(`/api/laps/${id}/split`, { method: "POST" });
+      if (res.ok) fetchFlaggedLaps();
+    }
+
+    async function acceptLap(id) {
+      const res = await fetch(`/api/laps/${id}/accept`, { method: "POST" });
+      if (res.ok) fetchFlaggedLaps();
+    }
+
     // WebSocket listener for live tag sniffing and status
     function connectWS() {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -669,6 +745,8 @@
           updateTimerDisplay();
         } else if (msg.type === "event_switched") {
           window.location.reload();
+        } else if (msg.type === "flagged_laps_updated" || msg.type === "lap_completed") {
+          fetchFlaggedLaps();
         } else if (msg.type === "sim_speed_updated") {
           updateSpeedButtonUI(msg.speed);
         } else if (msg.type === "tag_detected") {
@@ -682,6 +760,7 @@
       ws.onclose = () => setTimeout(connectWS, 2000);
     }
     connectWS();
+    fetchFlaggedLaps();
   </script>
 </body>
 </html>

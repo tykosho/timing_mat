@@ -118,8 +118,9 @@ lap_engine = LapEngine(
 lap_engine.refresh_event()
 
 if use_mock:
-    reader = MockReader(on_tag_read=lap_engine.process_tag_read, speed_multiplier=1.0)
-    logger.info("Operating in MOCK reader mode (Simulated runners active).")
+    reader = MockReader(on_tag_read=lap_engine.process_tag_read, speed_multiplier=5.0)
+    lap_engine.speed_multiplier = 5.0
+    logger.info("Operating in MOCK reader mode (Simulated runners active at 5.0x).")
 else:
     hw = config.get("hardware") or {}
 
@@ -136,6 +137,16 @@ else:
 
 main_event_loop = None
 
+async def sim_broadcast_loop():
+    """Streams live simulated track positions to connected browsers in mock mode."""
+    while True:
+        await asyncio.sleep(0.2)
+        if active_connections and isinstance(reader, MockReader):
+            await broadcast_ws({
+                "type": "sim_state",
+                "sim": reader.get_state()
+            })
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global main_event_loop
@@ -143,6 +154,7 @@ async def lifespan(app: FastAPI):
 
     # Start engine flush loop
     flush_task = asyncio.create_task(lap_engine.flush_loop())
+    sim_task = asyncio.create_task(sim_broadcast_loop()) if isinstance(reader, MockReader) else None
 
     # Start RFID reader
     reader.start()
@@ -151,6 +163,8 @@ async def lifespan(app: FastAPI):
 
     reader.stop()
     flush_task.cancel()
+    if sim_task:
+        sim_task.cancel()
     lap_engine.flush_raw_reads()
 
 app = FastAPI(title="Race Timing System", lifespan=lifespan)
@@ -222,7 +236,23 @@ async def logout():
 # ----------------- PAGE ROUTES -----------------
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return RedirectResponse(url="/leaderboard")
+    return RedirectResponse(url="/crossings")
+
+@app.get("/crossings", response_class=HTMLResponse)
+async def crossings_page(request: Request):
+    event_state = db.get_event_state()
+    leaderboard = db.get_leaderboard()
+    recent_crossings = db.get_recent_crossings(10)
+    return templates.TemplateResponse(
+        request=request,
+        name="crossings.html",
+        context={
+            "event": event_state,
+            "leaderboard": leaderboard,
+            "recent_crossings": recent_crossings,
+            "is_mock": use_mock
+        }
+    )
 
 @app.get("/leaderboard", response_class=HTMLResponse)
 async def leaderboard_page(request: Request):
@@ -265,6 +295,55 @@ async def prepare_page(request: Request):
         }
     )
 
+@app.get("/replay", response_class=HTMLResponse)
+async def replay_page(request: Request):
+    event_state = db.get_event_state()
+    return templates.TemplateResponse(
+        request=request,
+        name="replay.html",
+        context={
+            "event": event_state,
+            "is_mock": use_mock
+        }
+    )
+
+@app.get("/api/replay")
+async def get_replay_data():
+    """Returns race replay time-series data: crossing timestamps and lap numbers per runner."""
+    event_state = db.get_event_state()
+    start_time = event_state.get("start_time")
+    laps = db.get_all_laps()
+    participants = {p["bib_number"]: p["name"] for p in db.get_all_participants()}
+    
+    runners_data = {}
+    for bib, name in participants.items():
+        runners_data[bib] = {
+            "bib": bib,
+            "name": name,
+            "points": [{"elapsed": 0.0, "laps": 0}]  # start at 0 laps
+        }
+
+    for lap in laps:
+        bib = lap["bib_number"]
+        if bib not in runners_data:
+            runners_data[bib] = {
+                "bib": bib,
+                "name": lap.get("name") or f"Bib #{bib}",
+                "points": [{"elapsed": 0.0, "laps": 0}]
+            }
+        elapsed = round(lap["crossing_time"] - start_time, 1) if start_time else round(lap["crossing_time"], 1)
+        runners_data[bib]["points"].append({
+            "elapsed": max(0.0, elapsed),
+            "laps": lap["lap_number"],
+            "lap_duration": lap["lap_duration_seconds"]
+        })
+
+    return {
+        "event": event_state,
+        "runners": list(runners_data.values()),
+        "total_laps": len(laps)
+    }
+
 @app.get("/runner/{bib}", response_class=HTMLResponse)
 async def runner_page(request: Request, bib: int):
     participant = db.get_participant_by_bib(bib)
@@ -290,11 +369,14 @@ async def websocket_endpoint(websocket: WebSocket):
     active_connections.append(websocket)
     try:
         # Send initial snapshot
-        await websocket.send_json({
+        init_payload: Dict[str, Any] = {
             "type": "init",
             "event": db.get_event_state(),
             "leaderboard": db.get_leaderboard()
-        })
+        }
+        if isinstance(reader, MockReader):
+            init_payload["sim"] = reader.get_state()
+        await websocket.send_json(init_payload)
         while True:
             # Keepalive / ping
             await websocket.receive_text()
@@ -535,10 +617,115 @@ async def reset_runner_start(bib: int):
     await push_leaderboard()
     return {"status": "reset", "bib": bib}
 
-# Lap Adjustments
 class ManualLapRequest(BaseModel):
     bib_number: int
     lap_duration_seconds: float
+
+class QuickLapAdjustRequest(BaseModel):
+    bib_number: Optional[int] = None
+    lap_duration_seconds: Optional[float] = None
+
+@app.get("/api/laps/flagged")
+async def get_flagged_laps():
+    """Returns any laps flagged for admin review."""
+    return db.get_flagged_laps()
+
+@app.post("/api/laps/{lap_id}/accept")
+async def accept_flagged_lap(lap_id: int):
+    """Accepts a flagged lap, removing the warning."""
+    db.clear_lap_flag(lap_id)
+    await broadcast_ws({"type": "flagged_laps_updated", "flagged": db.get_flagged_laps()})
+    return {"status": "accepted"}
+
+@app.post("/api/laps/{lap_id}/split")
+async def split_flagged_lap(lap_id: int):
+    """Splits a double-duration flagged lap into 2 equal laps."""
+    success = db.split_lap(lap_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Lap not found")
+    leaderboard = db.get_leaderboard()
+    await broadcast_ws({
+        "type": "leaderboard_update",
+        "leaderboard": leaderboard
+    })
+    await broadcast_ws({"type": "flagged_laps_updated", "flagged": db.get_flagged_laps()})
+    return {"status": "split"}
+
+@app.post("/api/participants/{bib}/quick-add-lap")
+async def quick_add_lap(bib: int, req: Optional[QuickLapAdjustRequest] = None):
+    """Quickly increments a runner's lap count, estimating split from average or time difference."""
+    if db.get_event_state()["status"] == "ended":
+        raise EventStateError("This event has ended. Reopen it to edit laps.")
+    participant = db.get_participant_by_bib(bib)
+    if not participant:
+        raise HTTPException(status_code=404, detail="Runner not found")
+
+    last_lap = db.get_last_lap(bib)
+    lap_number = (last_lap["lap_number"] + 1) if last_lap else 1
+    now = time.time()
+
+    # Calculate sensible duration
+    last_crossing = participant.get("last_crossing_time") or participant.get("start_time")
+    if req and req.lap_duration_seconds and req.lap_duration_seconds > 0:
+        duration = req.lap_duration_seconds
+    elif last_crossing and (now - last_crossing) > 10.0:
+        duration = min(300.0, now - last_crossing)
+    elif last_lap and last_lap.get("lap_duration_seconds"):
+        duration = last_lap["lap_duration_seconds"]
+    else:
+        duration = 75.0
+
+    # If participant hasn't started yet, set start time first before updating last_crossing_time
+    if not participant.get("start_time"):
+        db.set_participant_start(bib, now - duration)
+
+    lap_id = db.record_lap(
+        bib_number=bib,
+        lap_number=lap_number,
+        crossing_time=now,
+        lap_duration_seconds=round(duration, 2),
+        peak_rssi=0.0,
+        manual_entry=True
+    )
+    db.update_participant_last_crossing(bib, now)
+
+    leaderboard = db.get_leaderboard()
+    lap_data = {
+        "id": lap_id,
+        "bib_number": bib,
+        "name": participant["name"],
+        "lap_number": lap_number,
+        "lap_duration_seconds": round(duration, 2),
+        "crossing_time": now,
+        "peak_rssi": 0.0,
+        "manual_entry": True
+    }
+    await broadcast_ws({
+        "type": "lap_completed",
+        "lap": lap_data,
+        "leaderboard": leaderboard
+    })
+    return {"status": "lap_added", "lap": lap_data}
+
+@app.post("/api/participants/{bib}/quick-remove-lap")
+async def quick_remove_lap(bib: int):
+    """Quickly removes the most recent lap for a runner (undoing false/duplicate crossing)."""
+    if db.get_event_state()["status"] == "ended":
+        raise EventStateError("This event has ended. Reopen it to edit laps.")
+    participant = db.get_participant_by_bib(bib)
+    if not participant:
+        raise HTTPException(status_code=404, detail="Runner not found")
+    removed = db.delete_last_lap_for_runner(bib)
+    if not removed:
+        raise HTTPException(status_code=400, detail="No laps to remove for this runner")
+    leaderboard = db.get_leaderboard()
+    await broadcast_ws({
+        "type": "lap_removed",
+        "bib_number": bib,
+        "removed_lap": removed,
+        "leaderboard": leaderboard
+    })
+    return {"status": "lap_removed", "removed_lap": removed}
 
 @app.post("/api/laps/manual")
 async def add_manual_lap(req: ManualLapRequest):
@@ -600,14 +787,43 @@ async def trigger_simulated_crossing(bib: int):
 class SpeedRequest(BaseModel):
     speed: float
 
+@app.get("/api/simulator/state")
+async def get_simulator_state():
+    if isinstance(reader, MockReader):
+        return reader.get_state()
+    raise HTTPException(status_code=400, detail="Hardware is not in mock mode")
+
+@app.post("/api/simulator/play")
+async def play_simulator():
+    if isinstance(reader, MockReader):
+        reader.set_paused(False)
+        sim = reader.get_state()
+        await broadcast_ws({"type": "sim_state", "sim": sim})
+        return {"status": "playing", "sim": sim}
+    raise HTTPException(status_code=400, detail="Hardware is not in mock mode")
+
+@app.post("/api/simulator/pause")
+async def pause_simulator():
+    if isinstance(reader, MockReader):
+        reader.set_paused(True)
+        sim = reader.get_state()
+        await broadcast_ws({"type": "sim_state", "sim": sim})
+        return {"status": "paused", "sim": sim}
+    raise HTTPException(status_code=400, detail="Hardware is not in mock mode")
+
 @app.post("/api/simulator/speed")
 async def set_simulator_speed(req: SpeedRequest):
     if isinstance(reader, MockReader):
         reader.set_speed_multiplier(req.speed)
-        lap_engine.speed_multiplier = req.speed
+        lap_engine.speed_multiplier = reader.speed_multiplier
+        sim = reader.get_state()
         await broadcast_ws({
             "type": "sim_speed_updated",
-            "speed": req.speed
+            "speed": reader.speed_multiplier
         })
-        return {"status": "speed_set", "speed": req.speed}
+        await broadcast_ws({
+            "type": "sim_state",
+            "sim": sim
+        })
+        return {"status": "speed_set", "speed": reader.speed_multiplier, "sim": sim}
     raise HTTPException(status_code=400, detail="Hardware is not in mock mode")

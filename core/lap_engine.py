@@ -68,18 +68,19 @@ class LapEngine:
     async def flush_loop(self):
         """Background coroutine that checks buffers and triggers crossings when a burst finishes."""
         while True:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.2)
             self.refresh_event()
             self.flush_raw_reads()
             now = time.time()
+            effective_window = max(0.15, self.crossing_window / max(1.0, self.speed_multiplier))
             epcs_to_process = []
 
             for epc, reads in list(self.buffers.items()):
                 if not reads:
                     continue
                 last_read_time = reads[-1][0]
-                # If no new read for crossing_window seconds, runner has exited antenna beam
-                if (now - last_read_time) >= self.crossing_window:
+                # If no new read for effective_window seconds, runner has exited antenna beam
+                if (now - last_read_time) >= effective_window:
                     epcs_to_process.append(epc)
 
             for epc in epcs_to_process:
@@ -194,13 +195,24 @@ class LapEngine:
         last_lap = self.db.get_last_lap(bib)
         lap_number = (last_lap["lap_number"] + 1) if last_lap else 1
 
+        # Check for suspicious long lap (possible missed reading: >= 1.75x previous lap if >= 2 laps exist)
+        flag_reason = None
+        prior_laps = self.db.get_laps_for_runner(bib)
+        if len(prior_laps) >= 2 and not force:
+            durations = sorted([l["lap_duration_seconds"] for l in prior_laps])
+            median_dur = durations[len(durations) // 2]
+            if lap_duration >= (1.75 * median_dur) and median_dur >= 20.0:
+                flag_reason = f"Missed reading suspected ({round(lap_duration, 1)}s vs median {round(median_dur, 1)}s)"
+                logger.warning(f"⚠️ SUSPICIOUS LAP: Bib {bib} ({name}) Lap {lap_number} flagged: {flag_reason}")
+
         lap_id = self.db.record_lap(
             bib_number=bib,
             lap_number=lap_number,
             crossing_time=peak_time,
             lap_duration_seconds=round(lap_duration, 2),
             peak_rssi=round(peak_rssi, 1),
-            manual_entry=force
+            manual_entry=force,
+            flag_reason=flag_reason
         )
         self.db.update_participant_last_crossing(bib, peak_time)
 
