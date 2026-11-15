@@ -1,8 +1,12 @@
+import os
+import math
 import time
 import random
 import threading
 import logging
+import xml.etree.ElementTree as ET
 from collections import deque
+from datetime import datetime
 from typing import Callable, Deque, List, Dict, Any, Optional
 from core.models import TagRead
 from core import clock
@@ -11,6 +15,65 @@ from hardware.base import BaseRFIDReader
 logger = logging.getLogger("MockReader")
 
 RUNNER_COLORS = ["#34d399", "#38bdf8", "#fbbf24", "#f472b6", "#a78bfa"]
+DEFAULT_SAMPLE_GPX = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "samples",
+    "Inaugural_Last_Annual_Take_Back_the_Track_.gpx",
+)
+
+
+def load_gpx_lap_durations(gpx_path: str) -> List[float]:
+    """
+    Extracts sequential lap durations (in seconds) from a track GPX file by
+    unwrapping angular progress around the track center.
+    """
+    if not gpx_path or not os.path.exists(gpx_path):
+        return []
+    try:
+        tree = ET.parse(gpx_path)
+        root = tree.getroot()
+        ns = {"gpx": root.tag.split("}")[0].strip("{")} if "}" in root.tag else {}
+        pts = root.findall(".//gpx:trkpt", ns) if ns else root.findall(".//trkpt")
+
+        coords = []
+        for p in pts:
+            t_el = p.find("gpx:time", ns) if ns else p.find("time")
+            if t_el is None or not t_el.text:
+                continue
+            lat = float(p.attrib["lat"])
+            lon = float(p.attrib["lon"])
+            t = datetime.fromisoformat(t_el.text.replace("Z", "+00:00")).timestamp()
+            coords.append((lat, lon, t))
+
+        if len(coords) < 10:
+            return []
+
+        clat = sum(c[0] for c in coords) / len(coords)
+        clon = sum(c[1] for c in coords) / len(coords)
+        m_lat = 111320.0
+        m_lon = 111320.0 * math.cos(math.radians(clat))
+
+        cum = 0.0
+        last_a = math.atan2((coords[0][0] - clat) * m_lat, (coords[0][1] - clon) * m_lon)
+        lap_times = [coords[0][2]]
+        for lat, lon, t in coords[1:]:
+            a = math.atan2((lat - clat) * m_lat, (lon - clon) * m_lon)
+            da = a - last_a
+            if da > math.pi:
+                da -= 2 * math.pi
+            elif da < -math.pi:
+                da += 2 * math.pi
+            cum += da
+            last_a = a
+            if abs(cum) >= 2 * math.pi:
+                lap_times.append(t)
+                cum -= math.copysign(2 * math.pi, cum)
+
+        durs = [round(lap_times[i] - lap_times[i - 1], 1) for i in range(1, len(lap_times)) if lap_times[i] > lap_times[i - 1]]
+        return durs
+    except Exception as exc:
+        logger.warning(f"Could not parse GPX sample {gpx_path}: {exc}")
+        return []
 
 # Built-in presets mapping scenario names to relative weights during automatic simulation.
 SIMULATOR_PRESETS: Dict[str, Dict[str, float]] = {
@@ -118,6 +181,7 @@ class MockReader(BaseRFIDReader):
         self,
         on_tag_read: Callable[[TagRead], None],
         speed_multiplier: float = 1.0,
+        gpx_path: Optional[str] = DEFAULT_SAMPLE_GPX,
         preset: str = "happy_path",
     ):
         super().__init__(on_tag_read)
@@ -155,6 +219,13 @@ class MockReader(BaseRFIDReader):
         self.participant_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None
         self.event_state_provider: Optional[Callable[[], Dict[str, Any]]] = None
 
+        self.gpx_laps: List[float] = load_gpx_lap_durations(gpx_path) if gpx_path else []
+        self.gpx_median: float = (
+            sorted(self.gpx_laps)[len(self.gpx_laps) // 2] if self.gpx_laps else 120.0
+        )
+        if self.gpx_laps:
+            logger.info(f"Loaded {len(self.gpx_laps)} sample laps from GPX (median {self.gpx_median:.1f}s).")
+
         # Simulated runners with realistic base lap times (in simulated seconds)
         self.simulated_runners: List[Dict[str, Any]] = [
             {
@@ -163,6 +234,9 @@ class MockReader(BaseRFIDReader):
                 "epc": "E28011700000020101010001",
                 "color": RUNNER_COLORS[0],
                 "base_pace": 58.0,
+                "pace_scale": 0.72,
+                "gpx_index": 0,
+                "pending_lap_sec": None,
                 "progress": 0.0,
                 "state": "running",
                 "pace_mode": "steady",
@@ -178,6 +252,9 @@ class MockReader(BaseRFIDReader):
                 "epc": "E28011700000020101010002",
                 "color": RUNNER_COLORS[1],
                 "base_pace": 68.0,
+                "pace_scale": 0.85,
+                "gpx_index": 17,
+                "pending_lap_sec": None,
                 "progress": 0.0,
                 "state": "running",
                 "pace_mode": "steady",
@@ -193,6 +270,9 @@ class MockReader(BaseRFIDReader):
                 "epc": "E28011700000020101010003",
                 "color": RUNNER_COLORS[2],
                 "base_pace": 82.0,
+                "pace_scale": 1.00,
+                "gpx_index": 35,
+                "pending_lap_sec": None,
                 "progress": 0.0,
                 "state": "running",
                 "pace_mode": "steady",
@@ -208,6 +288,9 @@ class MockReader(BaseRFIDReader):
                 "epc": "E28011700000020101010004",
                 "color": RUNNER_COLORS[3],
                 "base_pace": 96.0,
+                "pace_scale": 1.12,
+                "gpx_index": 52,
+                "pending_lap_sec": None,
                 "progress": 0.0,
                 "state": "running",
                 "pace_mode": "steady",
@@ -223,6 +306,9 @@ class MockReader(BaseRFIDReader):
                 "epc": "E28011700000020101010005",
                 "color": RUNNER_COLORS[4],
                 "base_pace": 112.0,
+                "pace_scale": 1.25,
+                "gpx_index": 70,
+                "pending_lap_sec": None,
                 "progress": 0.0,
                 "state": "running",
                 "pace_mode": "steady",
@@ -238,7 +324,35 @@ class MockReader(BaseRFIDReader):
     # Track Pacing & State (Used by /crossings & /api/simulator/state)
     # ------------------------------------------------------------------
     def _roll_next_lap(self, runner: Dict[str, Any], allow_rest: bool = True):
-        """Picks a realistic next lap (steady, fast surge, slow recovery, or a rest stop)."""
+        """Picks the next lap from the GPX sample (splitting long laps into a rest stop + lap) or synthetic fallback."""
+        if self.gpx_laps:
+            idx = runner["gpx_index"] % len(self.gpx_laps)
+            raw_dur = self.gpx_laps[idx]
+            runner["gpx_index"] = idx + 1
+            scaled_dur = raw_dur * runner["pace_scale"]
+            runner_median = self.gpx_median * runner["pace_scale"]
+
+            if allow_rest and raw_dur > self.gpx_median * 1.35:
+                rest_sec = max(20.0, scaled_dur - runner_median)
+                runner["pending_lap_sec"] = max(46.0, runner_median)
+                runner["state"] = "resting"
+                runner["pace_mode"] = "resting"
+                runner["rest_remaining_sim_sec"] = round(rest_sec, 1)
+                runner["rest_total_sim_sec"] = round(rest_sec, 1)
+                runner["lap_elapsed_sim_sec"] = 0.0
+                runner["progress"] = 0.0
+                return
+
+            mode = "fast" if raw_dur < self.gpx_median * 0.90 else ("slow" if raw_dur > self.gpx_median * 1.10 else "steady")
+            runner["state"] = "running"
+            runner["pace_mode"] = mode
+            runner["current_lap_target_sec"] = round(max(46.0, scaled_dur), 1)
+            runner["lap_elapsed_sim_sec"] = 0.0
+            runner["rest_remaining_sim_sec"] = 0.0
+            runner["rest_total_sim_sec"] = 0.0
+            runner["progress"] = 0.0
+            return
+
         if allow_rest and runner["laps_completed"] >= 1 and random.random() < 0.20:
             rest_sec = random.uniform(80.0, 150.0) if random.random() < 0.25 else random.uniform(20.0, 65.0)
             runner["state"] = "resting"
@@ -252,7 +366,23 @@ class MockReader(BaseRFIDReader):
         self._assign_running_pace(runner)
 
     def _assign_running_pace(self, runner: Dict[str, Any]):
-        """Assigns a fast, slow, or steady lap pace with mild fatigue drift."""
+        """Assigns a fast, slow, or steady lap pace (using pending GPX lap if resuming from rest)."""
+        if runner.get("pending_lap_sec") is not None:
+            target = runner["pending_lap_sec"]
+            runner["pending_lap_sec"] = None
+            runner["state"] = "running"
+            runner["pace_mode"] = "steady"
+            runner["current_lap_target_sec"] = round(max(46.0, target), 1)
+            runner["lap_elapsed_sim_sec"] = 0.0
+            runner["rest_remaining_sim_sec"] = 0.0
+            runner["rest_total_sim_sec"] = 0.0
+            runner["progress"] = 0.0
+            return
+
+        if self.gpx_laps:
+            self._roll_next_lap(runner, allow_rest=False)
+            return
+
         fatigue_factor = 1.0 + min(0.15, runner["laps_completed"] * 0.012)
         roll = random.random()
         if roll < 0.22:

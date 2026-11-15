@@ -58,17 +58,24 @@ if _flag("SEED_DEMO", config.get("event", {}).get("seed_demo"), use_mock):
 
 # Active WebSocket connections
 active_connections: List[WebSocket] = []
+# Connections from logged-in admin pages that asked for raw tag reads (issue #12)
+admin_connections: List[WebSocket] = []
 
-async def broadcast_ws(message: Dict[str, Any]):
+async def broadcast_ws(message: Dict[str, Any], admin_only: bool = False):
+    targets = admin_connections if admin_only else active_connections
     disconnected = []
-    for ws in active_connections:
+    for ws in list(targets):
         try:
             await ws.send_json(message)
         except Exception:
             disconnected.append(ws)
     for ws in disconnected:
-        if ws in active_connections:
-            active_connections.remove(ws)
+        _forget_ws(ws)
+
+def _forget_ws(ws: WebSocket):
+    for conns in (active_connections, admin_connections):
+        if ws in conns:
+            conns.remove(ws)
 
 # Callback when a lap is completed
 async def on_lap_completed(lap_data: Dict[str, Any]):
@@ -98,13 +105,38 @@ async def on_runner_resumed(resume_data: Dict[str, Any]):
     })
 
 # Callback when any tag is detected (used for Admin auto-fill / registration)
+# Raw tag reads arrive 5-20 per crossing per runner. Only the admin and Prepare Bibs pages use
+# them, so they go only to admin connections, combined per tag: one message per tag every
+# TAG_EVENT_INTERVAL seconds carrying the strongest RSSI seen (issue #12).
+TAG_EVENT_INTERVAL = 0.25
+pending_tags: Dict[str, Dict[str, Any]] = {}
+
+def _note_tag(tag_info: Dict[str, Any]):
+    """Runs on the event loop. Keeps the strongest read per tag until the next flush."""
+    current = pending_tags.get(tag_info["epc"])
+    if current is None or tag_info["rssi"] > current["rssi"]:
+        pending_tags[tag_info["epc"]] = dict(tag_info)
+
 def on_tag_detected(tag_info: Dict[str, Any]):
+    """Called on the reader thread for every read."""
     if main_event_loop is None:
         return
-    asyncio.run_coroutine_threadsafe(
-        broadcast_ws({"type": "tag_detected", "data": tag_info}),
-        main_event_loop
-    )
+    main_event_loop.call_soon_threadsafe(_note_tag, tag_info)
+
+async def flush_tag_events():
+    if not pending_tags:
+        return
+    batch = list(pending_tags.values())
+    pending_tags.clear()
+    if not admin_connections:
+        return
+    for tag in batch:
+        await broadcast_ws({"type": "tag_detected", "data": tag}, admin_only=True)
+
+async def tag_event_loop():
+    while True:
+        await asyncio.sleep(TAG_EVENT_INTERVAL)
+        await flush_tag_events()
 
 crossing_window = config.get("event", {}).get("crossing_window_seconds", 2.0)
 lap_engine = LapEngine(
@@ -120,8 +152,19 @@ clock.clock.ensure_not_before(db.latest_timestamp())
 
 lap_engine.refresh_event()
 
+def on_reader_tag(tag_read):
+    """Called on the reader's thread for every read. Hands it to the event loop, so the lap
+    engine's buffers are only ever touched from one thread (issue #13)."""
+    loop = main_event_loop
+    if loop is None:
+        return  # reader started before the app; can't happen via lifespan, but never crash it
+    try:
+        loop.call_soon_threadsafe(lap_engine.process_tag_read, tag_read)
+    except RuntimeError:
+        pass  # loop already closed during shutdown
+
 if use_mock:
-    reader = MockReader(on_tag_read=lap_engine.process_tag_read, speed_multiplier=5.0)
+    reader = MockReader(on_tag_read=on_reader_tag, speed_multiplier=5.0)
     lap_engine.speed_multiplier = 5.0
     logger.info("Operating in MOCK reader mode (Simulated runners active at 5.0x).")
 else:
@@ -132,7 +175,7 @@ else:
         return default if value is None else float(value)  # 0 turns that re-arm off
 
     reader = SerialReader(
-        port=serial_port, baud_rate=baud_rate, on_tag_read=lap_engine.process_tag_read,
+        port=serial_port, baud_rate=baud_rate, on_tag_read=on_reader_tag,
         rearm_interval=_seconds("rearm_interval_seconds", DEFAULT_REARM_INTERVAL),
         silence_rearm=_seconds("silence_rearm_seconds", DEFAULT_SILENCE_REARM),
     )
@@ -158,6 +201,7 @@ async def lifespan(app: FastAPI):
     # Start engine flush loop
     flush_task = asyncio.create_task(lap_engine.flush_loop())
     sim_task = asyncio.create_task(sim_broadcast_loop()) if isinstance(reader, MockReader) else None
+    tag_task = asyncio.create_task(tag_event_loop())
 
     # Start RFID reader
     reader.start()
@@ -166,6 +210,7 @@ async def lifespan(app: FastAPI):
 
     reader.stop()
     flush_task.cancel()
+    tag_task.cancel()
     if sim_task:
         sim_task.cancel()
     lap_engine.flush_raw_reads()
@@ -383,9 +428,12 @@ async def runner_page(request: Request, bib: int):
 
 # ----------------- WEBSOCKET ROUTE -----------------
 @app.websocket("/ws/live")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket, channel: str = "public"):
+    """Live updates. `?channel=admin` from a logged-in admin also gets raw tag reads."""
     await websocket.accept()
     active_connections.append(websocket)
+    if channel == "admin" and admin_auth.is_admin(websocket):
+        admin_connections.append(websocket)
     try:
         # Send initial snapshot
         init_payload: Dict[str, Any] = {
@@ -400,8 +448,7 @@ async def websocket_endpoint(websocket: WebSocket):
             # Keepalive / ping
             await websocket.receive_text()
     except WebSocketDisconnect:
-        if websocket in active_connections:
-            active_connections.remove(websocket)
+        _forget_ws(websocket)
 
 # ----------------- REST API ROUTES -----------------
 @app.get("/api/leaderboard")

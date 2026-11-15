@@ -748,7 +748,7 @@
     // WebSocket listener for live tag sniffing and status
     function connectWS() {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live?channel=admin`);  // + raw tag reads
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);

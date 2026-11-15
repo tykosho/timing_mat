@@ -168,6 +168,7 @@ Every pull request (and every push to `main`) runs `.github/workflows/ci.yml`:
 |---|---|
 | `tests` | `python -m unittest discover tests` on Python 3.11 |
 | `lint` | `ruff check .`, using the bug-only rules in `ruff.toml` (syntax errors, undefined names) |
+| `browser` | starts the app in mock mode and checks every page in headless Chromium: no JS errors or failed requests, login, live leaderboard updates, race clock, admin-only tag reads (`tests/test_browser.py`) |
 | `docker` | builds the `Dockerfile` (nothing is pushed) |
 
 Run the same checks before you push:
@@ -175,6 +176,12 @@ Run the same checks before you push:
 python3 -m unittest discover tests
 pip install ruff==0.17.5 && ruff check .
 docker build -t timing-mat .
+```
+
+Browser tests (skipped by `unittest discover` when Playwright isn't installed):
+```bash
+pip install -r requirements-browser.txt && python -m playwright install chromium
+python -B -m unittest -v tests.test_browser
 ```
 
 > **Not yet verified on real hardware:** the R200 frame parsing and the RSSI-to-dBm conversion (`raw_rssi_to_dbm` in `hardware/r200_protocol.py`) are covered by tests built from the documented frame layout, not from captured frames. Run `python -m hardware.sniffer --raw` with the reader attached to check them.
