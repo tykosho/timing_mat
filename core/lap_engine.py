@@ -18,13 +18,15 @@ class LapEngine:
                  on_lap_completed: Optional[Callable[[Dict[str, Any]], None]] = None,
                  on_runner_started: Optional[Callable[[Dict[str, Any]], None]] = None,
                  on_runner_resumed: Optional[Callable[[Dict[str, Any]], None]] = None,
-                 on_tag_detected: Optional[Callable[[Dict[str, Any]], None]] = None):
+                 on_tag_detected: Optional[Callable[[Dict[str, Any]], None]] = None,
+                 on_unassigned_tag: Optional[Callable[[Dict[str, Any]], None]] = None):
         self.db = db
         self.crossing_window = crossing_window
         self.on_lap_completed = on_lap_completed
         self.on_runner_started = on_runner_started
         self.on_runner_resumed = on_runner_resumed
         self.on_tag_detected = on_tag_detected
+        self.on_unassigned_tag = on_unassigned_tag
         self.speed_multiplier: float = 1.0
 
         # Buffer to aggregate bursts of reads: epc -> list of (timestamp, rssi)
@@ -129,6 +131,16 @@ class LapEngine:
         participant = self.db.get_participant_by_epc(epc)
         if not participant:
             logger.info(f"Tag read for unassigned EPC: {epc} (Peak RSSI: {peak_rssi:.1f} dBm)")
+            if self.on_unassigned_tag:
+                tag_data = {
+                    "epc": epc,
+                    "peak_rssi": round(peak_rssi, 1),
+                    "timestamp": peak_time,
+                }
+                if asyncio.iscoroutinefunction(self.on_unassigned_tag):
+                    await self.on_unassigned_tag(tag_data)
+                else:
+                    self.on_unassigned_tag(tag_data)
             return None
 
         bib = participant["bib_number"]
