@@ -1,7 +1,7 @@
 """The parser against traffic captured from the real R200 on the Pi (issue #7).
 
 tests/fixtures/r200_capture_2026-11-15.log was recorded with RAW_CAPTURE_PATH (issue #51):
-about 20 s of inventory with two tags passed over the antenna. Between tag reads the module
+about 80 s of inventory with two tags passed over the antenna. Between tag reads the module
 answers each poll with an error response, AA 01 FF 00 01 15 16 DD (0x15 = no tag found).
 """
 import os
