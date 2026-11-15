@@ -181,12 +181,20 @@
 
           <div>
             <div class="flex justify-between items-center mb-1">
-              <label class="block text-xs font-medium text-slate-300">Auto-Break Threshold (Rest)</label>
-              <span id="maxRestVal" class="text-xs font-mono font-bold text-amber-400">{{ (event.max_lap_rest_seconds / 60) | int }} mins</span>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" id="settingAutoBreakEnabled" {% if event.max_lap_rest_seconds and event.max_lap_rest_seconds > 0 %}checked{% endif %}
+                       onchange="toggleAutoBreak(this.checked)" class="rounded border-slate-700 bg-slate-800 text-amber-500 focus:ring-0 focus:ring-offset-0 cursor-pointer">
+                <span class="text-xs font-medium text-slate-300">Auto-Break Threshold (Rest)</span>
+              </label>
+              <span id="maxRestVal" class="text-xs font-mono font-bold text-amber-400">
+                {% if event.max_lap_rest_seconds and event.max_lap_rest_seconds > 0 %}{{ (event.max_lap_rest_seconds / 60) | int }} mins{% else %}Disabled{% endif %}
+              </span>
             </div>
-            <input type="range" id="settingMaxRest" min="60" max="1800" step="60" value="{{ event.max_lap_rest_seconds }}" 
-                   oninput="document.getElementById('maxRestVal').innerText = Math.round(this.value / 60) + ' mins'" class="w-full accent-amber-500 cursor-pointer">
-            <p class="text-[11px] text-slate-500 mt-1">Crossings after this interval count as rest resume, not a slow lap.</p>
+            <div id="maxRestContainer" class="{% if not event.max_lap_rest_seconds or event.max_lap_rest_seconds <= 0 %}opacity-30 pointer-events-none{% endif %} transition-opacity">
+              <input type="range" id="settingMaxRest" min="60" max="1800" step="60" value="{{ event.max_lap_rest_seconds if event.max_lap_rest_seconds and event.max_lap_rest_seconds > 0 else 600 }}" 
+                     oninput="document.getElementById('maxRestVal').innerText = Math.round(this.value / 60) + ' mins'" class="w-full accent-amber-500 cursor-pointer">
+            </div>
+            <p class="text-[11px] text-slate-500 mt-1">Crossings after this interval count as rest resume, not a slow lap (uncheck to disable).</p>
           </div>
 
           <div class="flex items-center gap-2">
@@ -591,10 +599,24 @@
       else alert((await res.json()).detail || "Could not switch events");
     }
 
+    function toggleAutoBreak(enabled) {
+      const container = document.getElementById("maxRestContainer");
+      const val = document.getElementById("maxRestVal");
+      const slider = document.getElementById("settingMaxRest");
+      if (enabled) {
+        container.classList.remove("opacity-30", "pointer-events-none");
+        val.innerText = Math.round(slider.value / 60) + " mins";
+      } else {
+        container.classList.add("opacity-30", "pointer-events-none");
+        val.innerText = "Disabled";
+      }
+    }
+
     async function saveSettings() {
       const name = document.getElementById("settingName").value;
       const min_lap_seconds = parseFloat(document.getElementById("settingMinLap").value);
-      const max_lap_rest_seconds = parseFloat(document.getElementById("settingMaxRest").value);
+      const autoBreakEnabled = document.getElementById("settingAutoBreakEnabled").checked;
+      const max_lap_rest_seconds = autoBreakEnabled ? (parseFloat(document.getElementById("settingMaxRest").value) || 600) : 0.0;
       const track_length_m = parseFloat(document.getElementById("settingTrackLength").value) || null;
       const btn = document.getElementById("saveSettingsBtn");
       const toast = document.getElementById("saveSettingsToast");
