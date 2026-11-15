@@ -8,7 +8,10 @@ from datetime import datetime, timezone
 from hardware.frame_capture import FrameCapture, iter_capture, load_rx_bytes, open_capture
 from hardware.r200_protocol import READ_MULTI_COMMAND, READ_STOP_COMMAND, extract_frames, parse_tag_frame
 from hardware.serial_reader import SerialReader
-from tests.test_serial_reader import EPC, FakeClock, FakeSerial, make_reader, tag_frame
+try:
+    from tests.test_serial_reader import EPC, FakeClock, FakeSerial, make_reader, tag_frame
+except ModuleNotFoundError:
+    from test_serial_reader import EPC, FakeClock, FakeSerial, make_reader, tag_frame
 
 WALL = lambda: datetime(2026, 11, 15, 20, 31, 1, 682000, tzinfo=timezone.utc)  # noqa: E731
 
