@@ -6,6 +6,7 @@ import serial
 from core.models import TagRead
 from core import clock
 from hardware.base import BaseRFIDReader
+from hardware.frame_capture import FrameCapture
 from hardware.r200_protocol import (
     READ_MULTI_COMMAND, READ_STOP_COMMAND, extract_frames, parse_inventory_response
 )
@@ -29,7 +30,8 @@ class SerialReader(BaseRFIDReader):
                  rearm_interval: float = DEFAULT_REARM_INTERVAL,
                  silence_rearm: float = DEFAULT_SILENCE_REARM,
                  serial_factory: Callable[..., serial.Serial] = serial.Serial,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic,
+                 capture: Optional[FrameCapture] = None):
         super().__init__(on_tag_read)
         self.port = port
         self.baud_rate = baud_rate
@@ -37,6 +39,7 @@ class SerialReader(BaseRFIDReader):
         self.silence_rearm = silence_rearm
         self._serial_factory = serial_factory
         self._clock = clock
+        self.capture = capture  # optional raw traffic log (issue #51)
         self.serial_conn: Optional[serial.Serial] = None
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -71,7 +74,7 @@ class SerialReader(BaseRFIDReader):
         # Send stop inventory command if open
         if self.serial_conn and self.serial_conn.is_open:
             try:
-                self.serial_conn.write(READ_STOP_COMMAND)
+                self._send(READ_STOP_COMMAND)
                 self.serial_conn.flush()
                 self.serial_conn.close()
             except Exception as e:
@@ -79,14 +82,23 @@ class SerialReader(BaseRFIDReader):
 
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
+        if self.capture:
+            self.capture.note("reader stopped")
         logger.info("R200 Serial Reader stopped.")
 
     # --- inventory control / watchdog ---
-    def _arm(self, restart: bool = False):
+    def _send(self, command: bytes):
+        self.serial_conn.write(command)
+        if self.capture:
+            self.capture.tx(command)
+
+    def _arm(self, restart: bool = False, reason: str = "connect"):
         """Starts continuous inventory. With restart=True, stops the current one first."""
+        if self.capture:
+            self.capture.note(f"arm {reason}")
         if restart:
-            self.serial_conn.write(READ_STOP_COMMAND)
-        self.serial_conn.write(READ_MULTI_COMMAND)
+            self._send(READ_STOP_COMMAND)
+        self._send(READ_MULTI_COMMAND)
         self.serial_conn.flush()
         now = self._clock()
         self.last_arm_at = now
@@ -107,7 +119,7 @@ class SerialReader(BaseRFIDReader):
             self._silence_logged = True
         else:
             return None
-        self._arm(restart=True)
+        self._arm(restart=True, reason=reason)
         self.rearm_count += 1
         return reason
 
@@ -139,6 +151,8 @@ class SerialReader(BaseRFIDReader):
             try:
                 data = self.serial_conn.read(256)
                 if data:
+                    if self.capture:
+                        self.capture.rx(data)
                     buffer.extend(data)
                     buffer = self._process_stream(buffer)
                 else:
@@ -148,6 +162,8 @@ class SerialReader(BaseRFIDReader):
                 logger.error(f"Serial read error on {self.port}: {e}")
                 self.connected = False
                 self.last_error = f"Read error: {e}"
+                if self.capture:
+                    self.capture.note(f"serial error: {e}")
                 if self.serial_conn:
                     try:
                         self.serial_conn.close()

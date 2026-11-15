@@ -21,6 +21,7 @@ from core.registration_import import parse_registration_csv
 from core.lap_engine import LapEngine
 from hardware.mock_reader import MockReader
 from hardware.serial_reader import SerialReader, DEFAULT_REARM_INTERVAL, DEFAULT_SILENCE_REARM
+from hardware.frame_capture import open_capture
 from web import auth, join
 from web.reader_health import ReaderHealth
 
@@ -210,6 +211,9 @@ else:
         port=serial_port, baud_rate=baud_rate, on_tag_read=on_reader_tag,
         rearm_interval=_seconds("rearm_interval_seconds", DEFAULT_REARM_INTERVAL),
         silence_rearm=_seconds("silence_rearm_seconds", DEFAULT_SILENCE_REARM),
+        # Off unless a path is set; RAW_CAPTURE_PATH wins over config.yaml (issue #51)
+        capture=open_capture(os.getenv("RAW_CAPTURE_PATH") or hw.get("raw_capture_path"),
+                             hw.get("raw_capture_max_mb")),
     )
     logger.info(f"Operating in PHYSICAL reader mode on {serial_port}.")
 
