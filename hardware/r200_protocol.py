@@ -41,12 +41,14 @@ READ_STOP_COMMAND = bytes([0xAA, 0x00, 0x28, 0x00, 0x00, 0x28, 0xDD])
 READ_SINGLE_COMMAND = bytes([0xAA, 0x00, 0x22, 0x00, 0x00, 0x22, 0xDD])
 
 def raw_rssi_to_dbm(raw_rssi: int) -> float:
-    """Converts the raw RSSI byte to an approximate dBm value.
+    """Converts the raw RSSI byte from an R200 tag-read frame to dBm.
 
-    NOTE: this scale is a best guess and has not been verified against real hardware.
-    Use `python -m hardware.sniffer --raw` to capture real frames and confirm it.
+    Per R200 user protocol V2.3.3 (pp. 41-42): the RSSI byte is a two's-complement
+    signed 8-bit integer directly in dBm. No offset arithmetic needed.
+    SDK calibration points: 0xBA = -70 dBm (noise floor), 0xF2 = -14 dBm.
+    Verified on real hardware: 0xD9 = -39 dBm (tag held on antenna).
     """
-    return -129.0 + raw_rssi if raw_rssi > 0 else -55.0
+    return float(raw_rssi if raw_rssi < 128 else raw_rssi - 256)
 
 def extract_frames(buffer: bytearray) -> Tuple[List[bytes], bytearray]:
     """
