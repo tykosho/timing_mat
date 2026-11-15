@@ -433,7 +433,56 @@
 
     </div>
 
+    <!-- Danger Zone: Full Event Reset -->
+    <section class="mt-8 bg-rose-950/20 border border-rose-900/50 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div>
+        <h2 class="text-base font-bold text-rose-300 flex items-center gap-2">
+          <i class="fa-solid fa-triangle-exclamation"></i> Danger Zone: Full Event Reset
+        </h2>
+        <p class="text-xs text-slate-400 mt-1">
+          Completely clears all laps, breaks, raw reads, and registered runners for this event, returning it to setup. A database backup is saved automatically before clearing.
+        </p>
+      </div>
+      <button id="btnFullReset" type="button" onclick="openFullResetModal()"
+              class="shrink-0 bg-rose-700 hover:bg-rose-600 text-white font-semibold py-2.5 px-4 rounded-xl text-sm transition shadow">
+        Reset Everything...
+      </button>
+    </section>
+
   </main>
+
+  <!-- Full Reset Confirmation Modal -->
+  <div id="fullResetModal" role="dialog" aria-modal="true" aria-labelledby="fullResetTitle"
+       class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-rose-800/60 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+      <h3 id="fullResetTitle" class="text-lg font-bold text-rose-300 flex items-center gap-2">
+        <i class="fa-solid fa-triangle-exclamation"></i> Are you sure?
+      </h3>
+      <p class="text-sm text-slate-300 mt-2">
+        This will permanently delete <strong class="text-white">all laps, breaks, raw reads, and registered runners</strong> in the current event.
+      </p>
+      <form id="fullResetForm" class="mt-4 space-y-3">
+        <div>
+          <label for="fullResetConfirmInput" class="block text-xs font-medium text-slate-400 mb-1.5">
+            Type <code class="text-rose-300 font-mono bg-slate-950 px-1.5 py-0.5 rounded">yes, I am sure</code> to confirm:
+          </label>
+          <input id="fullResetConfirmInput" type="text" autocomplete="off" placeholder="yes, I am sure"
+                 class="w-full bg-slate-950 border border-slate-700 focus:border-rose-500 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 outline-none" />
+        </div>
+        <p id="fullResetError" class="hidden text-xs text-rose-400 font-medium"></p>
+        <div class="flex items-center justify-end gap-2 pt-2">
+          <button type="button" onclick="closeFullResetModal()"
+                  class="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+            Cancel
+          </button>
+          <button id="fullResetSubmitBtn" type="submit" disabled
+                  class="px-4 py-2 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition">
+            Clear Everything
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <script>
     let latestDetectedEpc = "";
@@ -782,6 +831,63 @@
     }
     connectWS();
     fetchFlaggedLaps();
+
+    // Full Event Reset modal
+    const FULL_RESET_PHRASE = "yes, I am sure";
+    function openFullResetModal() {
+      const modal = document.getElementById("fullResetModal");
+      const input = document.getElementById("fullResetConfirmInput");
+      const submit = document.getElementById("fullResetSubmitBtn");
+      const err = document.getElementById("fullResetError");
+      input.value = "";
+      submit.disabled = true;
+      err.textContent = "";
+      err.classList.add("hidden");
+      modal.classList.remove("hidden");
+      input.focus();
+    }
+
+    function closeFullResetModal() {
+      document.getElementById("fullResetModal").classList.add("hidden");
+    }
+
+    (function initFullResetModal() {
+      const input = document.getElementById("fullResetConfirmInput");
+      const submit = document.getElementById("fullResetSubmitBtn");
+      const form = document.getElementById("fullResetForm");
+      const err = document.getElementById("fullResetError");
+      if (!input || !submit || !form) return;
+
+      input.addEventListener("input", () => {
+        submit.disabled = input.value.trim() !== FULL_RESET_PHRASE;
+      });
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (input.value.trim() !== FULL_RESET_PHRASE) {
+          err.textContent = `Please type "${FULL_RESET_PHRASE}" exactly.`;
+          err.classList.remove("hidden");
+          return;
+        }
+        submit.disabled = true;
+        err.classList.add("hidden");
+        try {
+          const res = await fetch("/api/event/reset-all", { method: "POST" });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            err.textContent = body.detail || "Could not reset event.";
+            err.classList.remove("hidden");
+            submit.disabled = false;
+            return;
+          }
+          window.location.reload();
+        } catch (ex) {
+          err.textContent = "Network error while resetting.";
+          err.classList.remove("hidden");
+          submit.disabled = false;
+        }
+      });
+    })();
   </script>
 </body>
 </html>

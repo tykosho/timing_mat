@@ -174,6 +174,23 @@ class TestApi(unittest.TestCase):
         self.assertFalse(resumed.json()["sim"]["paused"])
         self.assertEqual(resumed.json()["sim"]["speed"], 20.0)
 
+    def test_full_event_reset_clears_participants_and_laps(self):
+        self.client.post("/api/participants", json={"bib_number": 50, "name": "Temp Runner", "epc": "E28000000000000000000050"})
+        self.client.post("/api/event/start")
+        self.client.post("/api/participants/50/quick-add-lap")
+
+        # Cannot reset while running
+        running_res = self.client.post("/api/event/reset-all")
+        self.assertEqual(running_res.status_code, 409)
+
+        # Pause, then full reset clears participants, laps, and returns event to setup
+        self.client.post("/api/event/pause")
+        res = self.client.post("/api/event/reset-all")
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()["status"], "reset_all")
+        self.assertEqual(self.client.get("/api/participants").json(), [])
+        self.assertEqual(self.client.get("/api/event").json()["status"], "setup")
+
 
 if __name__ == "__main__":
     unittest.main()
