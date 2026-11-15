@@ -557,6 +557,32 @@ class QuickLapAdjustRequest(BaseModel):
     bib_number: Optional[int] = None
     lap_duration_seconds: Optional[float] = None
 
+@app.get("/api/laps/flagged")
+async def get_flagged_laps():
+    """Returns any laps flagged for admin review."""
+    return db.get_flagged_laps()
+
+@app.post("/api/laps/{lap_id}/accept")
+async def accept_flagged_lap(lap_id: int):
+    """Accepts a flagged lap, removing the warning."""
+    db.clear_lap_flag(lap_id)
+    await broadcast_ws({"type": "flagged_laps_updated", "flagged": db.get_flagged_laps()})
+    return {"status": "accepted"}
+
+@app.post("/api/laps/{lap_id}/split")
+async def split_flagged_lap(lap_id: int):
+    """Splits a double-duration flagged lap into 2 equal laps."""
+    success = db.split_lap(lap_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Lap not found")
+    leaderboard = db.get_leaderboard()
+    await broadcast_ws({
+        "type": "leaderboard_update",
+        "leaderboard": leaderboard
+    })
+    await broadcast_ws({"type": "flagged_laps_updated", "flagged": db.get_flagged_laps()})
+    return {"status": "split"}
+
 @app.post("/api/participants/{bib}/quick-add-lap")
 async def quick_add_lap(bib: int, req: Optional[QuickLapAdjustRequest] = None):
     """Quickly increments a runner's lap count, estimating split from average or time difference."""

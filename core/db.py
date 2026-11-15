@@ -49,6 +49,10 @@ class Database:
         conn.row_factory = sqlite3.Row
         try:
             yield conn
+            try:
+                conn.execute("ALTER TABLE laps ADD COLUMN flag_reason TEXT DEFAULT NULL;")
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
         except Exception:
             conn.rollback()
@@ -110,7 +114,8 @@ class Database:
                 crossing_time REAL NOT NULL,
                 lap_duration_seconds REAL NOT NULL,
                 peak_rssi REAL DEFAULT 0.0,
-                manual_entry INTEGER DEFAULT 0
+                manual_entry INTEGER DEFAULT 0,
+                flag_reason TEXT DEFAULT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_laps_event_bib ON laps(event_id, bib_number);
 
@@ -511,14 +516,65 @@ class Database:
     # ------------------------------------------------------------------ laps
     def record_lap(self, bib_number: int, lap_number: int, crossing_time: float,
                    lap_duration_seconds: float, peak_rssi: float = 0.0, manual_entry: bool = False,
-                   event_id: Optional[int] = None) -> int:
+                   flag_reason: Optional[str] = None, event_id: Optional[int] = None) -> int:
         with self.connect() as conn:
             cursor = conn.execute("""
-                INSERT INTO laps (event_id, bib_number, lap_number, crossing_time, lap_duration_seconds, peak_rssi, manual_entry)
-                VALUES (?, ?, ?, ?, ?, ?, ?);""",
+                INSERT INTO laps (event_id, bib_number, lap_number, crossing_time, lap_duration_seconds, peak_rssi, manual_entry, flag_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?);""",
                 (self._eid(event_id), bib_number, lap_number, crossing_time, lap_duration_seconds,
-                 peak_rssi, 1 if manual_entry else 0))
+                 peak_rssi, 1 if manual_entry else 0, flag_reason))
             return cursor.lastrowid
+
+    def get_flagged_laps(self, event_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Returns laps that were flagged as suspicious (e.g. possible missed lap)."""
+        with self.connect() as conn:
+            rows = conn.execute("""
+                SELECT l.*, p.name FROM laps l
+                LEFT JOIN participants p ON p.event_id = l.event_id AND p.bib_number = l.bib_number
+                WHERE l.event_id = ? AND l.flag_reason IS NOT NULL
+                ORDER BY l.crossing_time DESC;""", (self._eid(event_id),)).fetchall()
+            return [dict(r) for r in rows]
+
+    def clear_lap_flag(self, lap_id: int):
+        """Clears the review flag for a lap (accepts the split)."""
+        with self.connect() as conn:
+            conn.execute("UPDATE laps SET flag_reason = NULL WHERE id = ?;", (lap_id,))
+
+    def split_lap(self, lap_id: int, event_id: Optional[int] = None) -> bool:
+        """Splits a flagged double lap into 2 equal-time laps."""
+        eid = self._eid(event_id)
+        with self.connect() as conn:
+            lap = conn.execute("SELECT * FROM laps WHERE id = ?;", (lap_id,)).fetchone()
+            if not lap:
+                return False
+            lap = dict(lap)
+            bib = lap["bib_number"]
+            total_dur = lap["lap_duration_seconds"]
+            half_dur = round(total_dur / 2.0, 2)
+            orig_crossing = lap["crossing_time"]
+            mid_crossing = round(orig_crossing - half_dur, 2)
+            lap_num = lap["lap_number"]
+
+            # Update existing lap to be lap_num + 1 with half duration
+            conn.execute("""
+                UPDATE laps
+                SET lap_number = ?, lap_duration_seconds = ?, flag_reason = NULL
+                WHERE id = ?;
+            """, (lap_num + 1, half_dur, lap_id))
+
+            # Insert interpolated prior lap
+            conn.execute("""
+                INSERT INTO laps (event_id, bib_number, lap_number, crossing_time, lap_duration_seconds, peak_rssi, manual_entry, flag_reason)
+                VALUES (?, ?, ?, ?, ?, ?, 1, NULL);
+            """, (eid, bib, lap_num, mid_crossing, half_dur, lap["peak_rssi"]))
+
+            # Shift all subsequent laps up by 1 if any exist
+            conn.execute("""
+                UPDATE laps
+                SET lap_number = lap_number + 1
+                WHERE event_id = ? AND bib_number = ? AND id > ? AND lap_number > ?;
+            """, (eid, bib, lap_id, lap_num + 1))
+            return True
 
     def get_last_lap(self, bib_number: int, event_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         with self.connect() as conn:
