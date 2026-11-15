@@ -6,6 +6,10 @@ event:
   track_length_meters: 400       # unused: track length is set per event in the Admin page (default 400)
   seed_demo: null                # true/false to force demo runners; null = only in mock mode
 
+admin:
+  pin: null                      # Admin PIN (6+ digits). Prefer the ADMIN_PIN env var / .env file so it isn't committed.
+                                 # Unset: mock mode runs unprotected; real-hardware mode makes up a PIN and logs it.
+
 hardware:
   mock: true                     # Set to false on Raspberry Pi with real R200 antenna
   serial_port: "/dev/ttyUSB0"    # Default Linux/Pi serial port
