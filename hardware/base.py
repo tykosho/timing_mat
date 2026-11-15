@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Callable
+from typing import Any, Callable, Dict
 from core.models import TagRead
 
 class BaseRFIDReader(ABC):
@@ -16,3 +16,7 @@ class BaseRFIDReader(ABC):
     def stop(self):
         """Stop reader."""
         pass
+
+    def health(self) -> Dict[str, Any]:
+        """Connection details for the admin page's reader strip (issue #48)."""
+        return {"kind": type(self).__name__, "running": self.is_running, "connected": self.is_running}

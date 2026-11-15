@@ -72,6 +72,15 @@
 
   <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
 
+    <!-- Reader health (issue #48): updated every 2 s over the admin WebSocket -->
+    {% set health_colors = {"ok": "#10b981", "quiet": "#f59e0b", "disconnected": "#f43f5e"} %}
+    <div id="readerHealth" role="status" aria-live="polite" data-state="{{ reader_health.state }}"
+         class="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 flex items-center gap-3 text-sm">
+      <span id="readerHealthDot" class="w-3 h-3 rounded-full flex-shrink-0"
+            style="background: {{ health_colors.get(reader_health.state, '#64748b') }}"></span>
+      <span id="readerHealthText" class="font-mono text-xs text-slate-300 tabular-nums">{{ reader_health.summary }}</span>
+    </div>
+
     <!-- Race Timer & Event Actions Card -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
       
@@ -804,6 +813,24 @@
     }
 
     // WebSocket listener for live tag sniffing and status
+    // Reader health strip (issue #48)
+    const HEALTH_COLORS = { ok: "#10b981", quiet: "#f59e0b", disconnected: "#f43f5e", stale: "#64748b" };
+    let lastHealthAt = Date.now();
+    function setReaderHealth(state, text) {
+      const box = document.getElementById("readerHealth");
+      box.dataset.state = state;
+      document.getElementById("readerHealthDot").style.background = HEALTH_COLORS[state] || HEALTH_COLORS.stale;
+      document.getElementById("readerHealthText").innerText = text;
+    }
+    function renderReaderHealth(h) {
+      lastHealthAt = Date.now();
+      setReaderHealth(h.state, h.summary);
+    }
+    setInterval(() => {
+      const silent = Math.round((Date.now() - lastHealthAt) / 1000);
+      if (silent >= 7) setReaderHealth("stale", `No update from the timer for ${silent}s: is the Pi still reachable?`);
+    }, 2000);
+
     function connectWS() {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live?channel=admin`);  // + raw tag reads
@@ -817,6 +844,8 @@
           window.location.reload();
         } else if (msg.type === "flagged_laps_updated" || msg.type === "lap_completed") {
           fetchFlaggedLaps();
+        } else if (msg.type === "reader_health") {
+          renderReaderHealth(msg.health);
         } else if (msg.type === "sim_speed_updated") {
           updateSpeedButtonUI(msg.speed);
         } else if (msg.type === "tag_detected") {
