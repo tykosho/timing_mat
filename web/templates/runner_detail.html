@@ -143,6 +143,7 @@
             <tr class="border-b border-slate-800 text-xs font-semibold text-slate-400 uppercase tracking-wider bg-slate-950/40">
               <th class="py-3 px-6 text-center w-20">Lap #</th>
               <th class="py-3 px-6">Crossing Time</th>
+              <th class="py-3 px-6 text-right">Distance</th>
               <th class="py-3 px-6 text-right">Lap Duration</th>
               <th class="py-3 px-6 text-right">Est. Pace (/mi)</th>
               <th class="py-3 px-6 text-center">Peak RSSI</th>
@@ -168,6 +169,9 @@
                 {% if lap.manual_entry %}
                 <span class="ml-2 text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded">Manual</span>
                 {% endif %}
+              </td>
+              <td class="py-3 px-6 text-right font-mono text-xs text-sky-300">
+                {{ ((lap.lap_number * event.track_length_m) / 1000) | round(2) }} km
               </td>
               <td class="py-3 px-6 text-right font-mono font-bold text-white">
                 {{ (lap.lap_duration_seconds // 60) | int }}:{{ "%04.1f" | format(lap.lap_duration_seconds % 60) }}

@@ -83,6 +83,8 @@
             <span id="runnerCount">0 Runners</span>
             <span>•</span>
             <span id="lapCount">0 Total Laps</span>
+            <span>•</span>
+            <span id="totalDistance" class="font-mono text-emerald-400 font-semibold">0.00 km</span>
             <button id="soundToggle" onclick="toggleSound()" class="text-slate-400 hover:text-white ml-2">
               <i class="fa-solid fa-volume-xmark" id="soundIcon"></i> Sound Off
             </button>
@@ -207,10 +209,12 @@
       tbody.innerHTML = "";
       
       let totalLaps = 0;
+      let totalDistM = 0;
       document.getElementById("runnerCount").innerText = `${data.length} Runners`;
 
       data.forEach((runner, idx) => {
         totalLaps += (runner.total_laps || 0);
+        totalDistM += (runner.distance_m || 0);
         const rank = idx + 1;
         
         let rankBadge = `<span class="text-slate-400 font-mono">${rank}</span>`;
@@ -284,6 +288,7 @@
       });
 
       document.getElementById("lapCount").innerText = `${totalLaps} Total Laps`;
+      document.getElementById("totalDistance").innerText = `${(totalDistM / 1000).toFixed(2)} km`;
     }
 
     function showBannerAlert(htmlContent, rssiText, alertClass = "from-emerald-600 to-teal-600") {
