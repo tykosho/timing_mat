@@ -134,10 +134,11 @@ class AdminChannelTest(unittest.TestCase):
         self.assertEqual(self.connected_as("/ws/live?channel=admin", cookie=self.auth.session_token()), (1, 1))
 
     def test_admin_pages_ask_for_the_admin_channel(self):
-        for name in ("admin.html", "prepare.html"):
+        # crossings.html is admin-only too and needs unassigned-tag prompts (#52)
+        for name in ("admin.html", "prepare.html", "crossings.html"):
             with open(os.path.join("web", "templates", name)) as f:
                 self.assertIn("/ws/live?channel=admin", f.read(), name)
-        for name in ("leaderboard.html", "crossings.html", "replay.html"):
+        for name in ("leaderboard.html", "replay.html"):
             with open(os.path.join("web", "templates", name)) as f:
                 self.assertNotIn("channel=admin", f.read(), name)
 
