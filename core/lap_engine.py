@@ -156,7 +156,7 @@ class LapEngine:
 
         race_start = event_state.get("start_time")
         if not race_start:
-            logger.warning(f"Event active but no start_time set!")
+            logger.warning("Event active but no start_time set!")
             return None
 
         runner_start = participant.get("start_time")
