@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Message & Glitch Simulator — {{ event.name }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/fontawesome/all.min.css">
+  <style>
+    body { background-color: #090d16; color: #f8fafc; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Top Navigation -->
+  <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur px-6 py-4 flex flex-wrap justify-between items-center gap-4 sticky top-0 z-30">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-lg bg-purple-500/15 border border-purple-500/40 flex items-center justify-center text-purple-400">
+        <i class="fa-solid fa-wave-square"></i>
+      </div>
+      <div>
+        <h1 class="text-lg font-extrabold text-white tracking-tight flex items-center gap-2">
+          Hardware Message &amp; Glitch Simulator
+          <span class="text-xs font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">TagRead Stream</span>
+        </h1>
+        <p class="text-xs text-slate-400">Feeds happy-path bursts and realistic hardware/runner anomalies into <code class="text-slate-300">LapEngine.process_tag_read()</code></p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <div id="raceStatusPill" class="px-3 py-1.5 rounded-lg text-xs font-bold border flex items-center gap-2
+        {% if event.status == 'running' %}bg-emerald-500/15 text-emerald-300 border-emerald-500/30
+        {% elif event.status == 'paused' %}bg-amber-500/15 text-amber-300 border-amber-500/30
+        {% else %}bg-slate-800 text-slate-300 border-slate-700{% endif %}">
+        <span class="w-2 h-2 rounded-full {% if event.status == 'running' %}bg-emerald-400 animate-pulse{% elif event.status == 'paused' %}bg-amber-400{% else %}bg-slate-500{% endif %}" id="raceStatusDot"></span>
+        <span id="raceStatusText">Event: {{ event.status | upper }}</span>
+      </div>
+      <button onclick="quickStartRace()" id="quickStartBtn" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition {% if event.status == 'running' %}hidden{% endif %}">
+        <i class="fa-solid fa-play mr-1"></i> Start Event
+      </button>
+      <a href="/admin" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-700 transition">
+        <i class="fa-solid fa-sliders mr-1"></i> Admin
+      </a>
+      <a href="/leaderboard" target="_blank" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-700 transition">
+        <i class="fa-solid fa-tv mr-1"></i> Leaderboard
+      </a>
+    </div>
+  </header>
+
+  <main class="max-w-7xl w-full mx-auto p-6 space-y-6 flex-1">
+
+    {% if not is_mock %}
+    <div class="bg-rose-950/60 border border-rose-700/60 rounded-2xl p-6 text-rose-200">
+      <h2 class="text-base font-bold mb-1"><i class="fa-solid fa-triangle-exclamation mr-2"></i>Real Hardware Mode Active</h2>
+      <p class="text-xs text-rose-300">The server is currently configured for a physical serial reader. Start the server with <code>MOCK_HARDWARE=true</code> or <code>hardware.mock: true</code> in <code>config.yaml</code> to use the simulator.</p>
+    </div>
+    {% else %}
+
+    <!-- Row 1: Preset Mode + Speed + Target Runner -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- Mode / Preset Selector -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+            <i class="fa-solid fa-compass text-purple-400"></i> 1. Background Stream Mode
+          </h2>
+          <span id="currentPresetBadge" class="text-[11px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+            {{ sim_status.preset }}
+          </span>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <button onclick="setPreset('happy_path')" id="preset-happy_path" class="preset-btn text-left p-2.5 rounded-xl border border-slate-700 bg-slate-800/70 hover:bg-slate-800 transition">
+            <div class="text-xs font-bold text-emerald-400 flex items-center gap-1.5"><i class="fa-solid fa-circle-check"></i> Happy Path</div>
+            <div class="text-[11px] text-slate-400 mt-0.5">100% clean bell-curve crossings</div>
+          </button>
+          <button onclick="setPreset('realistic')" id="preset-realistic" class="preset-btn text-left p-2.5 rounded-xl border border-slate-700 bg-slate-800/70 hover:bg-slate-800 transition">
+            <div class="text-xs font-bold text-sky-400 flex items-center gap-1.5"><i class="fa-solid fa-person-running"></i> Realistic</div>
+            <div class="text-[11px] text-slate-400 mt-0.5">~20% pack, bounce, or missed read</div>
+          </button>
+          <button onclick="setPreset('glitchy')" id="preset-glitchy" class="preset-btn text-left p-2.5 rounded-xl border border-slate-700 bg-slate-800/70 hover:bg-slate-800 transition">
+            <div class="text-xs font-bold text-amber-400 flex items-center gap-1.5"><i class="fa-solid fa-bug"></i> Glitchy / Chaos</div>
+            <div class="text-[11px] text-slate-400 mt-0.5">Frequent bounces, drops &amp; loitering</div>
+          </button>
+          <button onclick="setPreset('manual')" id="preset-manual" class="preset-btn text-left p-2.5 rounded-xl border border-slate-700 bg-slate-800/70 hover:bg-slate-800 transition">
+            <div class="text-xs font-bold text-slate-200 flex items-center gap-1.5"><i class="fa-solid fa-hand"></i> Manual Only</div>
+            <div class="text-[11px] text-slate-400 mt-0.5">Pause auto-loop; step by hand</div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Speed & Engine Buffer Status -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between">
+        <div>
+          <div class="flex justify-between items-center mb-3">
+            <h2 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+              <i class="fa-solid fa-gauge-high text-emerald-400"></i> 2. Time Compression
+            </h2>
+            <span id="speedBadge" class="text-xs font-mono font-bold text-emerald-400">{{ sim_status.speed_multiplier }}x</span>
+          </div>
+          <div class="grid grid-cols-4 gap-2">
+            <button onclick="setSpeed(1.0)" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-mono text-xs font-bold py-2 rounded-lg transition">1x</button>
+            <button onclick="setSpeed(2.0)" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-mono text-xs font-bold py-2 rounded-lg transition">2x</button>
+            <button onclick="setSpeed(4.0)" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-mono text-xs font-bold py-2 rounded-lg transition">4x</button>
+            <button onclick="setSpeed(8.0)" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-mono text-xs font-bold py-2 rounded-lg transition">8x</button>
+          </div>
+        </div>
+
+        <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs">
+          <span class="text-slate-400">Messages Sent: <strong id="statTotalReads" class="font-mono text-white">{{ sim_status.stats.total_reads_emitted }}</strong></span>
+          <span class="text-slate-400">Active Antenna Buffers: <strong id="statActiveBuffers" class="font-mono text-amber-400">0</strong></span>
+        </div>
+      </div>
+
+      <!-- Target Runner Selection -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between">
+        <div>
+          <h2 class="text-sm font-bold text-slate-200 mb-2 flex items-center gap-2">
+            <i class="fa-solid fa-bullseye text-sky-400"></i> 3. Target Runner for Injection
+          </h2>
+          <p class="text-xs text-slate-400 mb-3">Choose which runner receives the one-click message scenario below:</p>
+          <select id="targetBibSelect" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white font-semibold">
+            {% for r in sim_status.runners %}
+            <option value="{{ r.bib }}">#{{ r.bib }} — {{ r.name }} (pace ~{{ r.base_pace | int }}s)</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div id="scenarioToast" class="mt-3 text-xs font-mono px-3 py-1.5 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-200 hidden"></div>
+      </div>
+    </div>
+
+    <!-- Row 2: One-Click Scenario & Fault Injection Buttons -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
+      <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
+        <div>
+          <h2 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+            <i class="fa-solid fa-bolt text-amber-400"></i> Inject Hardware Message Scenario Now
+          </h2>
+          <p class="text-xs text-slate-400">Each button synthesizes a realistic sequence of <code>TagRead(epc, timestamp, rssi)</code> messages into the reader callback.</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <!-- Happy Path -->
+        <button onclick="fireScenario('normal')" class="text-left p-3.5 rounded-xl bg-emerald-950/30 hover:bg-emerald-950/50 border border-emerald-700/40 transition group">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-emerald-300"><i class="fa-solid fa-check-circle mr-1.5"></i>Happy Path Crossing</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">6–10 reads</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">Bell-curve RSSI (-78 &rarr; -42 &rarr; -76 dBm) over 0.9s. Resolves after crossing window.</p>
+        </button>
+
+        <!-- Double Bounce (Debounce) -->
+        <button onclick="fireScenario('double_bounce')" class="text-left p-3.5 rounded-xl bg-amber-950/30 hover:bg-amber-950/50 border border-amber-700/40 transition group">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-amber-300"><i class="fa-solid fa-rotate-left mr-1.5"></i>Double-Bounce (Debounce)</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">2 bursts</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">Crosses mat, then steps back into range ~3.7s later. Burst #2 should be rejected by debounce.</p>
+        </button>
+
+        <!-- Short-Lap Double Count -->
+        <button onclick="fireScenario('double_count')" class="text-left p-3.5 rounded-xl bg-rose-950/30 hover:bg-rose-950/50 border border-rose-700/40 transition group">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-rose-300"><i class="fa-solid fa-clone mr-1.5"></i>Double-Count (Short Lap)</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300">Glitch</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">Crosses now and schedules a premature second crossing right after the debounce threshold.</p>
+        </button>
+
+        <!-- Missed Read (Occluded Tag) -->
+        <button onclick="fireScenario('missed_read')" class="text-left p-3.5 rounded-xl bg-rose-950/30 hover:bg-rose-950/50 border border-rose-700/40 transition group">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-rose-300"><i class="fa-solid fa-eye-slash mr-1.5"></i>Missed Read (Occluded Tag)</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300">0 reads</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">Runner passes mat with blocked tag (0 messages sent). Next recorded lap will have ~2x duration.</p>
+        </button>
+
+        <!-- Weak Stray Read -->
+        <button onclick="fireScenario('weak_stray')" class="text-left p-3.5 rounded-xl bg-amber-950/30 hover:bg-amber-950/50 border border-amber-700/40 transition group">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-amber-300"><i class="fa-solid fa-signal mr-1.5"></i>Weak Stray Walk-By</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">1 read @ -85 dBm</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">Single weak read from a runner warming up nearby without a bell-curve burst.</p>
+        </button>
+
+        <!-- Loiter on Mat -->
+        <button onclick="fireScenario('loiter')" class="text-left p-3.5 rounded-xl bg-amber-950/30 hover:bg-amber-950/50 border border-amber-700/40 transition group">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-amber-300"><i class="fa-solid fa-mug-hot mr-1.5"></i>Loiter on Mat (4.5s)</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">20 reads</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">Runner stands on mat chatting, emitting continuous reads every 0.22s with no silence gap.</p>
+        </button>
+
+        <!-- Pack Crossing -->
+        <button onclick="fireScenario('pack_crossing')" class="text-left p-3.5 rounded-xl bg-sky-950/30 hover:bg-sky-950/50 border border-sky-700/40 transition group">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-sky-300"><i class="fa-solid fa-people-group mr-1.5"></i>Pack Crossing (3–4 Runners)</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300">Interleaved</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">Multiple runners cross within 150ms of each other with interleaved TagRead messages.</p>
+        </button>
+
+        <!-- Mass Start -->
+        <button onclick="fireScenario('mass_start')" class="text-left p-3.5 rounded-xl bg-sky-950/30 hover:bg-sky-950/50 border border-sky-700/40 transition group">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-sky-300"><i class="fa-solid fa-flag-checkered mr-1.5"></i>Mass Start (All Runners)</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300">All Bibs</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">All registered runners cross the starting mat together in a single pack burst.</p>
+        </button>
+
+        <!-- Unknown Tag -->
+        <button onclick="fireScenario('unknown_tag')" class="text-left p-3.5 rounded-xl bg-purple-950/30 hover:bg-purple-950/50 border border-purple-700/40 transition group">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-purple-300"><i class="fa-solid fa-circle-question mr-1.5"></i>Unassigned / Stray Tag</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300">Unknown EPC</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">Emits a burst for an unregistered tag EPC (ignored by leaderboard, shown in Admin Sniffer).</p>
+        </button>
+      </div>
+    </div>
+
+    <!-- Row 3: Ground Truth Log vs Software Leaderboard -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+      <!-- Left: Ground Truth Simulator Log -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col">
+        <div class="flex justify-between items-center mb-3">
+          <div>
+            <h2 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+              <i class="fa-solid fa-list-check text-purple-400"></i> Simulator Ground-Truth Log
+            </h2>
+            <p class="text-[11px] text-slate-400">What actually happened on the track (including missed reads &amp; glitches)</p>
+          </div>
+          <button onclick="clearSimLog()" class="text-xs text-slate-400 hover:text-white px-2.5 py-1 rounded border border-slate-700 hover:bg-slate-800 transition">
+            Clear Log
+          </button>
+        </div>
+
+        <div id="groundTruthList" class="space-y-2 max-h-[420px] overflow-y-auto pr-1 font-mono text-xs">
+          <div class="text-slate-500 py-8 text-center">Waiting for simulated events...</div>
+        </div>
+      </div>
+
+      <!-- Right: Software Recorded State -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col">
+        <div class="flex justify-between items-center mb-3">
+          <div>
+            <h2 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+              <i class="fa-solid fa-database text-emerald-400"></i> Software Recorded State (LapEngine + DB)
+            </h2>
+            <p class="text-[11px] text-slate-400">How the timing software interpreted the message stream</p>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-slate-800 text-slate-400 uppercase text-[10px]">
+                <th class="py-2 px-2">Bib / Runner</th>
+                <th class="py-2 px-2">Status</th>
+                <th class="py-2 px-2 text-right">Laps</th>
+                <th class="py-2 px-2 text-right">Last Split</th>
+                <th class="py-2 px-2 text-right">Best Split</th>
+              </tr>
+            </thead>
+            <tbody id="softwareStateBody" class="divide-y divide-slate-800/60">
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+    {% endif %}
+  </main>
+
+  <script>
+    function esc(s) {
+      return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function fmtTime(sec) {
+      if (sec === null || sec === undefined) return '—';
+      const m = Math.floor(sec / 60);
+      const s = (sec % 60).toFixed(1).padStart(4, '0');
+      return m > 0 ? `${m}:${s}` : `${s}s`;
+    }
+
+    function showToast(msg) {
+      const el = document.getElementById('scenarioToast');
+      if (!el) return;
+      el.textContent = msg;
+      el.classList.remove('hidden');
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => el.classList.add('hidden'), 4000);
+    }
+
+    async function setPreset(preset) {
+      const res = await fetch('/api/simulator/preset', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ preset })
+      });
+      if (res.ok) {
+        showToast(`Mode switched to: ${preset}`);
+        await refreshStatus();
+      }
+    }
+
+    async function setSpeed(speed) {
+      const res = await fetch('/api/simulator/speed', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ speed })
+      });
+      if (res.ok) {
+        showToast(`Simulation speed set to ${speed}x`);
+        await refreshStatus();
+      }
+    }
+
+    async function fireScenario(scenario) {
+      const sel = document.getElementById('targetBibSelect');
+      const bib = sel ? parseInt(sel.value, 10) : null;
+      const res = await fetch('/api/simulator/scenario', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ scenario, bib })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Injected ${data.label}${data.bib ? ' for #' + data.bib : ''}`);
+        setTimeout(refreshStatus, 250);
+      } else {
+        showToast(`Error: ${data.detail || 'Failed'}`);
+      }
+    }
+
+    async function clearSimLog() {
+      await fetch('/api/simulator/clear-log', { method: 'POST' });
+      await refreshStatus();
+    }
+
+    async function quickStartRace() {
+      const res = await fetch('/api/event/start', { method: 'POST' });
+      if (res.ok) {
+        await refreshStatus();
+      }
+    }
+
+    async function refreshStatus() {
+      try {
+        const res = await fetch('/api/simulator/status');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // Update badges
+        document.getElementById('currentPresetBadge').textContent = data.preset;
+        document.getElementById('speedBadge').textContent = `${data.speed_multiplier}x`;
+        document.getElementById('statTotalReads').textContent = data.stats.total_reads_emitted;
+        const activeBufCount = Object.keys(data.buffered_epcs || {}).length;
+        document.getElementById('statActiveBuffers').textContent = activeBufCount;
+
+        // Highlight active preset button
+        document.querySelectorAll('.preset-btn').forEach(btn => {
+          btn.classList.remove('ring-2', 'ring-purple-500');
+        });
+        const activeBtn = document.getElementById(`preset-${data.preset}`);
+        if (activeBtn) activeBtn.classList.add('ring-2', 'ring-purple-500');
+
+        // Update Event status pill
+        if (data.event) {
+          const st = data.event.status;
+          document.getElementById('raceStatusText').textContent = `Event: ${st.toUpperCase()}`;
+          const startBtn = document.getElementById('quickStartBtn');
+          if (startBtn) {
+            if (st === 'running') startBtn.classList.add('hidden');
+            else startBtn.classList.remove('hidden');
+          }
+        }
+
+        // Render Ground Truth Log
+        const listEl = document.getElementById('groundTruthList');
+        if (!data.recent_events || data.recent_events.length === 0) {
+          listEl.innerHTML = `<div class="text-slate-500 py-8 text-center">No simulated events yet. Click a scenario button above!</div>`;
+        } else {
+          listEl.innerHTML = data.recent_events.map(ev => {
+            const t = new Date(ev.timestamp * 1000).toLocaleTimeString();
+            const badgeClass = ev.is_error
+              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+              : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
+            return `
+              <div class="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 flex items-start justify-between gap-2">
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-slate-500">${esc(t)}</span>
+                    <span class="px-1.5 py-0.5 rounded text-[10px] border ${badgeClass}">${esc(ev.label)}</span>
+                  </div>
+                  <div class="text-slate-200 mt-1">${esc(ev.description)}</div>
+                </div>
+                <div class="text-right shrink-0 text-[11px] text-slate-400">
+                  <div>${ev.reads_emitted} msg${ev.reads_emitted === 1 ? '' : 's'}</div>
+                  ${ev.peak_rssi !== null ? `<div class="text-slate-500">${ev.peak_rssi} dBm</div>` : `<div class="text-rose-400">NO SIGNAL</div>`}
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+
+        // Render Software Leaderboard State
+        const tbody = document.getElementById('softwareStateBody');
+        if (data.leaderboard) {
+          tbody.innerHTML = data.leaderboard.map(r => {
+            let statusBadge = `<span class="text-slate-500">Not Started</span>`;
+            if (r.status === 'on_break') {
+              statusBadge = `<span class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px]">On Break</span>`;
+            } else if (r.total_laps > 0) {
+              statusBadge = `<span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px]">Running</span>`;
+            } else if (r.start_time) {
+              statusBadge = `<span class="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px]">On Track (Lap 0)</span>`;
+            }
+            return `
+              <tr class="hover:bg-slate-800/40">
+                <td class="py-2.5 px-2 font-semibold text-white">
+                  <a href="/runner/${r.bib_number}" class="hover:text-emerald-400">#${r.bib_number} ${esc(r.name)}</a>
+                </td>
+                <td class="py-2.5 px-2">${statusBadge}</td>
+                <td class="py-2.5 px-2 text-right font-mono font-bold text-emerald-400">${r.total_laps}</td>
+                <td class="py-2.5 px-2 text-right font-mono text-slate-200">${fmtTime(r.last_lap_seconds)}</td>
+                <td class="py-2.5 px-2 text-right font-mono text-slate-400">${fmtTime(r.fastest_lap_seconds)}</td>
+              </tr>
+            `;
+          }).join('');
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    refreshStatus();
+    setInterval(refreshStatus, 1000);
+  </script>
+</body>
+</html>

@@ -795,3 +795,6 @@ async def set_simulator_speed(req: SpeedRequest):
         })
         return {"status": "speed_set", "speed": reader.speed_multiplier, "sim": sim}
     raise HTTPException(status_code=400, detail="Hardware is not in mock mode")
+
+from web.simulator_routes import router as simulator_router  # noqa: E402
+app.include_router(simulator_router)
