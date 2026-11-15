@@ -14,7 +14,9 @@ docker compose up --build
 ```
 
 Open your browser to:
+- **Trackside Live Crossing Feed**: [http://localhost:8000/crossings](http://localhost:8000/crossings)
 - **Live Big-Screen Leaderboard**: [http://localhost:8000/leaderboard](http://localhost:8000/leaderboard)
+- **Prepare Bibs & Tags**: [http://localhost:8000/prepare](http://localhost:8000/prepare)
 - **Race Admin & Control Center**: [http://localhost:8000/admin](http://localhost:8000/admin)
 
 *(In simulator mode the first event is pre-seeded with 5 demo runners: Bibs 101 to 105. On real hardware nothing is seeded; set `SEED_DEMO=true` or `event.seed_demo: true` in `config.yaml` to force it.)*
@@ -109,6 +111,7 @@ Everything (runners, bibs, tags, laps, raw reads) belongs to an **event**. The r
 ├── web/
 │   ├── app.py                   # FastAPI application & WebSockets
 │   └── templates/
+│       ├── crossings.html       # Trackside live crossing feed & quick +1/-1 lap correction
 │       ├── leaderboard.html     # High-contrast, dark-mode TV display view
 │       ├── admin.html           # Event control (start/pause/end), events, runner registration
 │       ├── prepare.html         # CSV import + tag assignment before the event

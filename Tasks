@@ -1,19 +1,59 @@
 # Features to consider or implement
-1. Display total distance for each participant  -- DONE on leaderboard + runner page (laps x event track length)
-2. Display cumulative distance for all participants  -- TODO (data is there: sum of distance_m)
-3. Separate views for different stats  -- TODO
-4. Set up the ability to pre-register tags before a race starts (with bib number, participant name, tag ID)  -- DONE (/prepare: CSV import + hold-tag-to-assign)
-5. Make sure the software stores data on the actual time that laps were completed for each runner. Enable live replay plot of the race (showing laps completed per participant on the mat over time)
-   -- Data stored DONE (lap crossing times + raw read log, CSV export). Replay plot TODO.
 
-# Added
-- Events (multiple, isolated), End / Reopen, results CSV export, backups on End/Reset, raw read log
-- Existing single-event databases migrate automatically
+## 1. Mat Crossing Feed & Instant Verification View — DONE (`/crossings`)
+- **"Mat Crossing Feed" / Recent Finishers Deck**:
+  - As runners come across the mat (individually or in packs), show their cards prominently on screen.
+  - Keep recently completed runner stats persistent on screen (up to 10 cards) so runners passing by can clearly see and verify:
+    - Bib #, Name, and Initials Avatar
+    - Time for last lap split (e.g., `1:14.2`) & pace
+    - Updated total lap count & total distance (scaled by per-event track length)
+    - Current standing / rank snapshot
+  - **Quick Error Correction on Crossing Cards**:
+    - **Add Missed Lap** button right on their active crossing card (`+1 Lap` with automatic time split).
+    - **Remove Erroneous / Double Lap** button (`-1 Lap` / delete last crossing) quickly without having to hunt through the admin table.
 
-# Ideas still open
-- Admin PIN (anyone on the Wi-Fi can currently reach /admin and the API)
-- Monotonic clock or RTC module so an NTP jump mid-race can't corrupt lap durations
-- Reader health indicator (connected, last read, reads/sec) on the admin page
-- Verify R200 parsing + RSSI scale against captured frames (python -m hardware.sniffer --raw)
-- Set R200 RF power / region from config at startup
-- Pi as its own Wi-Fi hotspot
+## 2. Multi-Level Simulator Architecture — TODO
+- **Level 1: Raw Hardware / Serial Stream Injection**:
+  - Emulate binary UART packets (`0xAA ... 0xDD`), checksum errors, RSSI jitter, and dropped frames.
+- **Level 2: Race Dynamics & Flaw Injection**:
+  - Pack crossings (runners crossing within fractions of a second).
+  - Common hardware flaws:
+    - **Missed readings** (tag occlusion, antenna dead zone, water absorption).
+    - **Phantom / isolated single reads** (stray spectator walking 10m away; single read with weak RSSI to be filtered).
+    - **Loitering / standing on mat** (extended burst without departing).
+- **Level 3: Session Replay / UI Demonstration**:
+  - Replay recorded race sessions or synthetic GPX/JSON logs directly to WebSocket clients.
+
+## 3. Participant Registration & Profiles
+- DONE: Pre-register runners & tags before a race starts (`/prepare`: CSV import with Google Forms-style headers + hold-tag-to-assign flow, CSV export).
+- DONE: Auto-generated initials avatar placeholder on crossing cards.
+- TODO: Participant photo upload and optional team assignment.
+
+## 4. Participant & Team Goals — TODO
+- **Personal Goals**:
+  - Lap count goal (e.g., target 50 laps / 20 km): show countdown to goal and surplus/deficit pacing.
+  - Time duration goal (e.g., 1-hour run): remaining time countdown with projected lap total.
+- **Team / Relay Tracking**:
+  - Group runners into teams / relay squads.
+  - Team aggregated laps, cumulative team distance, and team leaderboard.
+
+## 5. Stats, Analytics, Events & Distance
+- DONE: Multiple isolated events (`setup` / `running` / `paused` / `ended`), End / Reopen, automatic DB backups on End/Reset, automatic migration of legacy single-event DBs.
+- DONE: Display total distance for each participant (`laps × event.track_length_m`) on `/crossings`, `/leaderboard`, and `/runner/{bib}`.
+- DONE: Separate dedicated views:
+  - Big-screen Live Mat Crossing HUD (`/crossings`).
+  - Overall Ranked Leaderboard (`/leaderboard`).
+  - Pre-race Bib & Tag Prep (`/prepare`).
+  - Admin & Control Center (`/admin`).
+- DONE: Store exact timestamps of lap completions + raw tag read log, with per-event CSV exports (`results`, `laps`, `registrations`, `raw_reads`).
+- TODO: Display cumulative distance for all participants combined (e.g. mapped to landmarks: "Total Earth Distance").
+- TODO: Live / post-race replay plot (laps completed per participant over time).
+- TODO: Post-race verification / comparison against Strava / GPS data (GPX import).
+
+## 6. Hardware & Operations Ideas Still Open
+- Admin PIN (anyone on the Wi-Fi can currently reach `/admin` and the API).
+- Monotonic clock or RTC module so an NTP jump mid-race can't corrupt lap durations.
+- Reader health indicator (connected, last read, reads/sec) on the admin page.
+- Verify R200 parsing + RSSI scale against captured frames (`python -m hardware.sniffer --raw`).
+- Set R200 RF power / region from config at startup.
+- Pi as its own Wi-Fi hotspot.

@@ -546,6 +546,41 @@ class Database:
             conn.execute("DELETE FROM laps WHERE id = ?;", (lap_id,))
         return True
 
+    def delete_last_lap_for_runner(self, bib_number: int, event_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """Deletes the most recent lap for a runner in the event and updates last_crossing_time."""
+        eid = self._eid(event_id)
+        with self.connect() as conn:
+            last = conn.execute("""
+                SELECT * FROM laps
+                WHERE event_id = ? AND bib_number = ?
+                ORDER BY lap_number DESC, id DESC
+                LIMIT 1;""", (eid, bib_number)).fetchone()
+            if not last:
+                return None
+            last_dict = dict(last)
+            conn.execute("DELETE FROM laps WHERE id = ?;", (last_dict["id"],))
+
+            prev_lap = conn.execute("""
+                SELECT crossing_time FROM laps
+                WHERE event_id = ? AND bib_number = ?
+                ORDER BY lap_number DESC, id DESC
+                LIMIT 1;""", (eid, bib_number)).fetchone()
+
+            if prev_lap:
+                new_last_time = prev_lap["crossing_time"]
+            else:
+                p_row = conn.execute(
+                    "SELECT start_time FROM participants WHERE event_id = ? AND bib_number = ?;",
+                    (eid, bib_number)
+                ).fetchone()
+                new_last_time = p_row["start_time"] if p_row else None
+
+            conn.execute(
+                "UPDATE participants SET last_crossing_time = ? WHERE event_id = ? AND bib_number = ?;",
+                (new_last_time, eid, bib_number)
+            )
+            return last_dict
+
     def get_total_laps_count(self, event_id: Optional[int] = None) -> int:
         with self.connect() as conn:
             return conn.execute("SELECT COUNT(*) AS c FROM laps WHERE event_id = ?;", (self._eid(event_id),)).fetchone()["c"]
