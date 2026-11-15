@@ -220,6 +220,11 @@ class TestApi(unittest.TestCase):
         self.assertEqual(self.client.get("/api/participants").json(), [])
         self.assertEqual(self.client.get("/api/event").json()["status"], "setup")
 
+    def test_update_settings_allow_disabling_auto_break(self):
+        res = self.client.post("/api/event/settings", json={"max_lap_rest_seconds": 0.0})
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()["event"]["max_lap_rest_seconds"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
