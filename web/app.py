@@ -520,6 +520,19 @@ async def reset_event():
     await push_event_status()
     return {"status": "reset", "backup": backup_path}
 
+@app.post("/api/event/reset-all")
+async def reset_all_event_data():
+    """Completely clears laps, breaks, raw reads, and registered runners for the current event after taking a backup."""
+    if db.get_event_state()["status"] == "running":
+        raise EventStateError("Pause or end the event before resetting everything.")
+    lap_engine.buffers.clear()
+    lap_engine.flush_raw_reads()
+    backup_path = db.backup("pre-full-reset")
+    db.reset_all_event_data()
+    await push_event_status()
+    await push_leaderboard()
+    return {"status": "reset_all", "backup": backup_path}
+
 class SettingsRequest(BaseModel):
     name: Optional[str] = None
     min_lap_seconds: Optional[float] = Field(default=None, gt=0)

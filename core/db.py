@@ -896,6 +896,14 @@ class Database:
             conn.execute("UPDATE participants SET start_time = NULL, last_crossing_time = NULL WHERE event_id = ?;", (eid,))
             conn.execute("UPDATE events SET status = 'setup', start_time = NULL, end_time = NULL WHERE id = ?;", (eid,))
 
+    def reset_all_event_data(self, event_id: Optional[int] = None):
+        """Completely clears laps, breaks, raw reads, and registered participants for the event, returning it to 'setup'."""
+        eid = self._eid(event_id)
+        with self.connect() as conn:
+            for table in ("laps", "breaks", "raw_reads", "participants"):
+                conn.execute(f"DELETE FROM {table} WHERE event_id = ?;", (eid,))
+            conn.execute("UPDATE events SET status = 'setup', start_time = NULL, end_time = NULL WHERE id = ?;", (eid,))
+
     def seed_demo_runners(self):
         """Fills the *current* event with sample runners, but only if it has no participants yet."""
         if self.get_all_participants():
