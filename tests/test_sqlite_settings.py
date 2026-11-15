@@ -37,10 +37,15 @@ class SqliteSettingsTest(unittest.TestCase):
         self.assertIn("flag_reason", cols)
 
     def test_backup_includes_data_still_in_the_wal(self):
+        # SQLite folds the WAL into the main file when the last connection closes (on Linux),
+        # so keep one open, like the running app does, to leave the new lap in the WAL only.
+        holder = sqlite3.connect(self.path)
+        self.addCleanup(holder.close)
+        holder.execute("SELECT 1 FROM laps LIMIT 1;").fetchall()
         self.db.add_participant(101, "Alex", "E28011700000020101010001")
         self.db.start_event(at=1000.0)
         self.db.record_lap(101, 1, 1070.0, 70.0)
-        self.assertTrue(os.path.exists(self.path + "-wal"))
+        self.assertGreater(os.path.getsize(self.path + "-wal"), 0)
         copy = Database(self.db.backup("test"))
         self.assertEqual(len(copy.get_laps_for_runner(101)), 1)
 
