@@ -174,6 +174,35 @@ class TestApi(unittest.TestCase):
         self.assertFalse(resumed.json()["sim"]["paused"])
         self.assertEqual(resumed.json()["sim"]["speed"], 20.0)
 
+    def test_self_register_unassigned_tag(self):
+        # Auto-assigns next available bib when bib_number is omitted
+        r1 = self.client.post("/api/self-register", json={
+            "name": "Sam Walkup",
+            "epc": "E28099990000000000000042",
+        })
+        self.assertEqual(r1.status_code, 200, r1.text)
+        body1 = r1.json()
+        self.assertEqual(body1["status"], "created")
+        self.assertGreaterEqual(body1["bib_number"], 1)
+        self.assertEqual(body1["participant"]["name"], "Sam Walkup")
+        self.assertEqual(body1["participant"]["epc"], "E28099990000000000000042")
+
+        # Duplicate EPC is rejected
+        dup = self.client.post("/api/self-register", json={
+            "name": "Duplicate Runner",
+            "epc": "E28099990000000000000042",
+        })
+        self.assertEqual(dup.status_code, 400)
+
+        # Explicit bib_number is honored
+        r2 = self.client.post("/api/self-register", json={
+            "name": "Explicit Bib",
+            "epc": "E28099990000000000000043",
+            "bib_number": 99,
+        })
+        self.assertEqual(r2.status_code, 200, r2.text)
+        self.assertEqual(r2.json()["bib_number"], 99)
+
 
 if __name__ == "__main__":
     unittest.main()

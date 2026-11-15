@@ -356,6 +356,47 @@
   </div>
   {% endif %}
 
+  <!-- Unrecognized Tag Self-Registration Prompt (issue #45) -->
+  <div id="unrecognizedTagPrompt" role="dialog" aria-labelledby="unrecognizedTagTitle"
+       class="hidden fixed bottom-4 left-4 right-4 sm:right-auto sm:w-96 z-50 bg-slate-900/95 backdrop-blur border border-amber-500/60 rounded-2xl shadow-2xl p-4 text-slate-100">
+    <div class="flex items-start justify-between gap-3 mb-2">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+          <h2 id="unrecognizedTagTitle" class="text-sm font-bold text-white">Unrecognized Tag Detected</h2>
+        </div>
+        <p class="text-xs text-slate-400 mt-0.5">
+          Tag <span id="unrecognizedTagEpc" class="font-mono text-amber-300 font-semibold"></span> is not registered.
+        </p>
+      </div>
+      <span id="unrecognizedTagCountdown" class="text-[11px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full shrink-0">30s</span>
+    </div>
+
+    <form id="unrecognizedTagForm" class="space-y-2.5 mt-3">
+      <div>
+        <label for="unrecognizedNameInput" class="block text-xs font-medium text-slate-300 mb-1">Your Name</label>
+        <input id="unrecognizedNameInput" type="text" required autocomplete="name" placeholder="Enter your name"
+               class="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 outline-none" />
+      </div>
+      <div>
+        <label for="unrecognizedBibInput" class="block text-xs font-medium text-slate-300 mb-1">Bib # <span class="text-slate-500">(optional, auto-assigned if blank)</span></label>
+        <input id="unrecognizedBibInput" type="number" min="1" step="1" placeholder="Auto"
+               class="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 outline-none" />
+      </div>
+      <p id="unrecognizedTagError" class="hidden text-xs text-rose-400 font-medium"></p>
+      <div class="flex items-center justify-end gap-2 pt-1">
+        <button type="button" id="unrecognizedDismissBtn" onclick="dismissUnrecognizedTagPrompt()"
+                class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors">
+          Dismiss
+        </button>
+        <button type="submit" id="unrecognizedSubmitBtn"
+                class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow transition-colors">
+          Register
+        </button>
+      </div>
+    </form>
+  </div>
+
   <script>
     let soundEnabled = false;
     let audioCtx = null;
@@ -682,6 +723,10 @@
           renderCrossingFeed(false);
         } else if (msg.type === "leaderboard_update") {
           currentLeaderboard = msg.leaderboard || currentLeaderboard;
+        } else if (msg.type === "unassigned_tag_detected") {
+          if (msg.data && msg.data.epc) {
+            showUnrecognizedTagPrompt(msg.data.epc);
+          }
         } else if (msg.type === "event_status") {
           const wasReset = msg.event && msg.event.status === "setup" && !msg.event.start_time;
           eventState = msg.event;
@@ -892,6 +937,138 @@
         await fetch("/api/event/start", { method: "POST" });
       } catch (e) {}
     }
+
+    // Unrecognized tag self-registration prompt (issue #45)
+    const UNRECOGNIZED_AUTO_DISMISS_MS = 30000;
+    const UNRECOGNIZED_COOLDOWN_MS = 60000;
+    const dismissedEpcs = new Map();
+    const unrecognizedTagState = {
+      epc: null,
+      timeoutId: null,
+      intervalId: null,
+      deadline: 0,
+    };
+
+    function clearUnrecognizedTimers() {
+      if (unrecognizedTagState.timeoutId !== null) {
+        clearTimeout(unrecognizedTagState.timeoutId);
+        unrecognizedTagState.timeoutId = null;
+      }
+      if (unrecognizedTagState.intervalId !== null) {
+        clearInterval(unrecognizedTagState.intervalId);
+        unrecognizedTagState.intervalId = null;
+      }
+    }
+
+    function updateUnrecognizedCountdown() {
+      const el = document.getElementById("unrecognizedTagCountdown");
+      if (!el) return;
+      const secs = Math.max(0, Math.ceil((unrecognizedTagState.deadline - Date.now()) / 1000));
+      el.textContent = `${secs}s`;
+    }
+
+    function resetUnrecognizedTagTimer() {
+      if (!unrecognizedTagState.epc) return;
+      clearUnrecognizedTimers();
+      unrecognizedTagState.deadline = Date.now() + UNRECOGNIZED_AUTO_DISMISS_MS;
+      updateUnrecognizedCountdown();
+      unrecognizedTagState.timeoutId = setTimeout(() => {
+        dismissUnrecognizedTagPrompt();
+      }, UNRECOGNIZED_AUTO_DISMISS_MS);
+      unrecognizedTagState.intervalId = setInterval(updateUnrecognizedCountdown, 1000);
+    }
+
+    function hideUnrecognizedTagPrompt() {
+      clearUnrecognizedTimers();
+      unrecognizedTagState.epc = null;
+      const promptEl = document.getElementById("unrecognizedTagPrompt");
+      if (promptEl) promptEl.classList.add("hidden");
+    }
+
+    function dismissUnrecognizedTagPrompt() {
+      if (unrecognizedTagState.epc) {
+        dismissedEpcs.set(unrecognizedTagState.epc, Date.now());
+      }
+      hideUnrecognizedTagPrompt();
+    }
+
+    function showUnrecognizedTagPrompt(epc) {
+      const lastDismissed = dismissedEpcs.get(epc);
+      if (lastDismissed && (Date.now() - lastDismissed) < UNRECOGNIZED_COOLDOWN_MS) {
+        return;
+      }
+      if (unrecognizedTagState.epc) {
+        // Do not clobber an active prompt already waiting on user input.
+        return;
+      }
+      unrecognizedTagState.epc = epc;
+      document.getElementById("unrecognizedTagEpc").textContent = epc;
+      document.getElementById("unrecognizedNameInput").value = "";
+      document.getElementById("unrecognizedBibInput").value = "";
+      const errEl = document.getElementById("unrecognizedTagError");
+      errEl.textContent = "";
+      errEl.classList.add("hidden");
+      document.getElementById("unrecognizedTagPrompt").classList.remove("hidden");
+      resetUnrecognizedTagTimer();
+      document.getElementById("unrecognizedNameInput").focus();
+    }
+
+    (function initUnrecognizedTagPrompt() {
+      const promptEl = document.getElementById("unrecognizedTagPrompt");
+      const formEl = document.getElementById("unrecognizedTagForm");
+      if (!promptEl || !formEl) return;
+
+      ["input", "keydown", "pointerdown", "click"].forEach((evt) => {
+        promptEl.addEventListener(evt, () => {
+          if (unrecognizedTagState.epc) resetUnrecognizedTagTimer();
+        });
+      });
+
+      formEl.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (!unrecognizedTagState.epc) return;
+        const name = document.getElementById("unrecognizedNameInput").value.trim();
+        const bibRaw = document.getElementById("unrecognizedBibInput").value.trim();
+        const errEl = document.getElementById("unrecognizedTagError");
+        const submitBtn = document.getElementById("unrecognizedSubmitBtn");
+
+        if (!name) {
+          errEl.textContent = "Please enter your name.";
+          errEl.classList.remove("hidden");
+          return;
+        }
+
+        submitBtn.disabled = true;
+        errEl.classList.add("hidden");
+        try {
+          const payload = {
+            name,
+            epc: unrecognizedTagState.epc,
+            bib_number: bibRaw ? parseInt(bibRaw, 10) : null,
+          };
+          const res = await fetch("/api/self-register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            errEl.textContent = body.detail || "Could not register tag.";
+            errEl.classList.remove("hidden");
+            resetUnrecognizedTagTimer();
+            return;
+          }
+          dismissedEpcs.delete(unrecognizedTagState.epc);
+          hideUnrecognizedTagPrompt();
+        } catch (err) {
+          errEl.textContent = "Network error while registering.";
+          errEl.classList.remove("hidden");
+          resetUnrecognizedTagTimer();
+        } finally {
+          submitBtn.disabled = false;
+        }
+      });
+    })();
 
     applyEventStatus();
     renderCrossingFeed(false);

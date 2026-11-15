@@ -166,5 +166,26 @@ class TestTimingMat(unittest.TestCase):
         self.assertGreaterEqual(len(laps), 50)
         self.assertTrue(all(dur > 60.0 for dur in laps))
 
+    def test_unassigned_tag_callback(self):
+        import tempfile
+        unassigned = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(os.path.join(tmpdir, "test.db"))
+            engine = LapEngine(
+                db=db,
+                crossing_window=0.2,
+                on_unassigned_tag=lambda data: unassigned.append(data),
+            )
+            now = time.time()
+            asyncio.run(engine._resolve_crossing("E28099990000000000000099", [(now, -52.0), (now + 0.05, -48.0)]))
+            self.assertEqual(len(unassigned), 1)
+            self.assertEqual(unassigned[0]["epc"], "E28099990000000000000099")
+            self.assertEqual(unassigned[0]["peak_rssi"], -48.0)
+
+            # Once registered, _resolve_crossing should NOT fire on_unassigned_tag
+            db.add_participant(7, "Walk-Up Runner", "E28099990000000000000099")
+            asyncio.run(engine._resolve_crossing("E28099990000000000000099", [(now + 1.0, -50.0)]))
+            self.assertEqual(len(unassigned), 1)
+
 if __name__ == "__main__":
     unittest.main()
