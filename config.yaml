@@ -16,6 +16,8 @@ hardware:
   baud_rate: 115200
   rearm_interval_seconds: 300    # Restart the reader's inventory this often (it stops after 65,535 polls); 0 = off
   silence_rearm_seconds: 30      # Also restart it if no frames at all arrive for this long; 0 = off
+  raw_capture_path: null         # e.g. data/r200-capture.log: log every byte to/from the reader (or set RAW_CAPTURE_PATH)
+  raw_capture_max_mb: 50         # stop capturing once the file reaches this size
 
 server:
   host: "0.0.0.0"
