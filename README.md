@@ -1,6 +1,8 @@
 # Take Back the Track! 🏁
 ### UHF RFID Race Timing Mat & Leaderboard System
 
+[![CI](https://github.com/tykosho/timing_mat/actions/workflows/ci.yml/badge.svg)](https://github.com/tykosho/timing_mat/actions/workflows/ci.yml)
+
 An end-to-end race timing mat and bib tracking system built for track & running club events. Designed to run on a Raspberry Pi powered by a portable USB battery, or locally on your computer inside Docker.
 
 ---
@@ -132,6 +134,23 @@ python3 -m unittest discover tests
 No local Python? Run the tests in Docker from the project folder:
 ```bash
 docker run --rm -v "$PWD:/app" -w /app python:3.11-slim sh -c "pip install -q -r requirements.txt -r requirements-dev.txt && python -B -m unittest discover tests"
+```
+
+### Continuous integration
+
+Every pull request (and every push to `main`) runs `.github/workflows/ci.yml`:
+
+| Check | What it runs |
+|---|---|
+| `tests` | `python -m unittest discover tests` on Python 3.11 |
+| `lint` | `ruff check .`, using the bug-only rules in `ruff.toml` (syntax errors, undefined names) |
+| `docker` | builds the `Dockerfile` (nothing is pushed) |
+
+Run the same checks before you push:
+```bash
+python3 -m unittest discover tests
+pip install ruff==0.17.5 && ruff check .
+docker build -t timing-mat .
 ```
 
 > **Not yet verified on real hardware:** the R200 frame parsing and the RSSI-to-dBm conversion (`raw_rssi_to_dbm` in `hardware/r200_protocol.py`) are covered by tests built from the documented frame layout, not from captured frames. Run `python -m hardware.sniffer --raw` with the reader attached to check them.
