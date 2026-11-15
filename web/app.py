@@ -337,8 +337,10 @@ async def logout():
 
 # ----------------- PAGE ROUTES -----------------
 @app.get("/", response_class=HTMLResponse)
-async def index():
-    return RedirectResponse(url="/crossings")
+async def index(request: Request):
+    # http://race.lan is what people type on the race Wi-Fi: spectators get the public
+    # leaderboard, a logged-in admin gets the trackside screen (issue #64)
+    return RedirectResponse(url="/crossings" if admin_auth.is_admin(request) else "/leaderboard")
 
 @app.get("/crossings", response_class=HTMLResponse)
 async def crossings_page(request: Request):
@@ -364,7 +366,8 @@ async def leaderboard_page(request: Request):
         context={
             "event": db.get_event_state(),
             "leaderboard": db.get_leaderboard(),
-            "is_mock": use_mock
+            "is_mock": use_mock,
+            "is_admin": admin_auth.is_admin(request),  # crew-only links
         }
     )
 
