@@ -108,10 +108,11 @@ async def on_runner_resumed(resume_data: Dict[str, Any]):
 
 # Callback when an unrecognized/unassigned tag crosses the mat (issue #45)
 async def on_unassigned_tag(tag_data: Dict[str, Any]):
+    # Carries the tag ID: admin pages only (#52); /crossings subscribes to the admin channel
     await broadcast_ws({
         "type": "unassigned_tag_detected",
         "data": tag_data,
-    })
+    }, admin_only=True)
 
 # Callback when any tag is detected (used for Admin auto-fill / registration)
 # Raw tag reads arrive 5-20 per crossing per runner. Only the admin and Prepare Bibs pages use
