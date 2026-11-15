@@ -8,6 +8,10 @@ from core.models import TagRead
 
 logger = logging.getLogger("LapEngine")
 
+# Longest a single crossing's burst of reads may last before it's resolved anyway (issue #11).
+# A runner passing the mat is in the antenna field for 1-2 s.
+MAX_BURST_SECONDS = 8.0
+
 class LapEngine:
     def __init__(self, db: Database, 
                  crossing_window: float = 2.0, 
@@ -79,22 +83,29 @@ class LapEngine:
             ticks += 1
             if ticks % 150 == 0:  # every ~30 s
                 self.maintain_clock()
-            now = clock.now()
-            effective_window = max(0.15, self.crossing_window / max(1.0, self.speed_multiplier))
-            epcs_to_process = []
+            await self.flush_once(clock.now())
 
-            for epc, reads in list(self.buffers.items()):
-                if not reads:
-                    continue
-                last_read_time = reads[-1][0]
-                # If no new read for effective_window seconds, runner has exited antenna beam
-                if (now - last_read_time) >= effective_window:
-                    epcs_to_process.append(epc)
+    async def flush_once(self, now: float):
+        """Resolves every burst of reads that has finished (or gone on too long) by `now`."""
+        effective_window = max(0.15, self.crossing_window / max(1.0, self.speed_multiplier))
+        epcs_to_process = []
 
-            for epc in epcs_to_process:
-                reads = self.buffers.pop(epc, [])
-                if reads:
-                    await self._resolve_crossing(epc, reads)
+        max_burst = MAX_BURST_SECONDS / max(1.0, self.speed_multiplier)
+        for epc, reads in list(self.buffers.items()):
+            if not reads:
+                continue
+            last_read_time = reads[-1][0]
+            # If no new read for effective_window seconds, runner has exited antenna beam.
+            # A tag that never leaves (spare bib by the mat, runner standing on it) is
+            # resolved anyway once its burst is MAX_BURST_SECONDS old; later reads start a
+            # new burst, which the min-lap debounce then ignores.
+            if (now - last_read_time) >= effective_window or (now - reads[0][0]) >= max_burst:
+                epcs_to_process.append(epc)
+
+        for epc in epcs_to_process:
+            reads = self.buffers.pop(epc, [])
+            if reads:
+                await self._resolve_crossing(epc, reads)
 
     async def _resolve_crossing(self, epc: str, reads: List[Tuple[float, float]], force: bool = False) -> Optional[str]:
         """Determines peak timestamp and updates participant state (start, lap, or break resume).
@@ -193,8 +204,8 @@ class LapEngine:
                         self.on_runner_resumed(resumed_data)
                 return "resumed"
 
-            # Normal lap duration
-            lap_duration = max(30.0, time_since_last * self.speed_multiplier)
+            # Normal lap duration. (No floor: the min-lap debounce above already rejects short ones.)
+            lap_duration = time_since_last * self.speed_multiplier
         else:
             # Forced crossing from the admin UI: skip break detection, but time it for real.
             lap_duration = time_since_last * self.speed_multiplier
