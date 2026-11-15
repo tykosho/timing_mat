@@ -209,6 +209,6 @@ pip install -r requirements-browser.txt && python -m playwright install chromium
 python -B -m unittest -v tests.test_browser
 ```
 
-> **Not yet verified on real hardware:** the R200 frame parsing and the RSSI-to-dBm conversion (`raw_rssi_to_dbm` in `hardware/r200_protocol.py`) are covered by tests built from the documented frame layout, not from captured frames. Run `python -m hardware.sniffer --raw` with the reader attached to check them.
+> **Verified on real hardware:** the R200 frame layout, checksum, PC/EPC length and RSSI-to-dBm conversion (`hardware/r200_protocol.py`) are checked against traffic captured from the reader on the Pi (`tests/fixtures/r200_capture_2026-11-15.log`, `tests/test_real_frames.py`). To check another reader, run `python -m hardware.sniffer --raw` or use the capture below.
 
 **Capturing reader traffic without stopping the server:** the sniffer needs the serial port to itself. To record what the reader sends while the app keeps running (for a soak test, or to capture real frames as a test fixture), put `RAW_CAPTURE_PATH=data/r200-capture.log` in the Pi's `.env` (or set `hardware.raw_capture_path`) and restart the container. Every chunk received (`rx`), command sent (`tx`) and inventory re-arm (`# arm routine|silence|connect`) is logged with wall-clock and monotonic times; it stops at `raw_capture_max_mb` (default 50). `hardware.frame_capture.load_rx_bytes()` replays the received bytes. Remove the setting again for race day.

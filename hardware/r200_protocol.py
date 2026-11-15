@@ -107,7 +107,8 @@ def parse_tag_frame(frame: bytes) -> Optional[Tuple[str, int]]:
         return None
 
     # Checksum and PC are verified leniently (logged, not rejected): the frame structure
-    # is already validated above, and these rules haven't been confirmed on real hardware.
+    # is already validated above. Both rules hold on every frame captured from the real
+    # R200 (tests/test_real_frames.py), so a mismatch here means a corrupted frame.
     if calculate_checksum(frame[1:-2]) != frame[-2]:
         logger.debug("Tag frame checksum mismatch")
 
