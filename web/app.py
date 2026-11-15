@@ -583,7 +583,7 @@ async def reset_all_event_data():
 class SettingsRequest(BaseModel):
     name: Optional[str] = None
     min_lap_seconds: Optional[float] = Field(default=None, gt=0)
-    max_lap_rest_seconds: Optional[float] = Field(default=None, gt=0)
+    max_lap_rest_seconds: Optional[float] = Field(default=None, ge=0)
     track_length_m: Optional[float] = Field(default=None, gt=0)
 
 @app.post("/api/event/settings")

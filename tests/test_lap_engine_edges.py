@@ -141,5 +141,30 @@ class ParkedTagTest(EngineTestCase):
         self.assertIsNotNone(self.db.get_participant_by_bib(101)["start_time"])
 
 
+class AutoBreakDisabledTest(EngineTestCase):
+    def test_disabled_auto_break_records_slow_crossing_as_lap_not_break(self):
+        # Disable auto-break by setting max_lap_rest_seconds to 0
+        self.db.update_event_settings(min_lap_seconds=20.0, max_lap_rest_seconds=0.0)
+        self.db.start_event(at=1000.0)
+        self.assertEqual(self.cross(1000.0), "started")
+
+        # Cross 1500 seconds later (25 minutes)
+        outcome = self.cross(2500.0)
+        self.assertEqual(outcome, "lap", "Should record as a lap when auto-break is disabled")
+        self.assertEqual(self.durations(), [1500.0])
+        self.assertEqual(len(self.db.get_breaks_for_runner(101)), 0, "No breaks should be logged")
+
+    def test_leaderboard_does_not_mark_runner_on_break_when_disabled(self):
+        self.db.update_event_settings(min_lap_seconds=20.0, max_lap_rest_seconds=0.0)
+        self.db.start_event(at=1000.0)
+        self.cross(1000.0)
+
+        # 30 minutes later
+        with self.at(2800.0):
+            lb = self.db.get_leaderboard()
+            runner = next(r for r in lb if r["bib_number"] == 101)
+            self.assertEqual(runner["status"], "active")
+
+
 if __name__ == "__main__":
     unittest.main()
