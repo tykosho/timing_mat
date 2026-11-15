@@ -142,5 +142,23 @@ class TestTimingMat(unittest.TestCase):
             self.assertEqual(r.epc, "E28011700000020101010001")
             self.assertTrue(-85.0 <= r.rssi <= -35.0)
 
+    def test_mock_reader_scaled_time_and_pause(self):
+        from hardware.mock_reader import MockReader
+        reads = []
+        mock = MockReader(on_tag_read=lambda r: reads.append(r), speed_multiplier=25.0)
+        mock.start()
+        try:
+            import time
+            time.sleep(0.25)
+            state1 = mock.get_state()
+            self.assertGreater(state1["sim_time"], 2.0)
+
+            mock.set_paused(True)
+            paused_sim_time = mock.get_state()["sim_time"]
+            time.sleep(0.2)
+            self.assertAlmostEqual(mock.get_state()["sim_time"], paused_sim_time, places=2)
+        finally:
+            mock.stop()
+
 if __name__ == "__main__":
     unittest.main()

@@ -136,6 +136,26 @@ class TestApi(unittest.TestCase):
         # First event still has 1 lap recorded
         self.assertIn("Alex", self.client.get(f"/api/events/{self.event_id}/laps.csv").text)
 
+    def test_simulator_playback_and_scaled_speed(self):
+        state = self.client.get("/api/simulator/state")
+        self.assertEqual(state.status_code, 200)
+        body = state.json()
+        self.assertEqual(len(body["runners"]), 5)
+        self.assertFalse(body["paused"])
+
+        paused = self.client.post("/api/simulator/pause")
+        self.assertEqual(paused.status_code, 200)
+        self.assertTrue(paused.json()["sim"]["paused"])
+
+        speed = self.client.post("/api/simulator/speed", json={"speed": 20.0})
+        self.assertEqual(speed.status_code, 200)
+        self.assertEqual(speed.json()["speed"], 20.0)
+
+        resumed = self.client.post("/api/simulator/play")
+        self.assertEqual(resumed.status_code, 200)
+        self.assertFalse(resumed.json()["sim"]["paused"])
+        self.assertEqual(resumed.json()["sim"]["speed"], 20.0)
+
 
 if __name__ == "__main__":
     unittest.main()

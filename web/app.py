@@ -118,13 +118,24 @@ lap_engine = LapEngine(
 lap_engine.refresh_event()
 
 if use_mock:
-    reader = MockReader(on_tag_read=lap_engine.process_tag_read, speed_multiplier=1.0)
-    logger.info("Operating in MOCK reader mode (Simulated runners active).")
+    reader = MockReader(on_tag_read=lap_engine.process_tag_read, speed_multiplier=5.0)
+    lap_engine.speed_multiplier = 5.0
+    logger.info("Operating in MOCK reader mode (Simulated runners active at 5.0x).")
 else:
     reader = SerialReader(port=serial_port, baud_rate=baud_rate, on_tag_read=lap_engine.process_tag_read)
     logger.info(f"Operating in PHYSICAL reader mode on {serial_port}.")
 
 main_event_loop = None
+
+async def sim_broadcast_loop():
+    """Streams live simulated track positions to connected browsers in mock mode."""
+    while True:
+        await asyncio.sleep(0.2)
+        if active_connections and isinstance(reader, MockReader):
+            await broadcast_ws({
+                "type": "sim_state",
+                "sim": reader.get_state()
+            })
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -133,6 +144,7 @@ async def lifespan(app: FastAPI):
 
     # Start engine flush loop
     flush_task = asyncio.create_task(lap_engine.flush_loop())
+    sim_task = asyncio.create_task(sim_broadcast_loop()) if isinstance(reader, MockReader) else None
 
     # Start RFID reader
     reader.start()
@@ -141,6 +153,8 @@ async def lifespan(app: FastAPI):
 
     reader.stop()
     flush_task.cancel()
+    if sim_task:
+        sim_task.cancel()
     lap_engine.flush_raw_reads()
 
 app = FastAPI(title="Race Timing System", lifespan=lifespan)
@@ -218,12 +232,14 @@ async def index():
 async def crossings_page(request: Request):
     event_state = db.get_event_state()
     leaderboard = db.get_leaderboard()
+    recent_crossings = db.get_recent_crossings(10)
     return templates.TemplateResponse(
         request=request,
         name="crossings.html",
         context={
             "event": event_state,
             "leaderboard": leaderboard,
+            "recent_crossings": recent_crossings,
             "is_mock": use_mock
         }
     )
@@ -343,11 +359,14 @@ async def websocket_endpoint(websocket: WebSocket):
     active_connections.append(websocket)
     try:
         # Send initial snapshot
-        await websocket.send_json({
+        init_payload: Dict[str, Any] = {
             "type": "init",
             "event": db.get_event_state(),
             "leaderboard": db.get_leaderboard()
-        })
+        }
+        if isinstance(reader, MockReader):
+            init_payload["sim"] = reader.get_state()
+        await websocket.send_json(init_payload)
         while True:
             # Keepalive / ping
             await websocket.receive_text()
@@ -758,14 +777,43 @@ async def trigger_simulated_crossing(bib: int):
 class SpeedRequest(BaseModel):
     speed: float
 
+@app.get("/api/simulator/state")
+async def get_simulator_state():
+    if isinstance(reader, MockReader):
+        return reader.get_state()
+    raise HTTPException(status_code=400, detail="Hardware is not in mock mode")
+
+@app.post("/api/simulator/play")
+async def play_simulator():
+    if isinstance(reader, MockReader):
+        reader.set_paused(False)
+        sim = reader.get_state()
+        await broadcast_ws({"type": "sim_state", "sim": sim})
+        return {"status": "playing", "sim": sim}
+    raise HTTPException(status_code=400, detail="Hardware is not in mock mode")
+
+@app.post("/api/simulator/pause")
+async def pause_simulator():
+    if isinstance(reader, MockReader):
+        reader.set_paused(True)
+        sim = reader.get_state()
+        await broadcast_ws({"type": "sim_state", "sim": sim})
+        return {"status": "paused", "sim": sim}
+    raise HTTPException(status_code=400, detail="Hardware is not in mock mode")
+
 @app.post("/api/simulator/speed")
 async def set_simulator_speed(req: SpeedRequest):
     if isinstance(reader, MockReader):
         reader.set_speed_multiplier(req.speed)
-        lap_engine.speed_multiplier = req.speed
+        lap_engine.speed_multiplier = reader.speed_multiplier
+        sim = reader.get_state()
         await broadcast_ws({
             "type": "sim_speed_updated",
-            "speed": req.speed
+            "speed": reader.speed_multiplier
         })
-        return {"status": "speed_set", "speed": req.speed}
+        await broadcast_ws({
+            "type": "sim_state",
+            "sim": sim
+        })
+        return {"status": "speed_set", "speed": reader.speed_multiplier, "sim": sim}
     raise HTTPException(status_code=400, detail="Hardware is not in mock mode")

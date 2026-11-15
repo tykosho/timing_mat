@@ -597,6 +597,19 @@ class Database:
                 WHERE l.event_id = ? ORDER BY l.crossing_time ASC;""", (self._eid(event_id),)).fetchall()
             return [dict(r) for r in rows]
 
+    def get_recent_crossings(self, limit: int = 10, event_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Returns the N most recent lap crossings in reverse chronological order."""
+        with self.connect() as conn:
+            rows = conn.execute("""
+                SELECT l.id, l.bib_number, p.name, l.lap_number, l.crossing_time,
+                       l.lap_duration_seconds, l.peak_rssi, l.manual_entry
+                FROM laps l
+                LEFT JOIN participants p ON p.event_id = l.event_id AND p.bib_number = l.bib_number
+                WHERE l.event_id = ?
+                ORDER BY l.crossing_time DESC, l.id DESC
+                LIMIT ?;""", (self._eid(event_id), limit)).fetchall()
+            return [dict(r) for r in rows]
+
     def delete_lap(self, lap_id: int) -> bool:
         with self.connect() as conn:
             conn.execute("DELETE FROM laps WHERE id = ?;", (lap_id,))

@@ -3,78 +3,209 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{ event.name }} - Trackside Live Crossing & Control</title>
+  <title>{{ event.name }} - Trackside Crossings</title>
   <link rel="stylesheet" href="/static/app.css">
   <link rel="stylesheet" href="/static/fontawesome/all.min.css">
   <style>
     @keyframes slide-in {
-      from { opacity: 0; transform: translateY(-16px) scale(0.97); }
+      from { opacity: 0; transform: translateY(-14px) scale(0.98); }
       to { opacity: 1; transform: translateY(0) scale(1); }
     }
     @keyframes pulse-glow {
       0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-      70% { box-shadow: 0 0 0 16px rgba(16, 185, 129, 0); }
+      70% { box-shadow: 0 0 0 14px rgba(16, 185, 129, 0); }
       100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
     }
-    .crossing-card-enter {
-      animation: slide-in 0.35s cubic-bezier(0.16, 1, 0.3, 1), pulse-glow 1.5s ease-out;
+    .crossing-row-enter {
+      animation: slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1), pulse-glow 1.4s ease-out;
     }
-    .glow-gold {
-      box-shadow: 0 0 20px rgba(245, 158, 11, 0.25);
+    .trackside-shell {
+      max-width: 960px;
+      width: 100%;
+      margin: 0 auto;
+    }
+    .crossing-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.9rem 1.25rem;
+      border-radius: 1rem;
+      background-color: rgb(15 23 42);
+      border: 2px solid rgb(30 41 59);
+      transition: border-color 0.2s ease, background-color 0.2s ease;
+    }
+    .crossing-row.is-newest {
+      background-color: rgb(6 44 35 / 0.45);
+      border-color: rgb(16 185 129);
+    }
+    .bib-pill {
+      min-width: 4.5rem;
+      text-align: center;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-weight: 900;
+      font-size: 1.5rem;
+      line-height: 1;
+      padding: 0.55rem 0.75rem;
+      border-radius: 0.75rem;
+      background-color: rgb(2 44 34);
+      color: rgb(52 211 153);
+      border: 1px solid rgb(16 185 129 / 0.4);
+      flex-shrink: 0;
+    }
+    .runner-name {
+      font-size: 1.5rem;
+      line-height: 1.2;
+      font-weight: 900;
+      color: #ffffff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lap-count-pill {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-weight: 900;
+      font-size: 1.35rem;
+      line-height: 1;
+      padding: 0.45rem 0.85rem;
+      border-radius: 0.65rem;
+      background-color: rgb(30 41 59);
+      color: #f8fafc;
+      white-space: nowrap;
+    }
+    .split-value {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-weight: 900;
+      font-size: 2rem;
+      line-height: 1;
+      color: rgb(52 211 153);
+      font-variant-numeric: tabular-nums;
+      min-width: 6.25rem;
+      text-align: right;
+    }
+    .quick-btn {
+      width: 2.25rem;
+      height: 2.25rem;
+      border-radius: 0.5rem;
+      font-weight: 800;
+      font-size: 0.85rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color 0.15s ease, color 0.15s ease;
+    }
+    @media (max-width: 640px) {
+      .crossing-row {
+        flex-wrap: wrap;
+        padding: 0.75rem 1rem;
+      }
+      .runner-name { font-size: 1.25rem; }
+      .bib-pill { font-size: 1.2rem; min-width: 3.5rem; padding: 0.45rem 0.5rem; }
+      .split-value { font-size: 1.5rem; min-width: 5rem; }
+      .lap-count-pill { font-size: 1.1rem; }
+    }
+    .sim-dock {
+      position: fixed;
+      right: 1rem;
+      bottom: 1rem;
+      z-index: 50;
+      width: 310px;
+      max-width: calc(100vw - 2rem);
+    }
+    .sim-card {
+      background: rgba(15, 23, 42, 0.96);
+      border: 1px solid rgb(51 65 85);
+      border-radius: 0.9rem;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(8px);
+      overflow: hidden;
+    }
+    .sim-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.55rem 0.75rem;
+      background: rgb(2 6 23 / 0.75);
+      border-bottom: 1px solid rgb(30 41 59);
+    }
+    .sim-body {
+      padding: 0.65rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .sim-speed-btn {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 0.25rem 0.42rem;
+      border-radius: 0.375rem;
+      background: rgb(30 41 59);
+      color: rgb(203 213 225);
+      border: 1px solid rgb(51 65 85);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .sim-speed-btn:hover {
+      background: rgb(51 65 85);
+      color: #ffffff;
+    }
+    .sim-speed-btn.is-active {
+      background: rgb(16 185 129);
+      color: rgb(2 44 34);
+      border-color: rgb(52 211 153);
+    }
+    .sim-play-btn {
+      font-size: 0.75rem;
+      font-weight: 800;
+      padding: 0.3rem 0.65rem;
+      border-radius: 0.45rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s ease;
     }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased selection:bg-emerald-500 selection:text-slate-950">
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
 
-  <!-- Trackside Top Header Bar -->
-  <header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-6 py-3 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50">
-    <div class="flex items-center space-x-4">
-      <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 font-black shadow-md shadow-emerald-500/20">
-        <i class="fa-solid fa-person-running text-xl"></i>
-      </div>
-      <div>
-        <h1 class="text-xl font-black tracking-tight text-white flex items-center gap-2">
-          Trackside Crossing Feed
-          {% if is_mock %}
-          <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">
-            <i class="fa-solid fa-robot mr-1"></i> Simulator Mode
-          </span>
-          {% endif %}
-        </h1>
-        <p class="text-xs text-slate-400"><span id="eventNameLabel">{{ event.name }}</span> • <span id="trackLengthLabel">{{ event.track_length_m | int }}m</span> Track Mat</p>
-      </div>
-    </div>
-
-    <!-- Quick Search Runner Dialog Launcher & Clock -->
-    <div class="flex flex-wrap items-center gap-3">
-      <!-- Quick Search Trigger -->
-      <button onclick="openSearchModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3.5 py-2 rounded-xl text-sm font-semibold transition flex items-center gap-2 shadow-sm">
-        <i class="fa-solid fa-magnifying-glass text-emerald-400"></i>
-        <span>Find Runner / Edit Laps</span>
-        <kbd class="hidden md:inline-block bg-slate-900 border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400 rounded">⌘K</kbd>
-      </button>
-
-      <!-- Sound Toggle -->
-      <button id="soundToggle" onclick="toggleSound()" class="bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-2">
-        <i class="fa-solid fa-volume-xmark" id="soundIcon"></i> Sound Off
-      </button>
-
-      <!-- Race Timer & Event Status -->
-      <div class="bg-slate-950 border border-slate-800 rounded-xl px-4 py-1.5 flex items-center gap-3">
-        <div class="text-right">
-          <div id="statusText" class="text-[10px] uppercase font-bold text-slate-400">Event Time</div>
-          <div id="raceTimer" class="text-2xl font-mono font-black text-emerald-400 tabular-nums">00:00:00</div>
+  <!-- Minimal Trackside Header -->
+  <header class="bg-slate-900 border-b border-slate-800 px-4 md:px-6 py-3 sticky top-0 z-40">
+    <div class="trackside-shell flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div id="statusDot" class="w-3.5 h-3.5 rounded-full bg-slate-500 flex-shrink-0"></div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 id="eventNameLabel" class="text-lg md:text-xl font-black text-white tracking-tight">{{ event.name }}</h1>
+            {% if is_mock %}
+            <span class="text-[11px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">SIM</span>
+            {% endif %}
+          </div>
+          <div id="statusText" class="text-[11px] uppercase font-bold text-slate-400 tracking-wider">NOT STARTED</div>
         </div>
-        <div id="statusDot" class="w-3 h-3 rounded-full bg-slate-500"></div>
       </div>
 
-      <!-- Links -->
-      <div class="flex items-center space-x-2">
-        <a href="/leaderboard" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5" title="Full Leaderboard">
-          <i class="fa-solid fa-display"></i> <span class="hidden sm:inline">Leaderboard</span>
-        </a>
-        <a href="/prepare" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 p-2.5 rounded-xl text-sm transition" title="Prepare Bibs">
-          <i class="fa-solid fa-tags"></i>
+      <div class="flex items-center gap-2 md:gap-3">
+        <!-- Big Event Clock -->
+        <div id="raceTimer" class="text-2xl md:text-3xl font-mono font-black text-emerald-400 tabular-nums bg-slate-950 border border-slate-800 px-3.5 py-1 rounded-xl">
+          00:00:00
+        </div>
+
+        <!-- Find Runner / Edit Laps -->
+        <button onclick="openSearchModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 px-3 py-2 rounded-xl text-sm font-bold transition flex items-center gap-2" title="Find Runner / Edit Laps (⌘K)">
+          <i class="fa-solid fa-magnifying-glass text-emerald-400"></i>
+          <span class="hidden sm:inline">Find Runner</span>
+        </button>
+
+        <!-- Sound Toggle -->
+        <button id="soundToggle" onclick="toggleSound()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 p-2.5 rounded-xl text-sm transition" title="Toggle Chime">
+          <i class="fa-solid fa-volume-xmark" id="soundIcon"></i>
+        </button>
+
+        <a href="/leaderboard" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 p-2.5 rounded-xl text-sm transition" title="Full Leaderboard">
+          <i class="fa-solid fa-trophy"></i>
         </a>
         <a href="/admin" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 p-2.5 rounded-xl text-sm transition" title="Race Admin">
           <i class="fa-solid fa-gear"></i>
@@ -83,78 +214,33 @@
     </div>
   </header>
 
-  <!-- Main Dual-View Workspace -->
-  <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-
-    <!-- LEFT / MAIN: LIVE CROSSING CARDS FEED (7 Cols on large screen) -->
-    <section class="lg:col-span-7 flex flex-col space-y-4">
-      <div class="flex items-center justify-between">
-        <div>
-          <h2 class="text-lg font-black text-white flex items-center gap-2">
-            <i class="fa-solid fa-bolt text-emerald-400"></i> Mat Crossings (Past 3 Mins)
-          </h2>
-          <p class="text-xs text-slate-400">Packs and individual crossings stay visible for verification.</p>
-        </div>
-        <div class="flex items-center space-x-2">
-          <span id="activeCrossingCount" class="text-xs bg-slate-800 text-slate-300 border border-slate-700 px-2.5 py-1 rounded-full font-mono font-bold">
-            0 Recent
-          </span>
-          <button onclick="clearCrossingCards()" class="text-xs text-slate-500 hover:text-slate-300 transition" title="Dismiss all current cards">
-            Clear Cards
-          </button>
-        </div>
-      </div>
-
-      <!-- Live Cards Deck -->
-      <div id="crossingFeed" class="flex flex-col space-y-3 min-h-[350px]">
-        <!-- Empty placeholder -->
-        <div id="emptyFeedState" class="bg-slate-900/60 border border-dashed border-slate-800 rounded-2xl p-10 flex flex-col items-center justify-center text-center text-slate-500">
-          <div class="w-14 h-14 rounded-2xl bg-slate-800/80 flex items-center justify-center text-slate-400 mb-3 text-2xl">
-            <i class="fa-solid fa-satellite-dish"></i>
-          </div>
-          <div class="text-base font-bold text-slate-300">Listening for Mat Crossings...</div>
-          <p class="text-xs text-slate-500 max-w-sm mt-1">
-            When runners cross the RFID mat, their instant lap split, total laps, and quick-correction controls appear right here.
-          </p>
-        </div>
-      </div>
-    </section>
-
-    <!-- RIGHT: STANDINGS SNAPSHOT & QUICK ACTIONS (5 Cols on large screen) -->
-    <section class="lg:col-span-5 flex flex-col space-y-4">
-      <div class="flex items-center justify-between">
-        <div>
-          <h2 class="text-lg font-black text-white flex items-center gap-2">
-            <i class="fa-solid fa-ranking-star text-amber-400"></i> Current Standings
-          </h2>
-          <p class="text-xs text-slate-400">Live rankings & lap counts</p>
-        </div>
-        <span id="summaryTotalLaps" class="text-xs font-mono font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2.5 py-1 rounded-full">
-          0 Laps Total
+  <!-- Single-Column 10 Most Recent Crossings -->
+  <main class="flex-1 px-4 md:px-6 py-5">
+    <div class="trackside-shell flex flex-col gap-3">
+      <div class="flex items-center justify-between px-1">
+        <span class="text-xs font-bold uppercase tracking-wider text-slate-400">
+          Most Recent Crossings (Last 10)
+        </span>
+        <span id="trackLengthLabel" class="text-xs font-mono text-slate-500">
+          {{ event.track_length_m | int }}m Track
         </span>
       </div>
 
-      <!-- Quick Compact Leaderboard Card -->
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl flex-1 flex flex-col">
-        <div class="p-3 bg-slate-950/60 border-b border-slate-800 flex items-center justify-between text-xs font-semibold text-slate-400 uppercase tracking-wider">
-          <div class="w-10 text-center">Rank</div>
-          <div class="flex-1 px-2">Runner</div>
-          <div class="w-16 text-center">Laps</div>
-          <div class="w-20 text-right">Pace</div>
-          <div class="w-24 text-right">Adjust</div>
-        </div>
-
-        <div id="standingsList" class="divide-y divide-slate-800/60 overflow-y-auto max-h-[580px] flex-1">
-          <!-- Dynamically populated -->
-        </div>
+      <div id="crossingFeed" class="flex flex-col gap-3">
+        <!-- Populated dynamically -->
       </div>
-    </section>
+
+      <div id="emptyFeedState" class="hidden bg-slate-900/60 border border-dashed border-slate-800 rounded-2xl p-12 text-center text-slate-500">
+        <i class="fa-solid fa-satellite-dish text-3xl mb-3 text-slate-600"></i>
+        <div class="text-lg font-bold text-slate-300">Waiting for Runners...</div>
+        <p class="text-sm text-slate-500 mt-1">The 10 most recent mat crossings will appear here.</p>
+      </div>
+    </div>
   </main>
 
-  <!-- QUICK SEARCH / EDIT RUNNER MODAL -->
+  <!-- Quick Search / Edit Runner Modal -->
   <div id="searchModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-start justify-center p-4 pt-16">
-    <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden animate-slide-in">
-      <!-- Search Input Header -->
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden">
       <div class="p-4 border-b border-slate-800 flex items-center gap-3 bg-slate-950/70">
         <i class="fa-solid fa-magnifying-glass text-emerald-400 text-lg"></i>
         <input type="text" id="runnerSearchInput" placeholder="Search by Bib # or Runner Name..."
@@ -164,20 +250,91 @@
           <i class="fa-solid fa-xmark text-lg"></i>
         </button>
       </div>
-
-      <!-- Filtered List -->
-      <div id="searchResults" class="max-h-96 overflow-y-auto divide-y divide-slate-800 p-2">
-        <!-- Rendered results -->
-      </div>
-
+      <div id="searchResults" class="max-h-96 overflow-y-auto divide-y divide-slate-800 p-2"></div>
       <div class="bg-slate-950/90 px-4 py-2.5 border-t border-slate-800 flex justify-between items-center text-xs text-slate-500">
-        <span>Quickly adjust counts if a bib failed to read</span>
+        <span>Adjust lap count for runners with a missed or bad tag</span>
         <button onclick="closeSearchModal()" class="hover:text-slate-300 font-semibold">Done [ESC]</button>
       </div>
     </div>
   </div>
 
-  <!-- AUDIO CONTEXT SCRIPT -->
+  {% if is_mock %}
+  <!-- Embedded Corner Track Simulator -->
+  <div id="simDock" class="sim-dock">
+    <div id="simCard" class="sim-card">
+      <div class="sim-header">
+        <div class="flex items-center gap-2">
+          <span id="simStatusDot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span class="text-[11px] font-black uppercase tracking-wider text-slate-200">Track Sim</span>
+          <span id="simSpeedBadge" class="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">5x</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="simClockLabel" class="text-[11px] font-mono text-slate-400">00:00:00</span>
+          <button onclick="toggleSimMinimize()" title="Minimize Simulator" class="text-slate-400 hover:text-white text-xs px-1">
+            <i class="fa-solid fa-minus"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="sim-body">
+        <!-- Mini 400m Oval Track -->
+        <div class="bg-slate-950/90 border border-slate-800 rounded-lg p-1.5 relative">
+          <svg id="simTrackSvg" viewBox="0 0 260 116" class="w-full block" style="height: auto;">
+            <!-- Outer track surface -->
+            <rect x="32" y="20" width="196" height="72" rx="36" ry="36" fill="none" stroke="#1e293b" stroke-width="16" />
+            <!-- Lane center dashed line -->
+            <rect x="32" y="20" width="196" height="72" rx="36" ry="36" fill="none" stroke="#334155" stroke-width="1" stroke-dasharray="4 4" />
+            <!-- Infield & Pit area -->
+            <rect x="74" y="42" width="112" height="30" rx="8" ry="8" fill="#0f172a" stroke="#1e293b" stroke-width="1" />
+            <text x="130" y="53" text-anchor="middle" fill="#475569" font-size="6.5" font-family="monospace" font-weight="bold">WATER / REST PIT</text>
+            <!-- Timing Mat at bottom center -->
+            <rect x="127" y="82" width="6" height="20" rx="2" fill="#10b981" />
+            <text x="130" y="111" text-anchor="middle" fill="#34d399" font-size="7" font-family="monospace" font-weight="bold">TIMING MAT</text>
+            <!-- Runners layer -->
+            <g id="simRunnersLayer"></g>
+          </svg>
+        </div>
+
+        <!-- Live Runner Status Strip -->
+        <div id="simRunnerSummary" class="text-[11px] font-mono text-slate-400 truncate px-0.5">
+          Waiting for simulator state...
+        </div>
+
+        <!-- Event Status Hint (if event isn't running yet) -->
+        <div id="simEventHint" class="hidden bg-amber-500/10 border border-amber-500/30 rounded-md px-2 py-1 flex items-center justify-between gap-2">
+          <span class="text-[10px] text-amber-300 font-semibold">Event not running — laps paused</span>
+          <button onclick="startEventFromSim()" class="text-[10px] font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 px-2 py-0.5 rounded">
+            Start Event
+          </button>
+        </div>
+
+        <!-- Playback Controls -->
+        <div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/80">
+          <button id="simPlayPauseBtn" onclick="toggleSimPlayPause()" class="sim-play-btn bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30">
+            <i class="fa-solid fa-pause"></i>
+            <span>Pause</span>
+          </button>
+          <div class="flex items-center gap-1" id="simSpeedButtons">
+            <button onclick="setSimSpeed(1)" data-speed="1" class="sim-speed-btn">1x</button>
+            <button onclick="setSimSpeed(2)" data-speed="2" class="sim-speed-btn">2x</button>
+            <button onclick="setSimSpeed(5)" data-speed="5" class="sim-speed-btn">5x</button>
+            <button onclick="setSimSpeed(10)" data-speed="10" class="sim-speed-btn">10x</button>
+            <button onclick="setSimSpeed(20)" data-speed="20" class="sim-speed-btn">20x</button>
+            <button onclick="setSimSpeed(40)" data-speed="40" class="sim-speed-btn">40x</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Minimized Pill -->
+    <button id="simMinimizedPill" onclick="toggleSimMinimize()" class="hidden ml-auto flex items-center gap-2 bg-slate-900/95 hover:bg-slate-800 border border-slate-700 text-slate-200 px-3 py-2 rounded-full shadow-lg text-xs font-mono font-bold">
+      <span id="simMiniDot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+      <span>Sim</span>
+      <span id="simMiniSpeed" class="text-emerald-400">5x</span>
+    </button>
+  </div>
+  {% endif %}
+
   <script>
     let soundEnabled = false;
     let audioCtx = null;
@@ -186,9 +343,9 @@
       const btn = document.getElementById("soundToggle");
       if (soundEnabled) {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        btn.innerHTML = `<i class="fa-solid fa-volume-high text-emerald-400" id="soundIcon"></i> Sound On`;
+        btn.innerHTML = `<i class="fa-solid fa-volume-high text-emerald-400" id="soundIcon"></i>`;
       } else {
-        btn.innerHTML = `<i class="fa-solid fa-volume-xmark" id="soundIcon"></i> Sound Off`;
+        btn.innerHTML = `<i class="fa-solid fa-volume-xmark" id="soundIcon"></i>`;
       }
     }
 
@@ -198,10 +355,8 @@
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = "sine";
-        const startFreq = isStart ? 440 : 587.33;
-        const endFreq = isStart ? 659.25 : 880.0;
-        osc.frequency.setValueAtTime(startFreq, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(endFreq, audioCtx.currentTime + 0.18);
+        osc.frequency.setValueAtTime(isStart ? 440 : 587.33, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(isStart ? 659.25 : 880.0, audioCtx.currentTime + 0.18);
         gain.gain.setValueAtTime(0.18, audioCtx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
         osc.connect(gain);
@@ -210,17 +365,22 @@
         osc.stop(audioCtx.currentTime + 0.35);
       } catch(e) {}
     }
-  </script>
 
-  <!-- CORE LOGIC & WEBSOCKET -->
-  <script>
     let eventState = {{ event | tojson | safe }};
     let currentLeaderboard = {{ leaderboard | tojson | safe }};
-    const CARD_RETENTION_MS = 180000; // Keep cards visible for 3 minutes!
-    let recentCrossings = []; // Array of recent crossing objects
-    const emptyFeedPlaceholder = document.getElementById("emptyFeedState");
+    const MAX_CROSSINGS = 10;
 
-    // Runner names come from registrations, so never insert them as raw HTML.
+    // Seed with the 10 most recent crossings from the DB
+    let recentCrossings = ({{ recent_crossings | tojson | safe }} || []).map(l => ({
+      id: l.id,
+      bib_number: l.bib_number,
+      name: l.name || `Bib #${l.bib_number}`,
+      lap_number: l.lap_number,
+      lap_duration_seconds: l.lap_duration_seconds,
+      added_at: (l.crossing_time || (Date.now() / 1000)) * 1000,
+      is_start: false
+    }));
+
     function esc(value) {
       const div = document.createElement("div");
       div.textContent = value == null ? "" : String(value);
@@ -260,12 +420,12 @@
     function applyEventStatus() {
       if (!eventState) return;
       const s = STATUS_BADGES[eventState.status] || STATUS_BADGES.setup;
-      document.getElementById("statusDot").className = `w-3 h-3 rounded-full ${s.dot}`;
+      document.getElementById("statusDot").className = `w-3.5 h-3.5 rounded-full ${s.dot} flex-shrink-0`;
       const statusText = document.getElementById("statusText");
       statusText.innerText = s.text;
-      statusText.className = `text-[10px] uppercase font-bold ${s.color}`;
+      statusText.className = `text-[11px] uppercase font-bold tracking-wider ${s.color}`;
       document.getElementById("eventNameLabel").innerText = eventState.name || "";
-      document.getElementById("trackLengthLabel").innerText = `${Math.round(getTrackMeters())}m`;
+      document.getElementById("trackLengthLabel").innerText = `${Math.round(getTrackMeters())}m Track`;
       updateTimerValue();
     }
 
@@ -280,231 +440,91 @@
       }
     }
 
-    // Race Clock & Card Retention Loop
     setInterval(() => {
       updateTimerValue();
-      const cutoff = Date.now() - CARD_RETENTION_MS;
-      const before = recentCrossings.length;
-      recentCrossings = recentCrossings.filter(c => c.added_at >= cutoff);
-      if (recentCrossings.length !== before) {
-        renderCrossingDeck();
-      } else {
-        updateCardTimeBadges();
-      }
+      updateTimeAgoLabels();
     }, 1000);
 
-    function getAvatarColor(name) {
-      const colors = [
-        "from-emerald-500 to-teal-600",
-        "from-blue-500 to-indigo-600",
-        "from-purple-500 to-pink-600",
-        "from-amber-500 to-orange-600",
-        "from-rose-500 to-red-600"
-      ];
-      const str = String(name || "");
-      let hash = 0;
-      for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
-      return colors[Math.abs(hash) % colors.length];
+    function formatAgo(addedAtMs) {
+      const diffSec = Math.max(0, Math.floor((Date.now() - addedAtMs) / 1000));
+      if (diffSec < 5) return "Just now";
+      if (diffSec < 60) return `${diffSec}s ago`;
+      const mins = Math.floor(diffSec / 60);
+      if (mins < 60) return `${mins}m ago`;
+      return `${Math.floor(mins / 60)}h ago`;
     }
 
-    function getInitials(name) {
-      const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
-      return parts.map(n => n[0]).join('').substring(0, 2).toUpperCase() || "?";
+    function updateTimeAgoLabels() {
+      document.querySelectorAll(".card-time-ago").forEach(el => {
+        const added = parseFloat(el.getAttribute("data-added"));
+        if (!isNaN(added)) el.innerText = formatAgo(added);
+      });
     }
 
-    // Add a crossing card to the deck
-    function addCrossingCard(crossing) {
-      // Check if runner already has a card in recent deck; if so, replace/update with newest lap
-      recentCrossings = recentCrossings.filter(c => c.bib_number !== crossing.bib_number);
+    function addCrossing(crossing) {
+      // Keep every crossing in chronological order (same runner can appear multiple times)
       recentCrossings.unshift(crossing);
-
-      // Enforce max 10 cards displayed
-      if (recentCrossings.length > 10) recentCrossings.pop();
-
-      renderCrossingDeck();
+      if (recentCrossings.length > MAX_CROSSINGS) {
+        recentCrossings = recentCrossings.slice(0, MAX_CROSSINGS);
+      }
+      renderCrossingFeed(true);
       playCrossingSound(crossing.is_start);
     }
 
-    function renderCrossingDeck() {
+    function renderCrossingFeed(animateNewest = false) {
       const feed = document.getElementById("crossingFeed");
+      const empty = document.getElementById("emptyFeedState");
 
       if (recentCrossings.length === 0) {
         feed.innerHTML = "";
-        feed.appendChild(emptyFeedPlaceholder);
-        document.getElementById("activeCrossingCount").innerText = "0 Recent";
+        empty.classList.remove("hidden");
         return;
       }
 
+      empty.classList.add("hidden");
       feed.innerHTML = "";
-      document.getElementById("activeCrossingCount").innerText = `${recentCrossings.length} Recent`;
-
-      const now = Date.now();
-      const trackM = getTrackMeters();
-      const lapMiles = trackM / 1609.344;
       const ended = isEventEnded();
 
-      recentCrossings.forEach((c, index) => {
-        const card = document.createElement("div");
-        card.id = `crossing-card-${c.bib_number}`;
-        const isNewest = index === 0;
-        card.className = `bg-slate-900 border ${isNewest ? 'border-emerald-500/80 shadow-lg shadow-emerald-500/10 crossing-card-enter' : 'border-slate-800'} rounded-2xl p-4 md:p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 transition-all`;
-
-        const avatarGrad = getAvatarColor(c.name);
-        const initials = getInitials(c.name);
-        const secondsAgo = Math.floor((now - c.added_at) / 1000);
-
-        let splitDisplay = "";
-        if (c.is_start || (c.total_laps ?? c.lap_number ?? 0) === 0) {
-          splitDisplay = `
-            <div class="text-right">
-              <span class="text-xs uppercase font-bold text-indigo-400 bg-indigo-950/80 border border-indigo-500/40 px-2 py-0.5 rounded">CHIP START</span>
-              <div class="text-xl font-mono font-black text-white mt-1">Race Begun</div>
-              <div class="text-[11px] text-slate-400">Clock ticking</div>
-            </div>`;
-        } else {
-          const paceSecPerMile = lapMiles > 0 ? (c.lap_duration_seconds / lapMiles) : 0;
-          const paceMin = Math.floor(paceSecPerMile / 60);
-          const paceSec = Math.floor(paceSecPerMile % 60);
-          const paceStr = paceSecPerMile > 0 ? `${paceMin}:${String(paceSec).padStart(2, '0')}/mi` : "";
-
-          splitDisplay = `
-            <div class="text-right">
-              <div class="text-xs uppercase font-bold text-slate-400">Lap ${c.lap_number} Split</div>
-              <div class="text-3xl font-mono font-black text-emerald-400 tabular-nums">${formatTime(c.lap_duration_seconds)}</div>
-              <div class="text-xs font-mono text-slate-400 mt-0.5">${paceStr}</div>
-            </div>`;
-        }
-
-        const lapsCount = c.total_laps ?? c.lap_number ?? 0;
-        const distanceKm = ((lapsCount * trackM) / 1000).toFixed(2);
-        const distanceMiles = (lapsCount * lapMiles).toFixed(2);
-
-        card.innerHTML = `
-          <!-- Runner Identity -->
-          <div class="flex items-center space-x-3.5">
-            <div class="w-13 h-13 md:w-14 md:h-14 rounded-2xl bg-gradient-to-tr ${avatarGrad} flex items-center justify-center text-white font-black text-lg shadow-md flex-shrink-0">
-              ${esc(initials)}
-            </div>
-            <div>
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-mono font-black text-emerald-400 bg-emerald-950/70 border border-emerald-500/30 px-2 py-0.5 rounded">
-                  #${c.bib_number}
-                </span>
-                <span class="text-xs font-mono text-slate-400 card-time-ago" data-added="${c.added_at}">
-                  ${secondsAgo < 5 ? 'Just now' : `${secondsAgo}s ago`}
-                </span>
-              </div>
-              <a href="/runner/${c.bib_number}" target="_blank" class="text-lg md:text-xl font-black text-white hover:text-emerald-400 transition flex items-center gap-1.5 mt-0.5">
-                ${esc(c.name)}
-              </a>
-              <div class="flex items-center gap-2 text-xs text-slate-400 font-mono mt-0.5">
-                <span class="text-white font-bold">${lapsCount} Laps</span>
-                <span>•</span>
-                <span>${distanceKm} km (${distanceMiles} mi)</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Split Time & Controls -->
-          <div class="flex items-center justify-between md:justify-end w-full md:w-auto gap-5 border-t md:border-t-0 pt-3 md:pt-0 border-slate-800">
-            ${splitDisplay}
-
-            <!-- Quick Correction Buttons -->
-            <div class="flex flex-col gap-1.5 pl-3 border-l border-slate-800">
-              <button onclick="quickAddLap(${c.bib_number})" ${ended ? "disabled" : ""} title="Add missed lap for this runner"
-                      class="bg-emerald-600/20 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-emerald-300 hover:text-white border border-emerald-500/40 px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1">
-                <i class="fa-solid fa-plus"></i> 1 Lap
-              </button>
-              <button onclick="quickRemoveLap(${c.bib_number})" ${ended ? "disabled" : ""} title="Undo accidental double read"
-                      class="bg-rose-900/20 hover:bg-rose-800 disabled:opacity-40 disabled:cursor-not-allowed text-rose-300 hover:text-white border border-rose-700/40 px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1">
-                <i class="fa-solid fa-minus"></i> 1 Lap
-              </button>
-            </div>
-          </div>
-        `;
-        feed.appendChild(card);
-      });
-    }
-
-    function updateCardTimeBadges() {
-      const now = Date.now();
-      document.querySelectorAll(".card-time-ago").forEach(el => {
-        const added = parseInt(el.getAttribute("data-added"), 10);
-        const diffSec = Math.floor((now - added) / 1000);
-        if (diffSec < 5) {
-          el.innerText = "Just now";
-        } else if (diffSec < 60) {
-          el.innerText = `${diffSec}s ago`;
-        } else {
-          el.innerText = `${Math.floor(diffSec / 60)}m ago`;
-        }
-      });
-    }
-
-    function clearCrossingCards() {
-      recentCrossings = [];
-      renderCrossingDeck();
-    }
-
-    // Render Compact Standings on the Right
-    function renderStandings(leaderboard) {
-      currentLeaderboard = leaderboard;
-      const list = document.getElementById("standingsList");
-      list.innerHTML = "";
-      const trackM = getTrackMeters();
-      const ended = isEventEnded();
-
-      let totalEventLaps = 0;
-      leaderboard.forEach((r, idx) => {
-        totalEventLaps += (r.total_laps || 0);
-        const rank = idx + 1;
+      recentCrossings.forEach((c, idx) => {
+        const isNewest = idx === 0;
         const row = document.createElement("div");
-        row.className = "p-3 hover:bg-slate-800/40 flex items-center justify-between transition";
+        row.className = `crossing-row${isNewest ? ' is-newest' : ''}${isNewest && animateNewest ? ' crossing-row-enter' : ''}`;
 
-        let rankBadge = `<span class="w-6 text-center text-slate-500 font-mono text-xs font-bold">${rank}</span>`;
-        if (rank === 1 && r.total_laps > 0) rankBadge = `<span class="w-6 text-center text-amber-400 font-bold text-xs"><i class="fa-solid fa-crown"></i></span>`;
-
-        const pace = r.last_lap_seconds ? formatTime(r.last_lap_seconds) : "--:--";
-        const distKm = ((r.distance_m != null ? r.distance_m : r.total_laps * trackM) / 1000).toFixed(2);
+        const lapLabel = c.is_start ? "START" : `Lap ${c.lap_number}`;
+        const splitText = c.is_start ? "--:--" : formatTime(c.lap_duration_seconds);
 
         row.innerHTML = `
-          <div class="flex items-center space-x-2.5 overflow-hidden">
-            ${rankBadge}
-            <div class="overflow-hidden">
-              <div class="flex items-center gap-1.5">
-                <span class="text-xs font-mono font-bold text-emerald-400">#${r.bib_number}</span>
-                <span class="text-sm font-bold text-white truncate">${esc(r.name)}</span>
-              </div>
-              <div class="text-[11px] text-slate-400 font-mono">
-                ${distKm} km
+          <div class="flex items-center gap-3 md:gap-4 min-w-0 flex-1">
+            <div class="bib-pill">#${c.bib_number}</div>
+            <div class="min-w-0 flex-1">
+              <a href="/runner/${c.bib_number}" class="runner-name block hover:text-emerald-400 transition">
+                ${esc(c.name)}
+              </a>
+              <div class="text-xs font-mono text-slate-400 card-time-ago mt-0.5" data-added="${c.added_at}">
+                ${formatAgo(c.added_at)}
               </div>
             </div>
           </div>
 
-          <div class="flex items-center space-x-4">
-            <div class="text-center w-14">
-              <span class="text-lg font-mono font-black text-white">${r.total_laps}</span>
-            </div>
-            <div class="text-right w-16 font-mono text-xs text-slate-300">
-              ${pace}
-            </div>
-            <div class="flex items-center space-x-1 w-20 justify-end">
-              <button onclick="quickAddLap(${r.bib_number})" ${ended ? "disabled" : ""} title="+1 Lap" class="p-1.5 rounded bg-slate-800 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300 hover:text-white text-xs transition">
-                <i class="fa-solid fa-plus"></i>
+          <div class="flex items-center gap-3 md:gap-5 flex-shrink-0">
+            <div class="lap-count-pill">${lapLabel}</div>
+            <div class="split-value">${splitText}</div>
+            <div class="flex items-center gap-1.5 pl-2 border-l border-slate-800">
+              <button onclick="quickAddLap(${c.bib_number})" ${ended ? "disabled" : ""} title="Add 1 Lap"
+                      class="quick-btn bg-emerald-600/20 hover:bg-emerald-600 disabled:opacity-30 text-emerald-300 hover:text-white border border-emerald-500/40">
+                +1
               </button>
-              <button onclick="quickRemoveLap(${r.bib_number})" ${ended ? "disabled" : ""} title="-1 Lap" class="p-1.5 rounded bg-slate-800 hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300 hover:text-white text-xs transition">
-                <i class="fa-solid fa-minus"></i>
+              <button onclick="quickRemoveLap(${c.bib_number})" ${ended ? "disabled" : ""} title="Remove Last Lap"
+                      class="quick-btn bg-rose-900/25 hover:bg-rose-700 disabled:opacity-30 text-rose-300 hover:text-white border border-rose-700/40">
+                -1
               </button>
             </div>
           </div>
         `;
-        list.appendChild(row);
+        feed.appendChild(row);
       });
-
-      document.getElementById("summaryTotalLaps").innerText = `${totalEventLaps} Laps Total`;
     }
 
-    // Quick API Lap Actions
     async function quickAddLap(bib) {
       try {
         const res = await fetch(`/api/participants/${bib}/quick-add-lap`, { method: "POST" });
@@ -530,7 +550,6 @@
       }
     }
 
-    // Modal Search Functions
     function openSearchModal() {
       document.getElementById("searchModal").classList.remove("hidden");
       document.getElementById("runnerSearchInput").value = "";
@@ -555,7 +574,6 @@
       const q = document.getElementById("runnerSearchInput").value.toLowerCase().trim();
       const resultsDiv = document.getElementById("searchResults");
       resultsDiv.innerHTML = "";
-      const trackM = getTrackMeters();
       const ended = isEventEnded();
 
       const filtered = currentLeaderboard.filter(r =>
@@ -568,7 +586,6 @@
       }
 
       filtered.forEach(r => {
-        const distKm = ((r.distance_m != null ? r.distance_m : r.total_laps * trackM) / 1000).toFixed(2);
         const item = document.createElement("div");
         item.className = "p-3 flex items-center justify-between hover:bg-slate-800/60 rounded-xl transition";
         item.innerHTML = `
@@ -578,27 +595,22 @@
             </span>
             <div>
               <div class="font-bold text-white text-base">${esc(r.name)}</div>
-              <div class="text-xs text-slate-400 font-mono">${r.total_laps} Laps • ${distKm} km</div>
+              <div class="text-xs text-slate-400 font-mono">${r.total_laps} Laps</div>
             </div>
           </div>
-
           <div class="flex items-center space-x-2">
-            <button onclick="quickAddLap(${r.bib_number}); closeSearchModal();" ${ended ? "disabled" : ""} class="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs px-3 py-1.5 rounded-lg transition flex items-center gap-1">
-              <i class="fa-solid fa-plus"></i> 1 Lap
+            <button onclick="quickAddLap(${r.bib_number}); closeSearchModal();" ${ended ? "disabled" : ""} class="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition">
+              +1 Lap
             </button>
-            <button onclick="quickRemoveLap(${r.bib_number}); closeSearchModal();" ${ended ? "disabled" : ""} class="bg-rose-900/60 hover:bg-rose-800 disabled:opacity-40 disabled:cursor-not-allowed border border-rose-700/50 text-rose-200 font-bold text-xs px-3 py-1.5 rounded-lg transition flex items-center gap-1">
-              <i class="fa-solid fa-minus"></i> 1 Lap
+            <button onclick="quickRemoveLap(${r.bib_number}); closeSearchModal();" ${ended ? "disabled" : ""} class="bg-rose-900/60 hover:bg-rose-800 disabled:opacity-40 border border-rose-700/50 text-rose-200 font-bold text-xs px-3 py-1.5 rounded-lg transition">
+              -1 Lap
             </button>
-            <a href="/runner/${r.bib_number}" target="_blank" class="p-2 text-slate-400 hover:text-white" title="View Splits">
-              <i class="fa-solid fa-arrow-up-right-from-square"></i>
-            </a>
           </div>
         `;
         resultsDiv.appendChild(item);
       });
     }
 
-    // Connect WebSocket
     function connectWS() {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
@@ -607,56 +619,52 @@
         const msg = JSON.parse(event.data);
         if (msg.type === "init") {
           eventState = msg.event;
+          currentLeaderboard = msg.leaderboard || currentLeaderboard;
           applyEventStatus();
-          renderStandings(msg.leaderboard);
-          renderCrossingDeck();
+          renderCrossingFeed(false);
+          if (msg.sim) updateSimWidget(msg.sim);
+        } else if (msg.type === "sim_state") {
+          if (msg.sim) updateSimWidget(msg.sim);
         } else if (msg.type === "lap_completed") {
-          renderStandings(msg.leaderboard);
-          // Find runner in updated leaderboard to get total lap count
-          const runner = msg.leaderboard.find(r => r.bib_number === msg.lap.bib_number);
-          addCrossingCard({
+          currentLeaderboard = msg.leaderboard || currentLeaderboard;
+          addCrossing({
+            id: msg.lap.id,
             bib_number: msg.lap.bib_number,
-            name: msg.lap.name,
+            name: msg.lap.name || `Bib #${msg.lap.bib_number}`,
             lap_number: msg.lap.lap_number,
             lap_duration_seconds: msg.lap.lap_duration_seconds,
-            total_laps: runner ? runner.total_laps : msg.lap.lap_number,
-            peak_rssi: msg.lap.peak_rssi,
-            added_at: Date.now(),
+            added_at: (msg.lap.crossing_time ? msg.lap.crossing_time * 1000 : Date.now()),
             is_start: false
           });
         } else if (msg.type === "runner_started") {
-          renderStandings(msg.leaderboard);
-          addCrossingCard({
+          currentLeaderboard = msg.leaderboard || currentLeaderboard;
+          addCrossing({
+            id: null,
             bib_number: msg.data.bib_number,
-            name: msg.data.name,
+            name: msg.data.name || `Bib #${msg.data.bib_number}`,
             lap_number: 0,
             lap_duration_seconds: 0,
-            total_laps: 0,
-            peak_rssi: msg.data.peak_rssi,
-            added_at: Date.now(),
+            added_at: (msg.data.start_time ? msg.data.start_time * 1000 : Date.now()),
             is_start: true
           });
-        } else if (msg.type === "lap_removed" || msg.type === "leaderboard_update") {
-          renderStandings(msg.leaderboard);
-          // Update matching card if present
-          if (msg.bib_number) {
-            const runner = msg.leaderboard.find(r => r.bib_number === msg.bib_number);
-            const card = recentCrossings.find(c => c.bib_number === msg.bib_number);
-            if (card && runner) {
-              card.total_laps = runner.total_laps;
-              card.lap_number = runner.total_laps;
-              card.lap_duration_seconds = runner.last_lap_seconds || 0;
-              card.is_start = runner.total_laps === 0;
-              renderCrossingDeck();
-            }
+        } else if (msg.type === "lap_removed") {
+          currentLeaderboard = msg.leaderboard || currentLeaderboard;
+          if (msg.removed_lap && msg.removed_lap.id != null) {
+            recentCrossings = recentCrossings.filter(c => c.id !== msg.removed_lap.id);
+          } else if (msg.bib_number != null) {
+            const idx = recentCrossings.findIndex(c => c.bib_number === msg.bib_number);
+            if (idx !== -1) recentCrossings.splice(idx, 1);
           }
+          renderCrossingFeed(false);
+        } else if (msg.type === "leaderboard_update") {
+          currentLeaderboard = msg.leaderboard || currentLeaderboard;
         } else if (msg.type === "event_status") {
           const wasReset = msg.event && msg.event.status === "setup" && !msg.event.start_time;
           eventState = msg.event;
           if (wasReset) recentCrossings = [];
+          if (msg.leaderboard) currentLeaderboard = msg.leaderboard;
           applyEventStatus();
-          if (msg.leaderboard) renderStandings(msg.leaderboard);
-          renderCrossingDeck();
+          renderCrossingFeed(false);
         } else if (msg.type === "event_switched") {
           window.location.reload();
         }
@@ -667,8 +675,188 @@
       };
     }
 
+    let currentSimState = null;
+    let simMinimized = false;
+
+    function toggleSimMinimize() {
+      simMinimized = !simMinimized;
+      const card = document.getElementById("simCard");
+      const pill = document.getElementById("simMinimizedPill");
+      if (!card || !pill) return;
+      if (simMinimized) {
+        card.classList.add("hidden");
+        pill.classList.remove("hidden");
+      } else {
+        card.classList.remove("hidden");
+        pill.classList.add("hidden");
+      }
+    }
+
+    function trackPointForProgress(progress) {
+      // Stadium oval: rect(32, 20, w=196, h=72, r=36) -> left center (68, 56), right center (192, 56), R=36
+      const R = 36;
+      const straight = 124; // 192 - 68
+      const semi = Math.PI * R;
+      const halfStraight = straight / 2;
+      const total = 2 * straight + 2 * semi;
+      let d = ((progress % 1) + 1) % 1 * total;
+
+      // 1) Bottom-left straightaway: (130, 92) -> (68, 92)
+      if (d <= halfStraight) {
+        return { x: 130 - d, y: 92 };
+      }
+      d -= halfStraight;
+
+      // 2) Left curve: bottom (pi/2) -> top (3*pi/2)
+      if (d <= semi) {
+        const theta = Math.PI / 2 + (d / R);
+        return { x: 68 + R * Math.cos(theta), y: 56 + R * Math.sin(theta) };
+      }
+      d -= semi;
+
+      // 3) Top straightaway: (68, 20) -> (192, 20)
+      if (d <= straight) {
+        return { x: 68 + d, y: 20 };
+      }
+      d -= straight;
+
+      // 4) Right curve: top (-pi/2) -> bottom (pi/2)
+      if (d <= semi) {
+        const theta = -Math.PI / 2 + (d / R);
+        return { x: 192 + R * Math.cos(theta), y: 56 + R * Math.sin(theta) };
+      }
+      d -= semi;
+
+      // 5) Bottom-right straightaway: (192, 92) -> (130, 92)
+      return { x: 192 - d, y: 92 };
+    }
+
+    function updateSimWidget(sim) {
+      currentSimState = sim;
+      const layer = document.getElementById("simRunnersLayer");
+      if (!layer) return;
+
+      const speedText = `${sim.speed}x`;
+      const speedBadge = document.getElementById("simSpeedBadge");
+      const miniSpeed = document.getElementById("simMiniSpeed");
+      const clockLabel = document.getElementById("simClockLabel");
+      const dot = document.getElementById("simStatusDot");
+      const miniDot = document.getElementById("simMiniDot");
+      const playBtn = document.getElementById("simPlayPauseBtn");
+      const eventHint = document.getElementById("simEventHint");
+
+      if (speedBadge) speedBadge.innerText = speedText;
+      if (miniSpeed) miniSpeed.innerText = speedText;
+      if (clockLabel) clockLabel.innerText = formatClock(sim.sim_time || 0);
+
+      const paused = !!sim.paused;
+      if (dot) dot.className = `w-2 h-2 rounded-full ${paused ? "bg-amber-400" : "bg-emerald-400 animate-pulse"}`;
+      if (miniDot) miniDot.className = `w-2 h-2 rounded-full ${paused ? "bg-amber-400" : "bg-emerald-400 animate-pulse"}`;
+      if (playBtn) {
+        playBtn.innerHTML = paused
+          ? `<i class="fa-solid fa-play"></i><span>Play</span>`
+          : `<i class="fa-solid fa-pause"></i><span>Pause</span>`;
+        playBtn.className = paused
+          ? "sim-play-btn bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400"
+          : "sim-play-btn bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/40";
+      }
+
+      if (eventHint) {
+        if (!eventState || eventState.status !== "running") {
+          eventHint.classList.remove("hidden");
+        } else {
+          eventHint.classList.add("hidden");
+        }
+      }
+
+      document.querySelectorAll("#simSpeedButtons .sim-speed-btn").forEach(btn => {
+        const val = parseFloat(btn.getAttribute("data-speed"));
+        btn.classList.toggle("is-active", Math.abs(val - sim.speed) < 0.05);
+      });
+
+      // Render runner dots on oval + resting runners in infield pit
+      const runners = sim.runners || [];
+      let restCount = 0;
+      let restingNames = [];
+      let surgingNames = [];
+      let svgHtml = "";
+
+      runners.forEach((r) => {
+        let x, y;
+        const isResting = r.state === "resting";
+        if (isResting) {
+          x = 88 + restCount * 21;
+          y = 63;
+          restCount += 1;
+          restingNames.push(`#${r.bib}`);
+        } else {
+          const pt = trackPointForProgress(r.progress || 0);
+          x = pt.x;
+          y = pt.y;
+          if (r.pace_mode === "fast") surgingNames.push(`#${r.bib}`);
+        }
+
+        const ringColor = isResting ? "#f59e0b" : (r.pace_mode === "fast" ? "#34d399" : (r.pace_mode === "slow" ? "#94a3b8" : "#0f172a"));
+        svgHtml += `
+          <g transform="translate(${x.toFixed(1)}, ${y.toFixed(1)})" style="cursor:pointer" onclick="triggerSimRunner(${r.bib})">
+            <circle r="7.5" fill="${r.color || '#34d399'}" stroke="${ringColor}" stroke-width="2" opacity="${isResting ? '0.75' : '1'}"></circle>
+            <text y="2.4" text-anchor="middle" fill="#020617" font-size="6.2" font-family="monospace" font-weight="900">${r.bib % 100}</text>
+          </g>
+        `;
+      });
+      layer.innerHTML = svgHtml;
+
+      const summaryEl = document.getElementById("simRunnerSummary");
+      if (summaryEl) {
+        const parts = [];
+        if (paused) parts.push("Paused");
+        if (restingNames.length) parts.push(`Pit stop: ${restingNames.join(", ")}`);
+        if (surgingNames.length) parts.push(`Surge: ${surgingNames.join(", ")}`);
+        if (parts.length === 0) parts.push(`${runners.length} runners on track`);
+        summaryEl.innerText = parts.join(" • ");
+      }
+    }
+
+    async function toggleSimPlayPause() {
+      const paused = currentSimState && currentSimState.paused;
+      const endpoint = paused ? "/api/simulator/play" : "/api/simulator/pause";
+      try {
+        const res = await fetch(endpoint, { method: "POST" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.sim) updateSimWidget(data.sim);
+        }
+      } catch (e) {}
+    }
+
+    async function setSimSpeed(speed) {
+      try {
+        const res = await fetch("/api/simulator/speed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ speed })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.sim) updateSimWidget(data.sim);
+        }
+      } catch (e) {}
+    }
+
+    async function triggerSimRunner(bib) {
+      try {
+        await fetch(`/api/simulator/trigger/${bib}`, { method: "POST" });
+      } catch (e) {}
+    }
+
+    async function startEventFromSim() {
+      try {
+        await fetch("/api/event/start", { method: "POST" });
+      } catch (e) {}
+    }
+
     applyEventStatus();
-    renderStandings(currentLeaderboard);
+    renderCrossingFeed(false);
     connectWS();
   </script>
 </body>

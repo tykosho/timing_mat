@@ -68,18 +68,19 @@ class LapEngine:
     async def flush_loop(self):
         """Background coroutine that checks buffers and triggers crossings when a burst finishes."""
         while True:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.2)
             self.refresh_event()
             self.flush_raw_reads()
             now = time.time()
+            effective_window = max(0.15, self.crossing_window / max(1.0, self.speed_multiplier))
             epcs_to_process = []
 
             for epc, reads in list(self.buffers.items()):
                 if not reads:
                     continue
                 last_read_time = reads[-1][0]
-                # If no new read for crossing_window seconds, runner has exited antenna beam
-                if (now - last_read_time) >= self.crossing_window:
+                # If no new read for effective_window seconds, runner has exited antenna beam
+                if (now - last_read_time) >= effective_window:
                     epcs_to_process.append(epc)
 
             for epc in epcs_to_process:
