@@ -11,12 +11,18 @@ services:
       - SEED_DEMO=false
       # Required: put ADMIN_PIN=<6+ digits> in a .env file next to this one (not committed)
       - ADMIN_PIN=${ADMIN_PIN:?Set ADMIN_PIN in .env before starting the race timer}
-      - SERIAL_PORT=/dev/ttyUSB0
+      # Use the reader's stable name so a replug can't move it to ttyUSB1. Find it with
+      # `ls -l /dev/serial/by-id/` and put SERIAL_PORT=/dev/serial/by-id/... in .env
+      - SERIAL_PORT=${SERIAL_PORT:-/dev/ttyUSB0}
       - BAUD_RATE=115200
       - CONFIG_PATH=config.yaml
       - DB_PATH=data/race.db
-    devices:
-      - "/dev/ttyUSB0:/dev/ttyUSB0"
-    privileged: true
+    # USB-serial access without `privileged`: /dev is shared so a reader that's unplugged
+    # and replugged reappears (the app reconnects on its own), and the container starts even
+    # if the reader isn't plugged in yet. The cgroup rules allow only serial devices.
+    device_cgroup_rules:
+      - "c 188:* rmw"   # /dev/ttyUSB* (CH340, CP210x, FTDI adapters)
+      - "c 166:* rmw"   # /dev/ttyACM*
     volumes:
       - ./data:/app/data
+      - /dev:/dev

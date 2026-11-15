@@ -84,11 +84,17 @@ Everything (runners, bibs, tags, laps, raw reads) belongs to an **event**. The r
    echo "ADMIN_PIN=482913" > .env
    ```
    Compose refuses to start without it. See [Admin access](#-admin-access) below.
+   Also add the reader's stable device name, so a replugged adapter can't come back as `ttyUSB1`:
+   ```bash
+   ls -l /dev/serial/by-id/        # e.g. usb-1a86_USB_Serial-if00-port0 -> ../../ttyUSB0
+   echo "SERIAL_PORT=/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0" >> .env
+   ```
+   If the reader is unplugged and plugged back in mid-race, the app reconnects by itself (no restart needed).
 4. Run with the Raspberry Pi profile (which maps `/dev/ttyUSB0` into Docker):
    ```bash
    docker compose -f docker-compose.pi.yml up --build -d
    ```
-5. If the Pi reboots or power is briefly interrupted, Docker's `restart: unless-stopped` policy will automatically bring the race timer and database back online.
+5. If the Pi reboots or power is briefly interrupted, Docker's `restart: unless-stopped` policy will automatically bring the race timer and database back online. `docker ps` shows the container as `healthy` once the app is answering.
 
 ### 🔒 Admin access
 

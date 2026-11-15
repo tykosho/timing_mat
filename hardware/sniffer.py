@@ -10,6 +10,7 @@ Uses the same frame parser as the race server, so what you see here is what the 
 Press Ctrl+C to stop.
 """
 import argparse
+import glob
 import os
 import sys
 import time
@@ -22,7 +23,18 @@ from hardware.r200_protocol import (  # noqa: E402
     READ_MULTI_COMMAND, READ_STOP_COMMAND, extract_frames, parse_tag_frame, raw_rssi_to_dbm
 )
 
-PORT = os.environ.get("SERIAL_PORT", "/dev/cu.usbserial-130")
+def default_port() -> str:
+    """SERIAL_PORT if set; otherwise the Pi's /dev/ttyUSB0, or the first USB serial port on a Mac."""
+    if os.environ.get("SERIAL_PORT"):
+        return os.environ["SERIAL_PORT"]
+    if sys.platform == "darwin":
+        ports = sorted(glob.glob("/dev/cu.usbserial*"))
+        if ports:
+            return ports[0]
+    return "/dev/ttyUSB0"
+
+
+PORT = default_port()
 BAUD = int(os.environ.get("BAUD_RATE", "115200"))
 
 
@@ -39,16 +51,18 @@ def rssi_bar(dbm: float) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Live R200 tag sniffer")
     parser.add_argument("--raw", action="store_true", help="print every received frame as hex")
+    parser.add_argument("--port", default=None, help=f"serial port (default: {PORT})")
     args = parser.parse_args()
+    port = args.port or PORT
 
     print(f"\033[1;36m{'═'*58}\033[0m")
-    print(f"\033[1;36m  🏷  M100/R200 Live RFID Sniffer  |  {PORT}\033[0m")
+    print(f"\033[1;36m  🏷  M100/R200 Live RFID Sniffer  |  {port}\033[0m")
     print(f"\033[1;36m{'═'*58}\033[0m")
     print(f"  Baud: {BAUD}  |  Hold tag near antenna  |  Ctrl+C to quit")
     print(f"\033[1;36m{'─'*58}\033[0m\n", flush=True)
 
     try:
-        s = serial.Serial(PORT, BAUD, timeout=0.1)
+        s = serial.Serial(port, BAUD, timeout=0.1)
     except serial.SerialException as e:
         print(f"\033[91mERROR: {e}\033[0m")
         sys.exit(1)
