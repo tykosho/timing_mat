@@ -20,6 +20,10 @@ class EventStateError(ValueError):
     """An event lifecycle change isn't allowed from the current status."""
 
 
+class LapEditError(ValueError):
+    """A manual lap edit was rejected (runner not started, lap would end in the future, ...)."""
+
+
 def normalize_epc(epc: Optional[str]) -> Optional[str]:
     """Upper-cases and validates an EPC. Blank means 'no tag assigned yet' (None)."""
     value = (epc or "").strip().upper()
@@ -580,25 +584,20 @@ class Database:
             mid_crossing = round(orig_crossing - half_dur, 2)
             lap_num = lap["lap_number"]
 
-            # Update existing lap to be lap_num + 1 with half duration
+            # The split lap keeps its crossing and gets the second half...
             conn.execute("""
                 UPDATE laps
-                SET lap_number = ?, lap_duration_seconds = ?, flag_reason = NULL
+                SET lap_duration_seconds = ?, flag_reason = NULL
                 WHERE id = ?;
-            """, (lap_num + 1, half_dur, lap_id))
+            """, (half_dur, lap_id))
 
-            # Insert interpolated prior lap
+            # ...and an interpolated crossing is inserted halfway through it
             conn.execute("""
                 INSERT INTO laps (event_id, bib_number, lap_number, crossing_time, lap_duration_seconds, peak_rssi, manual_entry, flag_reason)
                 VALUES (?, ?, ?, ?, ?, ?, 1, NULL);
             """, (eid, bib, lap_num, mid_crossing, half_dur, lap["peak_rssi"]))
 
-            # Shift all subsequent laps up by 1 if any exist
-            conn.execute("""
-                UPDATE laps
-                SET lap_number = lap_number + 1
-                WHERE event_id = ? AND bib_number = ? AND id > ? AND lap_number > ?;
-            """, (eid, bib, lap_id, lap_num + 1))
+            self._renumber_laps(conn, eid, bib)
             return True
 
     def get_last_lap(self, bib_number: int, event_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
@@ -635,45 +634,104 @@ class Database:
                 LIMIT ?;""", (self._eid(event_id), limit)).fetchall()
             return [dict(r) for r in rows]
 
-    def delete_lap(self, lap_id: int) -> bool:
+    # Lap edits (issue #9). A lap's duration is the time since the runner's previous crossing
+    # (adjusted for pauses and breaks), so removing or adding a lap must hand its time to
+    # whatever follows, renumber, and keep last_crossing_time right. Each edit is one transaction.
+
+    @staticmethod
+    def _renumber_laps(conn: sqlite3.Connection, eid: int, bib_number: int):
+        """Numbers a runner's laps 1..n in crossing order."""
+        rows = conn.execute("""SELECT id FROM laps WHERE event_id = ? AND bib_number = ?
+                               ORDER BY crossing_time, id;""", (eid, bib_number)).fetchall()
+        for number, row in enumerate(rows, start=1):
+            conn.execute("UPDATE laps SET lap_number = ? WHERE id = ?;", (number, row["id"]))
+
+    def delete_lap(self, lap_id: int) -> Optional[Dict[str, Any]]:
+        """Removes a lap (e.g. a ghost read) and gives its time to what came after it.
+
+        - A later lap: it absorbs the deleted lap's time (two laps become one longer one).
+        - A break that started at this crossing: the break absorbs it instead.
+        - Nothing after it: the runner's current lap is treated as starting where the deleted
+          lap started, so the next crossing is timed correctly.
+        Returns the deleted lap, or None if it didn't exist.
+        """
         with self.connect() as conn:
+            row = conn.execute("SELECT * FROM laps WHERE id = ?;", (lap_id,)).fetchone()
+            if not row:
+                return None
+            lap = dict(row)
+            eid, bib, crossing, duration = lap["event_id"], lap["bib_number"], lap["crossing_time"], lap["lap_duration_seconds"]
+
+            next_lap = conn.execute("""
+                SELECT id, crossing_time FROM laps
+                WHERE event_id = ? AND bib_number = ? AND id != ? AND crossing_time >= ?
+                ORDER BY crossing_time, id LIMIT 1;""", (eid, bib, lap_id, crossing)).fetchone()
+            # An auto-detected break starts exactly at the crossing before it
+            next_break = conn.execute("""
+                SELECT id FROM breaks
+                WHERE event_id = ? AND bib_number = ? AND ABS(start_time - ?) < 0.01
+                LIMIT 1;""", (eid, bib, crossing)).fetchone()
+
             conn.execute("DELETE FROM laps WHERE id = ?;", (lap_id,))
-        return True
+            if next_break:
+                conn.execute("""UPDATE breaks SET start_time = start_time - ?,
+                                    duration_seconds = CASE WHEN end_time > 0 THEN duration_seconds + ? ELSE duration_seconds END
+                                WHERE id = ?;""", (duration, duration, next_break["id"]))
+            elif next_lap:
+                conn.execute("UPDATE laps SET lap_duration_seconds = ROUND(lap_duration_seconds + ?, 2) WHERE id = ?;",
+                             (duration, next_lap["id"]))
+            else:
+                conn.execute("""UPDATE participants SET last_crossing_time = last_crossing_time - ?
+                                WHERE event_id = ? AND bib_number = ? AND last_crossing_time IS NOT NULL;""",
+                             (duration, eid, bib))
+            self._renumber_laps(conn, eid, bib)
+            return lap
 
     def delete_last_lap_for_runner(self, bib_number: int, event_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-        """Deletes the most recent lap for a runner in the event and updates last_crossing_time."""
+        """Deletes the runner's most recent lap (see delete_lap)."""
+        last = self.get_last_lap(bib_number, event_id)
+        return self.delete_lap(last["id"]) if last else None
+
+    def add_manual_lap(self, bib_number: int, duration: Optional[float] = None,
+                       min_gap: float = 0.0, event_id: Optional[int] = None) -> Dict[str, Any]:
+        """Records a lap the reader missed.
+
+        With `duration`, the lap ends that long after the runner's previous crossing. Without
+        it, the lap ends now and is timed from the previous crossing, which must be at least
+        `min_gap` seconds ago (so a double tap doesn't add a second lap). Either way the next
+        automatic lap is timed from this one. Never invents a time.
+        """
         eid = self._eid(event_id)
+        now = clock.now()
         with self.connect() as conn:
-            last = conn.execute("""
-                SELECT * FROM laps
-                WHERE event_id = ? AND bib_number = ?
-                ORDER BY lap_number DESC, id DESC
-                LIMIT 1;""", (eid, bib_number)).fetchone()
-            if not last:
-                return None
-            last_dict = dict(last)
-            conn.execute("DELETE FROM laps WHERE id = ?;", (last_dict["id"],))
-
-            prev_lap = conn.execute("""
-                SELECT crossing_time FROM laps
-                WHERE event_id = ? AND bib_number = ?
-                ORDER BY lap_number DESC, id DESC
-                LIMIT 1;""", (eid, bib_number)).fetchone()
-
-            if prev_lap:
-                new_last_time = prev_lap["crossing_time"]
+            p = conn.execute("SELECT * FROM participants WHERE event_id = ? AND bib_number = ?;",
+                             (eid, bib_number)).fetchone()
+            if not p:
+                raise LapEditError(f"Runner #{bib_number} isn't registered in this event.")
+            previous = p["last_crossing_time"] or p["start_time"]
+            if previous is None:
+                raise LapEditError(f"Runner #{bib_number} hasn't started yet, so there's no lap to time.")
+            if duration is not None:
+                if duration <= 0:
+                    raise LapEditError("Lap duration must be positive.")
+                crossing = previous + duration
+                if crossing > now + 1.0:
+                    raise LapEditError(f"Runner #{bib_number}'s current lap started {now - previous:.0f}s ago, "
+                                       f"so a {duration:.0f}s lap would end in the future.")
             else:
-                p_row = conn.execute(
-                    "SELECT start_time FROM participants WHERE event_id = ? AND bib_number = ?;",
-                    (eid, bib_number)
-                ).fetchone()
-                new_last_time = p_row["start_time"] if p_row else None
-
-            conn.execute(
-                "UPDATE participants SET last_crossing_time = ? WHERE event_id = ? AND bib_number = ?;",
-                (new_last_time, eid, bib_number)
-            )
-            return last_dict
+                crossing, duration = now, now - previous
+                if duration < min_gap:
+                    raise LapEditError(f"Only {duration:.0f}s since runner #{bib_number}'s last crossing "
+                                       f"(minimum lap is {min_gap:.0f}s); no lap added.")
+            cursor = conn.execute("""
+                INSERT INTO laps (event_id, bib_number, lap_number, crossing_time, lap_duration_seconds, peak_rssi, manual_entry)
+                VALUES (?, ?, 0, ?, ?, 0.0, 1);""", (eid, bib_number, crossing, round(duration, 2)))
+            conn.execute("UPDATE participants SET last_crossing_time = ? WHERE event_id = ? AND bib_number = ?;",
+                         (crossing, eid, bib_number))
+            self._renumber_laps(conn, eid, bib_number)
+            lap = dict(conn.execute("SELECT * FROM laps WHERE id = ?;", (cursor.lastrowid,)).fetchone())
+            lap["name"] = p["name"]
+            return lap
 
     def get_total_laps_count(self, event_id: Optional[int] = None) -> int:
         with self.connect() as conn:

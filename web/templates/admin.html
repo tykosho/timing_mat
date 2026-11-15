@@ -618,18 +618,23 @@
     }
 
     async function promptManualLap(bib) {
-      const durationStr = prompt(`Enter lap duration in seconds for Runner #${bib} (e.g. 75.5):`, "75.0");
-      if (durationStr) {
-        const duration = parseFloat(durationStr);
-        if (!isNaN(duration) && duration > 0) {
-          await fetch("/api/laps/manual", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ bib_number: bib, lap_duration_seconds: duration })
-          });
-          alert("Manual lap recorded!");
-        }
+      const durationStr = prompt(
+        `Add a lap the reader missed for Runner #${bib}.\n\n` +
+        `Lap time in seconds (e.g. 75.5), or leave empty if they're crossing the mat right now:`, "");
+      if (durationStr === null) return;  // cancelled
+      let duration = null;
+      if (durationStr.trim() !== "") {
+        duration = parseFloat(durationStr);
+        if (isNaN(duration) || duration <= 0) { alert("Lap time must be a positive number of seconds."); return; }
       }
+      const res = await fetch("/api/laps/manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bib_number: bib, lap_duration_seconds: duration })
+      });
+      const data = await res.json().catch(() => ({}));
+      alert(res.ok ? `Lap ${data.lap_number} recorded (${data.lap.lap_duration_seconds}s).`
+                   : `No lap added: ${data.detail || res.status}`);
     }
 
     function updateSpeedButtonUI(speed) {

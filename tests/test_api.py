@@ -100,21 +100,37 @@ class TestApi(unittest.TestCase):
             self.assertNotIn(evil, r.text, f"{path} must not emit the name unescaped")
 
     def test_quick_lap_adjustments_and_event_isolation(self):
+        from unittest import mock
+        t0 = 1_000_000.0
+        at = lambda t: mock.patch("core.clock.now", return_value=t)  # noqa: E731
         self.client.post("/api/participants", json={"bib_number": 10, "name": "Alex"})
-        self.client.post("/api/event/start")
+        with at(t0):
+            self.client.post("/api/event/start")
+            # Not started yet: quick-add records the start rather than inventing a lap (#9)
+            r0 = self.client.post("/api/participants/10/quick-add-lap")
+        self.assertEqual(r0.status_code, 200, r0.text)
+        self.assertEqual(r0.json()["status"], "started")
 
-        # Quick add 2 laps
-        r1 = self.client.post("/api/participants/10/quick-add-lap")
+        # Lap 1 is timed from the start
+        with at(t0 + 70):
+            r1 = self.client.post("/api/participants/10/quick-add-lap")
         self.assertEqual(r1.status_code, 200, r1.text)
         self.assertEqual(r1.json()["lap"]["lap_number"], 1)
+        self.assertEqual(r1.json()["lap"]["lap_duration_seconds"], 70.0)
         p_after_1 = {p["bib_number"]: p for p in self.client.get("/api/participants").json()}[10]
-        self.assertIsNotNone(p_after_1["start_time"])
-        self.assertGreater(p_after_1["last_crossing_time"], p_after_1["start_time"])
+        self.assertEqual(p_after_1["last_crossing_time"], t0 + 70)
 
-        r2 = self.client.post("/api/participants/10/quick-add-lap", json={"lap_duration_seconds": 62.5})
+        # A double tap right after is rejected (under the event's minimum lap)
+        with at(t0 + 75):
+            self.assertEqual(self.client.post("/api/participants/10/quick-add-lap").status_code, 409)
+
+        # An explicit lap time ends that long after the previous crossing
+        with at(t0 + 200):
+            r2 = self.client.post("/api/participants/10/quick-add-lap", json={"lap_duration_seconds": 62.5})
         self.assertEqual(r2.status_code, 200, r2.text)
         self.assertEqual(r2.json()["lap"]["lap_number"], 2)
         self.assertEqual(r2.json()["lap"]["lap_duration_seconds"], 62.5)
+        self.assertEqual(r2.json()["lap"]["crossing_time"], t0 + 132.5)
 
         # Ending the event freezes quick lap adjustments
         self.client.post("/api/event/end")
@@ -126,6 +142,8 @@ class TestApi(unittest.TestCase):
         rem1 = self.client.post("/api/participants/10/quick-remove-lap")
         self.assertEqual(rem1.status_code, 200, rem1.text)
         self.assertEqual(rem1.json()["removed_lap"]["lap_number"], 2)
+        p_after_remove = {p["bib_number"]: p for p in self.client.get("/api/participants").json()}[10]
+        self.assertEqual(p_after_remove["last_crossing_time"], t0 + 70, "back to lap 1's crossing")
 
         # Switching to a new event isolates laps so removing bib 10 in event A doesn't touch event B
         other_res = self.client.post("/api/events", json={"name": "Second Event"})

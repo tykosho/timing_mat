@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from core import exports
 from core import clock
-from core.db import Database, RegistrationError, EventStateError
+from core.db import Database, RegistrationError, EventStateError, LapEditError
 from core.registration_import import parse_registration_csv
 from core.lap_engine import LapEngine
 from hardware.mock_reader import MockReader
@@ -196,6 +196,20 @@ async def registration_error_handler(request: Request, exc: RegistrationError):
 @app.exception_handler(EventStateError)
 async def event_state_error_handler(request: Request, exc: EventStateError):
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+@app.exception_handler(LapEditError)
+async def lap_edit_error_handler(request: Request, exc: LapEditError):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+def _require_not_ended():
+    if db.get_event_state()["status"] == "ended":
+        raise EventStateError("This event has ended. Reopen it to edit laps.")
+
+async def _broadcast_manual_lap(lap: Dict[str, Any]):
+    lap_data = {k: lap[k] for k in ("id", "bib_number", "name", "lap_number", "lap_duration_seconds", "crossing_time")}
+    lap_data.update({"peak_rssi": 0.0, "manual_entry": True})
+    await broadcast_ws({"type": "lap_completed", "lap": lap_data, "leaderboard": db.get_leaderboard()})
+    return lap_data
 
 async def push_event_status(include_leaderboard: bool = True):
     """Tells the engine and every open page that the event changed."""
@@ -624,7 +638,7 @@ async def reset_runner_start(bib: int):
 
 class ManualLapRequest(BaseModel):
     bib_number: int
-    lap_duration_seconds: float
+    lap_duration_seconds: Optional[float] = None  # None: the lap ends now
 
 class QuickLapAdjustRequest(BaseModel):
     bib_number: Optional[int] = None
@@ -658,59 +672,27 @@ async def split_flagged_lap(lap_id: int):
 
 @app.post("/api/participants/{bib}/quick-add-lap")
 async def quick_add_lap(bib: int, req: Optional[QuickLapAdjustRequest] = None):
-    """Quickly increments a runner's lap count, estimating split from average or time difference."""
-    if db.get_event_state()["status"] == "ended":
-        raise EventStateError("This event has ended. Reopen it to edit laps.")
+    """+1 lap for a runner the reader missed, timed from their previous crossing (issue #9).
+
+    A runner who hasn't started gets a start instead: there's no previous crossing to time a
+    lap from, and making one up would put a fake lap in the results.
+    """
+    _require_not_ended()
     participant = db.get_participant_by_bib(bib)
     if not participant:
         raise HTTPException(status_code=404, detail="Runner not found")
 
-    last_lap = db.get_last_lap(bib)
-    lap_number = (last_lap["lap_number"] + 1) if last_lap else 1
-    now = clock.now()
+    if not (participant.get("last_crossing_time") or participant.get("start_time")):
+        now = clock.now()
+        db.set_participant_start(bib, now)
+        await broadcast_ws({"type": "runner_started",
+                            "data": {"bib_number": bib, "name": participant["name"], "start_time": now},
+                            "leaderboard": db.get_leaderboard()})
+        return {"status": "started", "start_time": now}
 
-    # Calculate sensible duration
-    last_crossing = participant.get("last_crossing_time") or participant.get("start_time")
-    if req and req.lap_duration_seconds and req.lap_duration_seconds > 0:
-        duration = req.lap_duration_seconds
-    elif last_crossing and (now - last_crossing) > 10.0:
-        duration = min(300.0, now - last_crossing)
-    elif last_lap and last_lap.get("lap_duration_seconds"):
-        duration = last_lap["lap_duration_seconds"]
-    else:
-        duration = 75.0
-
-    # If participant hasn't started yet, set start time first before updating last_crossing_time
-    if not participant.get("start_time"):
-        db.set_participant_start(bib, now - duration)
-
-    lap_id = db.record_lap(
-        bib_number=bib,
-        lap_number=lap_number,
-        crossing_time=now,
-        lap_duration_seconds=round(duration, 2),
-        peak_rssi=0.0,
-        manual_entry=True
-    )
-    db.update_participant_last_crossing(bib, now)
-
-    leaderboard = db.get_leaderboard()
-    lap_data = {
-        "id": lap_id,
-        "bib_number": bib,
-        "name": participant["name"],
-        "lap_number": lap_number,
-        "lap_duration_seconds": round(duration, 2),
-        "crossing_time": now,
-        "peak_rssi": 0.0,
-        "manual_entry": True
-    }
-    await broadcast_ws({
-        "type": "lap_completed",
-        "lap": lap_data,
-        "leaderboard": leaderboard
-    })
-    return {"status": "lap_added", "lap": lap_data}
+    duration = req.lap_duration_seconds if req and req.lap_duration_seconds else None
+    lap = db.add_manual_lap(bib, duration=duration, min_gap=db.get_event_state()["min_lap_seconds"])
+    return {"status": "lap_added", "lap": await _broadcast_manual_lap(lap)}
 
 @app.post("/api/participants/{bib}/quick-remove-lap")
 async def quick_remove_lap(bib: int):
@@ -734,39 +716,20 @@ async def quick_remove_lap(bib: int):
 
 @app.post("/api/laps/manual")
 async def add_manual_lap(req: ManualLapRequest):
-    participant = db.get_participant_by_bib(req.bib_number)
-    if not participant:
+    """A lap the reader missed: ends `lap_duration_seconds` after the runner's previous crossing,
+    or now if no duration is given. The next automatic lap is timed from it (issue #9)."""
+    _require_not_ended()
+    if not db.get_participant_by_bib(req.bib_number):
         raise HTTPException(status_code=404, detail="Runner not found")
-    last_lap = db.get_last_lap(req.bib_number)
-    lap_number = (last_lap["lap_number"] + 1) if last_lap else 1
-    crossing = clock.now()
-
-    lap_id = db.record_lap(
-        bib_number=req.bib_number,
-        lap_number=lap_number,
-        crossing_time=crossing,
-        lap_duration_seconds=req.lap_duration_seconds,
-        peak_rssi=0.0,
-        manual_entry=True
-    )
-    leaderboard = db.get_leaderboard()
-    await broadcast_ws({
-        "type": "lap_completed",
-        "lap": {
-            "id": lap_id,
-            "bib_number": req.bib_number,
-            "name": participant["name"],
-            "lap_number": lap_number,
-            "lap_duration_seconds": req.lap_duration_seconds,
-            "crossing_time": crossing
-        },
-        "leaderboard": leaderboard
-    })
-    return {"status": "lap_added", "lap_number": lap_number}
+    lap = db.add_manual_lap(req.bib_number, duration=req.lap_duration_seconds)
+    lap_data = await _broadcast_manual_lap(lap)
+    return {"status": "lap_added", "lap_number": lap["lap_number"], "lap": lap_data}
 
 @app.delete("/api/laps/{lap_id}")
 async def delete_lap(lap_id: int):
-    db.delete_lap(lap_id)
+    """Deletes a lap; its time goes to the next lap (or break, or the lap in progress)."""
+    if not db.delete_lap(lap_id):
+        raise HTTPException(status_code=404, detail="Lap not found")
     await push_leaderboard()
     return {"status": "lap_deleted"}
 
