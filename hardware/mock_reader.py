@@ -404,6 +404,11 @@ class MockReader(BaseRFIDReader):
         runner["rest_total_sim_sec"] = 0.0
         runner["progress"] = 0.0
 
+    def health(self) -> Dict[str, Any]:
+        """The simulator is always "connected" while running (issue #48)."""
+        return {"kind": "simulator", "running": self.is_running, "connected": self.is_running,
+                "paused": self.paused, "speed": self.speed_multiplier}
+
     def set_speed_multiplier(self, multiplier: float):
         with self._lock:
             self.speed_multiplier = max(0.1, min(float(multiplier), 50.0))

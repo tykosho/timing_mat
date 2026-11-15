@@ -50,6 +50,11 @@ class SerialReader(BaseRFIDReader):
         self.rearm_count: int = 0
         self._silence_logged = False
 
+        # Connection health for the admin page (issue #48)
+        self.connected: bool = False
+        self.connect_count: int = 0
+        self.last_error: Optional[str] = None
+
     def start(self):
         if self.is_running:
             return
@@ -63,6 +68,7 @@ class SerialReader(BaseRFIDReader):
         if not self.is_running:
             return
         self.is_running = False
+        self.connected = False
         self._stop_event.set()
 
         # Send stop inventory command if open
@@ -131,9 +137,14 @@ class SerialReader(BaseRFIDReader):
                     logger.info(f"Connected to R200 RFID reader on {self.port}")
                     buffer = bytearray()
                     self._arm()
+                    self.connected = True
+                    self.connect_count += 1
+                    self.last_error = None
                 except Exception as e:
                     logger.warning(f"Could not connect to {self.port}: {e}. Retrying in 2 seconds...")
                     self.serial_conn = None
+                    self.connected = False
+                    self.last_error = self._describe_open_error(e)
                     self._stop_event.wait(2.0)
                     continue
 
@@ -149,6 +160,8 @@ class SerialReader(BaseRFIDReader):
                 self._maybe_rearm()
             except Exception as e:
                 logger.error(f"Serial read error on {self.port}: {e}")
+                self.connected = False
+                self.last_error = f"Read error: {e}"
                 if self.capture:
                     self.capture.note(f"serial error: {e}")
                 if self.serial_conn:
@@ -158,6 +171,31 @@ class SerialReader(BaseRFIDReader):
                         pass
                 self.serial_conn = None
                 self._stop_event.wait(1.0)
+
+    def _describe_open_error(self, e: Exception) -> str:
+        """Short, actionable text for the admin page instead of pyserial's nested message."""
+        text = str(e)
+        if "No such file" in text or "[Errno 2]" in text:
+            return f"no device at {self.port} (is the reader plugged in?)"
+        if "Permission denied" in text or "[Errno 13]" in text:
+            return f"permission denied on {self.port} (container needs the serial device rules)"
+        if "busy" in text.lower() or "[Errno 16]" in text:
+            return f"{self.port} is in use by another program (e.g. the sniffer)"
+        return f"can't open {self.port}: {text}"
+
+    def health(self):
+        """Connection details for the admin page (issue #48). Read counts come from the app."""
+        now = self._clock()
+        return {
+            "kind": "serial",
+            "port": self.port,
+            "running": self.is_running,
+            "connected": self.connected,
+            "seconds_since_frame": round(now - self.last_frame_at, 1) if self.connected and self.last_frame_at else None,
+            "reconnects": max(0, self.connect_count - 1),
+            "rearms": self.rearm_count,
+            "last_error": self.last_error,
+        }
 
     def _process_stream(self, buffer: bytearray) -> bytearray:
         """Emits a TagRead for every complete tag frame in the buffer; returns the unparsed remainder."""

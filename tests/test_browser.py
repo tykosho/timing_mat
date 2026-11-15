@@ -190,6 +190,17 @@ class LiveUpdatesTest(BrowserTestCase):
         self.assertEqual(errors, [])
         ctx.close()
 
+    def test_reader_health_strip_updates_live(self):
+        """#48: the admin page's reader strip shows the simulator reading, via the WebSocket."""
+        ctx = self.admin_context()
+        page, errors = self.open(ctx, "/admin")
+        page.wait_for_function(
+            "() => document.getElementById('readerHealth').dataset.state === 'ok'"
+            " && /Simulator: reading .* [1-9][0-9.]* reads\\/s/.test(document.getElementById('readerHealthText').innerText)",
+            timeout=30_000)
+        self.assertEqual(errors, [])
+        ctx.close()
+
     def test_raw_tag_reads_reach_admin_only(self):
         """#12: tag_detected goes to the logged-in admin page, not to public screens."""
         counts = {"admin": 0, "public": 0}

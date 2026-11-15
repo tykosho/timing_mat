@@ -23,6 +23,7 @@ from hardware.mock_reader import MockReader
 from hardware.serial_reader import SerialReader, DEFAULT_REARM_INTERVAL, DEFAULT_SILENCE_REARM
 from hardware.frame_capture import open_capture
 from web import auth, join
+from web.reader_health import ReaderHealth
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("RaceApp")
@@ -141,6 +142,27 @@ async def flush_tag_events():
     for tag in batch:
         await broadcast_ws({"type": "tag_detected", "data": tag}, admin_only=True)
 
+# Reader health strip on the admin page (issue #48)
+READER_HEALTH_INTERVAL = 2.0
+reader_health = ReaderHealth()
+
+def reader_health_snapshot() -> Dict[str, Any]:
+    # The strip must never break the admin page: report a failing health() as a problem
+    try:
+        details = reader.health()
+        if not isinstance(details, dict):
+            raise TypeError(f"health() returned {type(details).__name__}")
+    except Exception as e:
+        logger.warning(f"Reader health unavailable: {e}")
+        details = {"kind": "unknown", "running": True, "connected": False, "last_error": f"health check failed: {e}"}
+    return reader_health.snapshot(details)
+
+async def reader_health_loop():
+    while True:
+        await asyncio.sleep(READER_HEALTH_INTERVAL)
+        if admin_connections:
+            await broadcast_ws({"type": "reader_health", "health": reader_health_snapshot()}, admin_only=True)
+
 async def tag_event_loop():
     while True:
         await asyncio.sleep(TAG_EVENT_INTERVAL)
@@ -164,6 +186,7 @@ lap_engine.refresh_event()
 def on_reader_tag(tag_read):
     """Called on the reader's thread for every read. Hands it to the event loop, so the lap
     engine's buffers are only ever touched from one thread (issue #13)."""
+    reader_health.note_read()
     loop = main_event_loop
     if loop is None:
         return  # reader started before the app; can't happen via lifespan, but never crash it
@@ -214,6 +237,7 @@ async def lifespan(app: FastAPI):
     flush_task = asyncio.create_task(lap_engine.flush_loop())
     sim_task = asyncio.create_task(sim_broadcast_loop()) if isinstance(reader, MockReader) else None
     tag_task = asyncio.create_task(tag_event_loop())
+    health_task = asyncio.create_task(reader_health_loop())
 
     # Start RFID reader
     reader.start()
@@ -223,6 +247,7 @@ async def lifespan(app: FastAPI):
     reader.stop()
     flush_task.cancel()
     tag_task.cancel()
+    health_task.cancel()
     if sim_task:
         sim_task.cancel()
     lap_engine.flush_raw_reads()
@@ -355,7 +380,8 @@ async def admin_page(request: Request):
             "is_mock": use_mock,
             "serial_port": serial_port,
             "raw_read_count": db.count_raw_reads(),
-            "auth_enabled": admin_auth.enabled
+            "auth_enabled": admin_auth.enabled,
+            "reader_health": reader_health_snapshot()
         }
     )
 
@@ -478,6 +504,11 @@ async def websocket_endpoint(websocket: WebSocket, channel: str = "public"):
         _forget_ws(websocket)
 
 # ----------------- REST API ROUTES -----------------
+@app.get("/api/reader/health")
+async def get_reader_health():
+    """Admin-only (not in auth.PUBLIC_ROUTES): connection state, reads/s, last tag (issue #48)."""
+    return reader_health_snapshot()
+
 @app.get("/api/leaderboard")
 async def get_leaderboard():
     return db.get_leaderboard()
