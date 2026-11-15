@@ -971,7 +971,7 @@
 
     function connectWS() {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live?channel=admin`);  // + unassigned tag prompts (#52)
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);

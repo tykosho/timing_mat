@@ -19,7 +19,8 @@
           {{ runner.name }}
           <span class="text-emerald-400 font-mono text-xl">#{{ runner.bib_number }}</span>
         </h1>
-        <p class="text-xs text-slate-400 font-mono">EPC: {{ runner.epc or 'no tag assigned' }} {% if runner.notes %}• {{ runner.notes }}{% endif %}</p>
+        {# Tag ID and notes are private (notes can hold medical/contact info): admins only (#52) #}
+        {% if is_admin %}<p class="text-xs text-slate-400 font-mono">EPC: {{ runner.epc or 'no tag assigned' }} {% if runner.notes %}• {{ runner.notes }}{% endif %}</p>{% endif %}
       </div>
     </div>
     <div class="flex items-center space-x-3">
