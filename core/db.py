@@ -1,11 +1,15 @@
+import logging
 import os
 import re
 import sqlite3
 import time
 from contextlib import contextmanager
 
-from core import clock
 from typing import Optional, List, Dict, Any, Tuple
+
+from core import clock
+
+logger = logging.getLogger("Database")
 
 EVENT_STATUSES = ("setup", "running", "paused", "ended")
 DEFAULT_EVENT_NAME = "Take Back the Track!"
@@ -53,12 +57,11 @@ class Database:
         """Opens a connection, commits on success, rolls back on error, always closes."""
         conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=10)
         conn.row_factory = sqlite3.Row
+        # With WAL (set once in init_db), NORMAL can lose at most the last commits on power
+        # loss but never corrupts the database; FULL would fsync on every lap (issue #15).
+        conn.execute("PRAGMA synchronous = NORMAL;")
         try:
             yield conn
-            try:
-                conn.execute("ALTER TABLE laps ADD COLUMN flag_reason TEXT DEFAULT NULL;")
-            except sqlite3.OperationalError:
-                pass
             conn.commit()
         except Exception:
             conn.rollback()
@@ -69,6 +72,12 @@ class Database:
     # ------------------------------------------------------------------ schema
     def init_db(self):
         with self.connect() as conn:
+            # Write-ahead log: a power cut mid-write (USB battery browning out) can't corrupt
+            # the database, and readers don't block the lap engine's writes. Stored in the
+            # file, so this sticks; backup() uses SQLite's backup API, which includes the WAL.
+            mode = conn.execute("PRAGMA journal_mode = WAL;").fetchone()[0]
+            if mode.lower() != "wal":
+                logger.warning(f"Could not enable WAL on {self.db_path} (journal_mode={mode})")
             legacy = self._is_legacy_schema(conn)
         if legacy:
             # Single-event databases from before events existed: keep a copy, then migrate.
@@ -151,10 +160,14 @@ class Database:
             if legacy:
                 self._migrate_legacy_data(conn)
 
-            # Added after the events table first shipped (issue #11)
-            event_cols = [r["name"] for r in conn.execute("PRAGMA table_info(events);")]
-            if "paused_at" not in event_cols:
-                conn.execute("ALTER TABLE events ADD COLUMN paused_at REAL DEFAULT NULL;")
+            # Columns added after the tables first shipped
+            for table, column, ddl in [
+                ("events", "paused_at", "REAL DEFAULT NULL"),      # issue #11
+                ("laps", "flag_reason", "TEXT DEFAULT NULL"),      # suspicious-lap review (#10)
+            ]:
+                cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table});")]
+                if column not in cols:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl};")
 
             if not conn.execute("SELECT 1 FROM events LIMIT 1;").fetchone():
                 self._insert_event(conn, self.default_event_name)
