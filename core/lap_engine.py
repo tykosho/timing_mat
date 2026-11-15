@@ -53,7 +53,11 @@ class LapEngine:
             self.db.insert_raw_reads(batch)
 
     def process_tag_read(self, tag_read: TagRead):
-        """Called whenever the RFID reader (mock or physical) reads an EPC."""
+        """Called for every read from the RFID reader (mock or physical).
+
+        Must run on the event loop, like flush_once: web/app.py hands reads over from the
+        reader thread with call_soon_threadsafe, so the buffers have a single owner (issue #13).
+        """
         epc = tag_read.epc.upper().strip()
         now = tag_read.timestamp
 

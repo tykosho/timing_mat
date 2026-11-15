@@ -152,8 +152,19 @@ clock.clock.ensure_not_before(db.latest_timestamp())
 
 lap_engine.refresh_event()
 
+def on_reader_tag(tag_read):
+    """Called on the reader's thread for every read. Hands it to the event loop, so the lap
+    engine's buffers are only ever touched from one thread (issue #13)."""
+    loop = main_event_loop
+    if loop is None:
+        return  # reader started before the app; can't happen via lifespan, but never crash it
+    try:
+        loop.call_soon_threadsafe(lap_engine.process_tag_read, tag_read)
+    except RuntimeError:
+        pass  # loop already closed during shutdown
+
 if use_mock:
-    reader = MockReader(on_tag_read=lap_engine.process_tag_read, speed_multiplier=5.0)
+    reader = MockReader(on_tag_read=on_reader_tag, speed_multiplier=5.0)
     lap_engine.speed_multiplier = 5.0
     logger.info("Operating in MOCK reader mode (Simulated runners active at 5.0x).")
 else:
@@ -164,7 +175,7 @@ else:
         return default if value is None else float(value)  # 0 turns that re-arm off
 
     reader = SerialReader(
-        port=serial_port, baud_rate=baud_rate, on_tag_read=lap_engine.process_tag_read,
+        port=serial_port, baud_rate=baud_rate, on_tag_read=on_reader_tag,
         rearm_interval=_seconds("rearm_interval_seconds", DEFAULT_REARM_INTERVAL),
         silence_rearm=_seconds("silence_rearm_seconds", DEFAULT_SILENCE_REARM),
     )
