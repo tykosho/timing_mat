@@ -111,6 +111,22 @@ class AuthApiTest(unittest.TestCase):
         for path in ["/leaderboard", "/runner/101", "/api/leaderboard", "/api/event", "/login"]:
             self.assertEqual(self.anon.get(path).status_code, 200, path)
 
+    def test_site_root_sends_spectators_to_the_leaderboard(self):
+        """http://race.lan on a phone must not land on the PIN page (issue #64)."""
+        res = self.anon.get("/")
+        self.assertEqual(res.status_code, 307)
+        self.assertEqual(res.headers["location"], "/leaderboard")
+        res = self.admin_client().get("/")
+        self.assertEqual(res.headers["location"], "/crossings")
+
+    def test_leaderboard_hides_crew_links_from_spectators(self):
+        public = self.anon.get("/leaderboard").text
+        self.assertNotIn('href="/crossings"', public)
+        self.assertNotIn('href="/replay"', public)
+        crew = self.admin_client().get("/leaderboard").text
+        self.assertIn('href="/crossings"', crew)
+        self.assertIn('href="/replay"', crew)
+
     def test_admin_pages_redirect_to_login(self):
         res = self.anon.get("/prepare")
         self.assertEqual(res.status_code, 303)
