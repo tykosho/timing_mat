@@ -1,9 +1,9 @@
-import time
 import asyncio
 import logging
 from collections import deque
 from typing import Deque, Dict, List, Tuple, Callable, Optional, Any
 from core.db import Database
+from core import clock
 from core.models import TagRead
 
 logger = logging.getLogger("LapEngine")
@@ -36,6 +36,10 @@ class LapEngine:
         event = self.db.get_event()
         self.log_event_id = event["id"] if event and event["status"] in ("running", "paused") else None
 
+    def maintain_clock(self):
+        """Keeps the race clock honest about system clock changes (see core/clock.py)."""
+        clock.clock.maintain(self.db.race_in_progress(), self.db.latest_timestamp())
+
     def flush_raw_reads(self):
         """Writes queued raw reads to the database."""
         batch = []
@@ -67,11 +71,15 @@ class LapEngine:
 
     async def flush_loop(self):
         """Background coroutine that checks buffers and triggers crossings when a burst finishes."""
+        ticks = 0
         while True:
             await asyncio.sleep(0.2)
             self.refresh_event()
             self.flush_raw_reads()
-            now = time.time()
+            ticks += 1
+            if ticks % 150 == 0:  # every ~30 s
+                self.maintain_clock()
+            now = clock.now()
             effective_window = max(0.15, self.crossing_window / max(1.0, self.speed_multiplier))
             epcs_to_process = []
 
@@ -244,7 +252,7 @@ class LapEngine:
         if not participant:
             return None
         epc = participant["epc"]
-        now = time.time()
+        now = clock.now()
         reads = [(now, -42.0)]
         outcome = await self._resolve_crossing(epc, reads, force=force)
         return {"participant": participant, "outcome": outcome}

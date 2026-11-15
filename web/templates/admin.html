@@ -430,6 +430,9 @@
 
   <script>
     let latestDetectedEpc = "";
+    // Seconds the phone/TV clock is behind the race clock (a Pi without an RTC may be far off)
+    const clockOffsetSec = {{ server_now() }} - Date.now() / 1000;
+    function raceNowSec() { return Date.now() / 1000 + clockOffsetSec; }
     let eventState = {{ event | tojson | safe }};
 
     function formatClock(seconds) {
@@ -454,7 +457,7 @@
 
       const status = eventState.status;
       if (status === "running" && eventState.start_time) {
-        clockEl.innerText = formatClock((Date.now() / 1000) - eventState.start_time);
+        clockEl.innerText = formatClock(raceNowSec() - eventState.start_time);
       } else if (status === "ended" && eventState.start_time && eventState.end_time) {
         clockEl.innerText = formatClock(eventState.end_time - eventState.start_time);
       } else if (!eventState.start_time) {

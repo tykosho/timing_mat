@@ -4,6 +4,7 @@ import logging
 from typing import Callable, Optional
 import serial
 from core.models import TagRead
+from core import clock
 from hardware.base import BaseRFIDReader
 from hardware.r200_protocol import (
     READ_MULTI_COMMAND, READ_STOP_COMMAND, extract_frames, parse_inventory_response
@@ -152,7 +153,7 @@ class SerialReader(BaseRFIDReader):
             parsed = parse_inventory_response(frame)
             if parsed:
                 epc_hex, rssi = parsed
-                tag_read = TagRead(epc=epc_hex, timestamp=time.time(), rssi=rssi)
+                tag_read = TagRead(epc=epc_hex, timestamp=clock.now(), rssi=rssi)
                 if self.on_tag_read:
                     self.on_tag_read(tag_read)
         return buffer
