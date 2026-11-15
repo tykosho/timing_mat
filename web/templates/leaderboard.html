@@ -156,6 +156,9 @@
 
   <!-- WebSocket & Client UI Logic -->
   <script>
+    // Seconds the phone/TV clock is behind the race clock (a Pi without an RTC may be far off)
+    const clockOffsetSec = {{ server_now() }} - Date.now() / 1000;
+    function raceNowSec() { return Date.now() / 1000 + clockOffsetSec; }
     let eventState = {{ event | tojson | safe }};
     let initialLeaderboard = {{ leaderboard | tojson | safe }};
 
@@ -201,7 +204,7 @@
       if (!eventState || !eventState.start_time) {
         timer.innerText = "00:00:00";
       } else if (eventState.status === "running") {
-        timer.innerText = formatClock((Date.now() / 1000) - eventState.start_time);
+        timer.innerText = formatClock(raceNowSec() - eventState.start_time);
       } else if (eventState.status === "ended" && eventState.end_time) {
         timer.innerText = formatClock(eventState.end_time - eventState.start_time);
       }

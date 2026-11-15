@@ -71,10 +71,10 @@ class AdminAuth:
         return recent
 
     def locked_out(self, client: str, now: Optional[float] = None) -> bool:
-        return len(self._recent_failures(client, now or time.time())) >= MAX_FAILURES
+        return len(self._recent_failures(client, now or time.monotonic())) >= MAX_FAILURES
 
     def check_pin(self, client: str, pin: str, now: Optional[float] = None) -> bool:
-        now = now or time.time()
+        now = now or time.monotonic()
         if self.locked_out(client, now):
             return False
         if self.enabled and hmac.compare_digest(pin.strip().encode(), self.pin.encode()):

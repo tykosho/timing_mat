@@ -366,6 +366,9 @@
       } catch(e) {}
     }
 
+    // Seconds the phone/TV clock is behind the race clock (a Pi without an RTC may be far off)
+    const clockOffsetSec = {{ server_now() }} - Date.now() / 1000;
+    function raceNowSec() { return Date.now() / 1000 + clockOffsetSec; }
     let eventState = {{ event | tojson | safe }};
     let currentLeaderboard = {{ leaderboard | tojson | safe }};
     const MAX_CROSSINGS = 10;
@@ -377,7 +380,7 @@
       name: l.name || `Bib #${l.bib_number}`,
       lap_number: l.lap_number,
       lap_duration_seconds: l.lap_duration_seconds,
-      added_at: (l.crossing_time || (Date.now() / 1000)) * 1000,
+      added_at: (l.crossing_time || raceNowSec()) * 1000,
       is_start: false
     }));
 
@@ -434,7 +437,7 @@
       if (!eventState || !eventState.start_time) {
         timer.innerText = "00:00:00";
       } else if (eventState.status === "running") {
-        timer.innerText = formatClock((Date.now() / 1000) - eventState.start_time);
+        timer.innerText = formatClock(raceNowSec() - eventState.start_time);
       } else if (eventState.status === "ended" && eventState.end_time) {
         timer.innerText = formatClock(eventState.end_time - eventState.start_time);
       }
@@ -446,7 +449,7 @@
     }, 1000);
 
     function formatAgo(addedAtMs) {
-      const diffSec = Math.max(0, Math.floor((Date.now() - addedAtMs) / 1000));
+      const diffSec = Math.max(0, Math.floor((raceNowSec() * 1000 - addedAtMs) / 1000));
       if (diffSec < 5) return "Just now";
       if (diffSec < 60) return `${diffSec}s ago`;
       const mins = Math.floor(diffSec / 60);
@@ -633,7 +636,7 @@
             name: msg.lap.name || `Bib #${msg.lap.bib_number}`,
             lap_number: msg.lap.lap_number,
             lap_duration_seconds: msg.lap.lap_duration_seconds,
-            added_at: (msg.lap.crossing_time ? msg.lap.crossing_time * 1000 : Date.now()),
+            added_at: (msg.lap.crossing_time ? msg.lap.crossing_time * 1000 : raceNowSec() * 1000),
             is_start: false
           });
         } else if (msg.type === "runner_started") {
@@ -644,7 +647,7 @@
             name: msg.data.name || `Bib #${msg.data.bib_number}`,
             lap_number: 0,
             lap_duration_seconds: 0,
-            added_at: (msg.data.start_time ? msg.data.start_time * 1000 : Date.now()),
+            added_at: (msg.data.start_time ? msg.data.start_time * 1000 : raceNowSec() * 1000),
             is_start: true
           });
         } else if (msg.type === "lap_removed") {

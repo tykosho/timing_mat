@@ -67,7 +67,7 @@ class ForcedCrossingEngineTest(unittest.TestCase):
         self.assertEqual(self.db.get_laps_for_runner(101)[0]["lap_duration_seconds"], 60.0)
 
     def test_trigger_manual_crossing_reports_outcome(self):
-        with mock.patch("core.lap_engine.time.time", return_value=1105.0):
+        with mock.patch("core.clock.now", return_value=1105.0):
             result = asyncio.run(self.engine.trigger_manual_crossing(101))
         self.assertEqual(result["participant"]["bib_number"], 101)
         self.assertEqual(result["outcome"], "debounced")

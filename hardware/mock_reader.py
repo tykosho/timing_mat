@@ -4,6 +4,7 @@ import threading
 import logging
 from typing import Callable, List, Dict, Any, Optional
 from core.models import TagRead
+from core import clock
 from hardware.base import BaseRFIDReader
 
 logger = logging.getLogger("MockReader")
@@ -247,6 +248,6 @@ class MockReader(BaseRFIDReader):
             peak_factor = 1.0 - 4.0 * ((progress - 0.5) ** 2)
             rssi = -78.0 + (36.0 * max(0.0, peak_factor)) + random.uniform(-2.5, 2.5)
 
-            read = TagRead(epc=epc, timestamp=time.time(), rssi=round(rssi, 1))
+            read = TagRead(epc=epc, timestamp=clock.now(), rssi=round(rssi, 1))
             self.on_tag_read(read)
             time.sleep(max(0.008, random.uniform(0.08, 0.15) / speed))

@@ -3,6 +3,8 @@ import re
 import sqlite3
 import time
 from contextlib import contextmanager
+
+from core import clock
 from typing import Optional, List, Dict, Any, Tuple
 
 EVENT_STATUSES = ("setup", "running", "paused", "ended")
@@ -214,7 +216,7 @@ class Database:
             INSERT INTO events (name, status, start_time, min_lap_seconds, max_lap_rest_seconds, track_length_m, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?);""",
             (name.strip() or self.default_event_name, status, start_time, min_lap_seconds,
-             max_lap_rest_seconds, track_length_m, time.time()))
+             max_lap_rest_seconds, track_length_m, clock.now()))
         return cursor.lastrowid
 
     def backup(self, label: str = "manual") -> str:
@@ -319,7 +321,7 @@ class Database:
         if ev["status"] == "ended":
             raise EventStateError("This event has ended. Reopen it to continue timing.")
         if ev["status"] != "running":
-            self._set_status(ev, "running", ev["start_time"] or at or time.time(), None)
+            self._set_status(ev, "running", ev["start_time"] or at or clock.now(), None)
         return self.get_event()
 
     def pause_event(self) -> Dict[str, Any]:
@@ -337,7 +339,7 @@ class Database:
             raise EventStateError("The event hasn't started yet.")
         if ev["status"] == "ended":
             return ev
-        now = at or time.time()
+        now = at or clock.now()
         with self.connect() as conn:
             for b in conn.execute("SELECT id, start_time FROM breaks WHERE event_id = ? AND end_time = 0.0;", (ev["id"],)).fetchall():
                 conn.execute("UPDATE breaks SET end_time = ?, duration_seconds = ? WHERE id = ?;",
@@ -377,7 +379,7 @@ class Database:
             conn.execute("""
                 INSERT INTO participants (event_id, bib_number, name, email, epc, notes, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?);""",
-                (eid, bib_number, name, (email or "").strip(), epc, (notes or "").strip(), time.time()))
+                (eid, bib_number, name, (email or "").strip(), epc, (notes or "").strip(), clock.now()))
         return True
 
     def update_participant(self, bib_number: int, name: str, epc: Optional[str] = None, notes: str = "",
@@ -502,7 +504,7 @@ class Database:
                 conn.execute("""
                     INSERT INTO participants (event_id, bib_number, name, email, epc, notes, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?);""",
-                    (eid, bib, name, email, epc, (r.get("notes") or "").strip(), time.time()))
+                    (eid, bib, name, email, epc, (r.get("notes") or "").strip(), clock.now()))
                 used_bibs.add(bib)
                 if epc:
                     used_epcs.add(epc)
@@ -672,6 +674,26 @@ class Database:
         with self.connect() as conn:
             return conn.execute("SELECT COUNT(*) AS c FROM raw_reads WHERE event_id = ?;", (self._eid(event_id),)).fetchone()["c"]
 
+    # ------------------------------------------------------------------ clock support
+    def latest_timestamp(self) -> Optional[float]:
+        """The newest time stored anywhere, so the race clock never starts before it (issue #2)."""
+        with self.connect() as conn:
+            row = conn.execute("""
+                SELECT MAX(t) AS t FROM (
+                    SELECT MAX(MAX(COALESCE(start_time, 0), COALESCE(end_time, 0), created_at)) AS t FROM events
+                    UNION ALL SELECT MAX(MAX(COALESCE(start_time, 0), COALESCE(last_crossing_time, 0), created_at)) FROM participants
+                    UNION ALL SELECT MAX(crossing_time) FROM laps
+                    UNION ALL SELECT MAX(end_time) FROM breaks
+                    UNION ALL SELECT MAX(timestamp) FROM raw_reads
+                );""").fetchone()
+            return row["t"] if row and row["t"] else None
+
+    def race_in_progress(self) -> bool:
+        """True while any event is running or paused, i.e. timestamps are being compared."""
+        with self.connect() as conn:
+            row = conn.execute("SELECT 1 FROM events WHERE status IN ('running', 'paused') LIMIT 1;").fetchone()
+            return row is not None
+
     # ------------------------------------------------------------------ breaks
     def record_break(self, bib_number: int, start_time: float, end_time: float, duration_seconds: float,
                      event_id: Optional[int] = None) -> int:
@@ -697,7 +719,7 @@ class Database:
             return dict(row) if row else None
 
     def start_manual_break(self, bib_number: int, event_id: Optional[int] = None) -> Dict[str, Any]:
-        eid, now = self._eid(event_id), time.time()
+        eid, now = self._eid(event_id), clock.now()
         with self.connect() as conn:
             if not conn.execute("SELECT 1 FROM breaks WHERE event_id = ? AND bib_number = ? AND end_time = 0.0;", (eid, bib_number)).fetchone():
                 count = conn.execute("SELECT COUNT(*) AS c FROM breaks WHERE event_id = ? AND bib_number = ?;", (eid, bib_number)).fetchone()["c"]
@@ -707,7 +729,7 @@ class Database:
         return {"status": "on_break", "bib": bib_number, "start_time": now}
 
     def end_manual_break(self, bib_number: int, event_id: Optional[int] = None) -> Dict[str, Any]:
-        eid, now = self._eid(event_id), time.time()
+        eid, now = self._eid(event_id), clock.now()
         duration = 0.0
         with self.connect() as conn:
             open_b = conn.execute("SELECT * FROM breaks WHERE event_id = ? AND bib_number = ? AND end_time = 0.0 ORDER BY id DESC LIMIT 1;",
@@ -725,7 +747,7 @@ class Database:
         ev = self.get_event(eid)
         max_rest = ev.get("max_lap_rest_seconds", 600.0)
         track_m = ev.get("track_length_m") or 400.0
-        now = time.time()
+        now = clock.now()
 
         with self.connect() as conn:
             rows = conn.execute("""

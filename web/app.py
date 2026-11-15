@@ -1,6 +1,5 @@
 import os
 import re
-import time
 import json
 import asyncio
 import logging
@@ -16,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from core import exports
+from core import clock
 from core.db import Database, RegistrationError, EventStateError
 from core.registration_import import parse_registration_csv
 from core.lap_engine import LapEngine
@@ -115,6 +115,9 @@ lap_engine = LapEngine(
     on_runner_resumed=on_runner_resumed,
     on_tag_detected=on_tag_detected
 )
+# A Pi without an RTC can boot with an older time than what's already stored (issue #2)
+clock.clock.ensure_not_before(db.latest_timestamp())
+
 lap_engine.refresh_event()
 
 if use_mock:
@@ -181,6 +184,8 @@ def _tojson(obj) -> Markup:
 
 templates = Jinja2Templates(directory="web/templates")
 templates.env.filters["tojson"] = _tojson
+# Pages compare their own clock with this to show elapsed race time correctly (issue #2)
+templates.env.globals["server_now"] = lambda: f"{clock.now():.3f}"
 os.makedirs("web/static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="web/static"), name="static")
 
@@ -394,7 +399,7 @@ def _elapsed(state: Dict[str, Any]) -> float:
         return 0.0
     if state["status"] == "ended" and state["end_time"]:
         return state["end_time"] - state["start_time"]
-    return time.time() - state["start_time"]
+    return clock.now() - state["start_time"]
 
 @app.get("/api/event")
 async def get_event():
@@ -570,7 +575,7 @@ async def manual_start_runner(bib: int):
     participant = db.get_participant_by_bib(bib)
     if not participant:
         raise HTTPException(status_code=404, detail="Runner not found")
-    now = time.time()
+    now = clock.now()
     db.set_participant_start(bib, now)
     leaderboard = db.get_leaderboard()
     await broadcast_ws({
@@ -662,7 +667,7 @@ async def quick_add_lap(bib: int, req: Optional[QuickLapAdjustRequest] = None):
 
     last_lap = db.get_last_lap(bib)
     lap_number = (last_lap["lap_number"] + 1) if last_lap else 1
-    now = time.time()
+    now = clock.now()
 
     # Calculate sensible duration
     last_crossing = participant.get("last_crossing_time") or participant.get("start_time")
@@ -734,7 +739,7 @@ async def add_manual_lap(req: ManualLapRequest):
         raise HTTPException(status_code=404, detail="Runner not found")
     last_lap = db.get_last_lap(req.bib_number)
     lap_number = (last_lap["lap_number"] + 1) if last_lap else 1
-    crossing = time.time()
+    crossing = clock.now()
 
     lap_id = db.record_lap(
         bib_number=req.bib_number,
