@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 from urllib.parse import quote
 
 from fastapi import Request
+from starlette.requests import HTTPConnection
 from fastapi.responses import JSONResponse, RedirectResponse
 
 logger = logging.getLogger("Auth")
@@ -58,7 +59,8 @@ class AdminAuth:
     def session_token(self) -> str:
         return hmac.new(self.pin.encode(), b"timing-mat admin session v1", hashlib.sha256).hexdigest()
 
-    def is_admin(self, request: Request) -> bool:
+    def is_admin(self, request: HTTPConnection) -> bool:
+        """Works for HTTP requests and WebSockets (both carry the cookie)."""
         if not self.enabled:
             return True
         cookie = request.cookies.get(COOKIE_NAME, "")
