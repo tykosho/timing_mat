@@ -582,6 +582,30 @@
   </div>
   {% endif %}
 
+  <!-- Crossing Too Soon Prompt -->
+  <div id="tooSoonPrompt" role="dialog" aria-labelledby="tooSoonTitle"
+       class="hidden fixed top-20 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md z-50 bg-slate-900/95 backdrop-blur border border-amber-500/70 rounded-2xl shadow-2xl p-4 text-slate-100">
+    <div class="flex items-start justify-between gap-3 mb-2">
+      <div class="flex items-center gap-2">
+        <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+        <h2 id="tooSoonTitle" class="text-sm font-bold text-white">Crossing Too Soon</h2>
+      </div>
+      <span id="tooSoonCountdown" class="text-[11px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full shrink-0">30s</span>
+    </div>
+    <p id="tooSoonMessage" class="text-xs text-slate-300 mt-1"></p>
+    <p id="tooSoonError" class="hidden text-xs text-rose-400 font-medium mt-2"></p>
+    <div class="flex items-center justify-end gap-2 mt-4">
+      <button type="button" id="tooSoonRejectBtn" onclick="rejectTooSoonPrompt()"
+              class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors">
+        Reject
+      </button>
+      <button type="button" id="tooSoonAcceptBtn" onclick="acceptTooSoonPrompt()"
+              class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow transition-colors">
+        Accept Lap
+      </button>
+    </div>
+  </div>
+
   <!-- Unrecognized Tag Self-Registration Prompt (issue #45) -->
   <div id="unrecognizedTagPrompt" role="dialog" aria-labelledby="unrecognizedTagTitle"
        class="hidden fixed bottom-4 left-4 right-4 sm:right-auto sm:w-96 z-50 bg-slate-900/95 backdrop-blur border border-amber-500/60 rounded-2xl shadow-2xl p-4 text-slate-100">
@@ -1072,6 +1096,10 @@
           if (msg.data && msg.data.epc) {
             showUnrecognizedTagPrompt(msg.data.epc);
           }
+        } else if (msg.type === "crossing_too_soon") {
+          if (msg.data && msg.data.bib_number != null) {
+            showTooSoonPrompt(msg.data);
+          }
         } else if (msg.type === "event_status") {
           const wasReset = msg.event && msg.event.status === "setup" && !msg.event.start_time;
           eventState = msg.event;
@@ -1282,6 +1310,99 @@
       try {
         await fetch("/api/event/start", { method: "POST" });
       } catch (e) {}
+    }
+
+    // Too-soon crossing confirmation dialog (auto-rejects after 30s)
+    const TOO_SOON_AUTO_REJECT_MS = 30000;
+    const tooSoonState = {
+      data: null,
+      timeoutId: null,
+      intervalId: null,
+      deadline: 0,
+    };
+
+    function clearTooSoonTimers() {
+      if (tooSoonState.timeoutId !== null) {
+        clearTimeout(tooSoonState.timeoutId);
+        tooSoonState.timeoutId = null;
+      }
+      if (tooSoonState.intervalId !== null) {
+        clearInterval(tooSoonState.intervalId);
+        tooSoonState.intervalId = null;
+      }
+    }
+
+    function updateTooSoonCountdown() {
+      const el = document.getElementById("tooSoonCountdown");
+      if (!el) return;
+      const secs = Math.max(0, Math.ceil((tooSoonState.deadline - Date.now()) / 1000));
+      el.textContent = `${secs}s`;
+    }
+
+    function hideTooSoonPrompt() {
+      clearTooSoonTimers();
+      tooSoonState.data = null;
+      const promptEl = document.getElementById("tooSoonPrompt");
+      if (promptEl) promptEl.classList.add("hidden");
+    }
+
+    function rejectTooSoonPrompt() {
+      hideTooSoonPrompt();
+    }
+
+    function showTooSoonPrompt(data) {
+      if (tooSoonState.data && tooSoonState.data.bib_number === data.bib_number) {
+        return;
+      }
+      clearTooSoonTimers();
+      tooSoonState.data = data;
+      const elapsed = Number(data.elapsed_seconds || 0).toFixed(1);
+      const minLap = Number(data.min_lap_seconds || 0).toFixed(0);
+      const msgEl = document.getElementById("tooSoonMessage");
+      msgEl.textContent = `${data.name || `Bib #${data.bib_number}`} (#${data.bib_number}) crossed too soon (${elapsed}s since last crossing; minimum lap is ${minLap}s). Accept this lap time or reject it?`;
+      const errEl = document.getElementById("tooSoonError");
+      errEl.textContent = "";
+      errEl.classList.add("hidden");
+      document.getElementById("tooSoonAcceptBtn").disabled = false;
+      document.getElementById("tooSoonPrompt").classList.remove("hidden");
+
+      tooSoonState.deadline = Date.now() + TOO_SOON_AUTO_REJECT_MS;
+      updateTooSoonCountdown();
+      tooSoonState.timeoutId = setTimeout(() => {
+        rejectTooSoonPrompt();
+      }, TOO_SOON_AUTO_REJECT_MS);
+      tooSoonState.intervalId = setInterval(updateTooSoonCountdown, 1000);
+    }
+
+    async function acceptTooSoonPrompt() {
+      if (!tooSoonState.data) return;
+      const btn = document.getElementById("tooSoonAcceptBtn");
+      const errEl = document.getElementById("tooSoonError");
+      btn.disabled = true;
+      errEl.classList.add("hidden");
+      try {
+        const res = await fetch("/api/crossings/accept-too-soon", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bib_number: tooSoonState.data.bib_number,
+            crossing_time: tooSoonState.data.crossing_time,
+            peak_rssi: tooSoonState.data.peak_rssi ?? -45.0,
+          }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          errEl.textContent = body.detail || "Could not accept crossing.";
+          errEl.classList.remove("hidden");
+          btn.disabled = false;
+          return;
+        }
+        hideTooSoonPrompt();
+      } catch (err) {
+        errEl.textContent = "Network error while accepting lap.";
+        errEl.classList.remove("hidden");
+        btn.disabled = false;
+      }
     }
 
     // Unrecognized tag self-registration prompt (issue #45)
