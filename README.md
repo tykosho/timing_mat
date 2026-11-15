@@ -77,11 +77,26 @@ Everything (runners, bibs, tags, laps, raw reads) belongs to an **event**. The r
 
 1. Plug your USB-to-UART adapter (connected to the R200 board) into the Raspberry Pi.
 2. Clone or copy this repository to the Pi.
-3. Run with the Raspberry Pi profile (which maps `/dev/ttyUSB0` into Docker):
+3. Choose an admin PIN (6+ digits) and put it in a `.env` file next to `docker-compose.pi.yml` (it's git-ignored):
+   ```bash
+   echo "ADMIN_PIN=482913" > .env
+   ```
+   Compose refuses to start without it. See [Admin access](#-admin-access) below.
+4. Run with the Raspberry Pi profile (which maps `/dev/ttyUSB0` into Docker):
    ```bash
    docker compose -f docker-compose.pi.yml up --build -d
    ```
-4. If the Pi reboots or power is briefly interrupted, Docker's `restart: unless-stopped` policy will automatically bring the race timer and database back online.
+5. If the Pi reboots or power is briefly interrupted, Docker's `restart: unless-stopped` policy will automatically bring the race timer and database back online.
+
+### 🔒 Admin access
+
+Runners' phones are on the same Wi-Fi as the timer, so race control is behind a PIN:
+
+- **Open to everyone:** the leaderboard (`/leaderboard`), runner pages (`/runner/<bib>`), the live WebSocket, and the read-only `GET /api/leaderboard` and `GET /api/event`.
+- **Admin only:** `/admin`, `/prepare`, every change (start/pause/end, runners, tags, laps, settings), runner lists and CSV exports (they contain emails). Opening an admin page asks for the PIN, and the login lasts 7 days on that device. The log-out button is in the admin header.
+- **Setting the PIN:** `ADMIN_PIN` env var (or `admin.pin` in `config.yaml`). Changing it logs everyone out.
+- **No PIN set:** in mock mode the admin is left open (with a warning banner) for local development. With a real reader, the app makes up a PIN and prints it in the log (`docker compose logs race-timer`).
+- Five wrong PINs from one device lock it out for a minute.
 
 ---
 
