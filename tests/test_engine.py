@@ -3,7 +3,6 @@ import time
 import asyncio
 import unittest
 from core.db import Database
-from core.models import TagRead
 from core.lap_engine import LapEngine
 from hardware.r200_protocol import (
     build_command_frame, calculate_checksum, extract_frames, parse_inventory_response, parse_tag_frame,
