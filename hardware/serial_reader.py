@@ -46,7 +46,9 @@ class SerialReader(BaseRFIDReader):
 
         # Watchdog state (monotonic clock, so wall-clock jumps don't matter)
         self.last_arm_at: float = 0.0
-        self.last_frame_at: float = 0.0
+        self.last_frame_at: float = 0.0   # last frame actually received (0 = none yet)
+        self._silence_from: float = 0.0   # the watchdog counts silence from here
+        self._connected_at: float = 0.0
         self.rearm_count: int = 0
         self._silence_logged = False
 
@@ -102,8 +104,10 @@ class SerialReader(BaseRFIDReader):
         self.serial_conn.flush()
         now = self._clock()
         self.last_arm_at = now
-        # Count silence from the (re)arm, so a quiet field doesn't re-arm on every pass
-        self.last_frame_at = max(self.last_frame_at, now)
+        # Count silence from the (re)arm, so a quiet field doesn't re-arm on every pass. This
+        # must not touch last_frame_at: the admin page shows real silence from that, and a
+        # module that stopped answering has to turn it amber even though we keep re-arming.
+        self._silence_from = max(self.last_frame_at, now)
 
     def _maybe_rearm(self) -> Optional[str]:
         """Re-sends the inventory command if it's due. Returns the reason, or None."""
@@ -111,11 +115,11 @@ class SerialReader(BaseRFIDReader):
         if self.rearm_interval and now - self.last_arm_at >= self.rearm_interval:
             reason = "routine"
             logger.info(f"Re-arming R200 inventory (routine, every {self.rearm_interval:.0f}s)")
-        elif self.silence_rearm and now - self.last_frame_at >= self.silence_rearm:
+        elif self.silence_rearm and now - self._silence_from >= self.silence_rearm:
             reason = "silence"
             # A field with no tags may be silent for a long time: say so once per quiet spell
             log = logger.debug if self._silence_logged else logger.info
-            log(f"No frames from the R200 for {now - self.last_frame_at:.0f}s; re-arming inventory")
+            log(f"No frames from the R200 for {now - self._heard_from():.0f}s; re-arming inventory")
             self._silence_logged = True
         else:
             return None
@@ -136,6 +140,7 @@ class SerialReader(BaseRFIDReader):
                     )
                     logger.info(f"Connected to R200 RFID reader on {self.port}")
                     buffer = bytearray()
+                    self._connected_at = self._clock()
                     self._arm()
                     self.connected = True
                     self.connect_count += 1
@@ -183,6 +188,9 @@ class SerialReader(BaseRFIDReader):
             return f"{self.port} is in use by another program (e.g. the sniffer)"
         return f"can't open {self.port}: {text}"
 
+    def _heard_from(self) -> float:
+        return max(self.last_frame_at, self._connected_at)
+
     def health(self):
         """Connection details for the admin page (issue #48). Read counts come from the app."""
         now = self._clock()
@@ -191,7 +199,8 @@ class SerialReader(BaseRFIDReader):
             "port": self.port,
             "running": self.is_running,
             "connected": self.connected,
-            "seconds_since_frame": round(now - self.last_frame_at, 1) if self.connected and self.last_frame_at else None,
+            # Since the last frame, or since connecting if none came on this connection
+            "seconds_since_frame": round(now - self._heard_from(), 1) if self.connected else None,
             "reconnects": max(0, self.connect_count - 1),
             "rearms": self.rearm_count,
             "last_error": self.last_error,
@@ -201,7 +210,7 @@ class SerialReader(BaseRFIDReader):
         """Emits a TagRead for every complete tag frame in the buffer; returns the unparsed remainder."""
         frames, buffer = extract_frames(buffer)
         if frames:
-            self.last_frame_at = self._clock()
+            self.last_frame_at = self._silence_from = self._clock()
             self._silence_logged = False
         for frame in frames:
             parsed = parse_inventory_response(frame)

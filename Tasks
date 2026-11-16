@@ -1,20 +1,22 @@
 # Features to consider or implement
 
-Status as of 2026-11-15. Open items link to their GitHub issue where one exists.
+Status as of 2026-11-16. Open items link to their GitHub issue where one exists.
 
 ## 1. Mat Crossing Feed & Instant Verification View — DONE (`/crossings`, #27, #43)
 - Recent-finisher cards (bib, name, initials avatar, last split & pace, laps, distance, rank).
 - Quick fixes on the cards: `+1 Lap` for a missed read, `-1 Lap` for a double count (timed from real crossings, #9).
 - Display settings panel and larger default font (#43).
 - Self-registration prompt when an unknown tag crosses the mat (#45, #47).
+- Confirm or reject a crossing that comes too soon after the last one, auto-reject after 30 s (#66).
 
 ## 2. Multi-Level Simulator
 - DONE — Level 2, race dynamics & flaws (#36): pack crossings, missed reads, weak stray reads,
   loitering on the mat, double bounces/counts, unknown tags; presets and the `/simulator` studio.
 - DONE — Lap times driven by a real GPX recording (#34).
-- TODO — Level 1, raw serial stream: emulate R200 UART frames (`0xAA ... 0xDD`) with checksum
-  errors, RSSI jitter and dropped frames, fed through `SerialReader`. Real captures from the
-  running server (#51) are the natural input.
+- DONE — Level 1, fake R200 on the serial line (#67): `python -m hardware.fake_r200` serves
+  real-format frames on a virtual serial port (runners, faults, 65,535-poll stop, hang,
+  unplug in tests, or replay of a capture). Found two bugs: corrupted frames became ghost tags,
+  and a hung reader never turned the health strip amber.
 - TODO — Level 3, replay a recorded session to WebSocket clients for demos.
 
 ## 3. Participant Registration & Profiles
@@ -44,6 +46,6 @@ Status as of 2026-11-15. Open items link to their GitHub issue where one exists.
 - DONE: Reader watchdog re-arms the inventory (#28). To verify on hardware: #5.
 - DONE: Raw R200 traffic capture from the running server (#51, #53).
 - DONE (software): Pi as its own Wi-Fi hotspot with a printable QR join page (#44). To verify on a Pi: #42.
-- TODO: Verify R200 frame parsing + RSSI scale against captured frames (#7).
+- DONE: R200 frame parsing + RSSI scale verified against frames captured on the Pi (#7, #58).
 - TODO: Power check on the USB battery (#18).
 - TODO: Set R200 RF power / region from config at startup.
