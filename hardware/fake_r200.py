@@ -83,6 +83,7 @@ class FakeR200:
                  polls_per_second: float = POLLS_PER_SECOND,
                  poll_limit: Optional[int] = None,
                  read_chance: float = 0.6,
+                 max_tags_per_poll: Optional[int] = None,
                  faults: Optional[Faults] = None,
                  seed: Optional[int] = None):
         """poll_limit overrides the count in the host's command (to reach the stop quickly)."""
@@ -90,6 +91,7 @@ class FakeR200:
         self.polls_per_second = polls_per_second
         self.poll_limit = poll_limit
         self.read_chance = read_chance
+        self.max_tags_per_poll = max_tags_per_poll  # a crowd on the antenna: not every tag answers
         self.faults = faults or Faults()
         self.rng = random.Random(seed)
         self._lock = threading.Lock()
@@ -182,7 +184,10 @@ class FakeR200:
             self.polls_left -= 1
             self.polls += 1
             frames = []
-            for epc, rssi in self._tags_at(t):
+            present = self._tags_at(t)
+            if self.max_tags_per_poll and len(present) > self.max_tags_per_poll:
+                present = self.rng.sample(present, self.max_tags_per_poll)
+            for epc, rssi in present:
                 if self.rng.random() < self.read_chance:
                     if self.faults.rssi_jitter:
                         rssi += self.rng.gauss(0.0, self.faults.rssi_jitter)
@@ -274,26 +279,44 @@ class FakeSerialPort:
 
 
 class LappingRunners:
-    """Runners going round the track, crossing the mat every lap (for the virtual port)."""
+    """Runners going round the track, crossing the mat every lap.
+
+    With pack_size > 1, runners are grouped into packs that keep the same pace for the whole
+    race and cross the mat within `pack_gap` seconds of each other, the hardest case for the
+    reader. `crossings` counts each runner's crossings, the truth to check laps against.
+    """
 
     def __init__(self, device: FakeR200, epcs: List[str], lap_seconds: float = 75.0,
-                 spread: float = 0.2, on_mat_seconds: float = 1.2, seed: Optional[int] = None):
+                 spread: float = 0.2, on_mat_seconds: float = 1.2, seed: Optional[int] = None,
+                 pack_size: int = 1, pack_gap: float = 1.5, start_spread: float = 4.0):
         self.device = device
         self.epcs = epcs
-        self.lap_seconds = lap_seconds
-        self.spread = spread
         self.on_mat_seconds = on_mat_seconds
+        self.pack_gap = pack_gap
         self.rng = random.Random(seed)
+        self.crossings: Dict[str, int] = {epc: 0 for epc in epcs}
         start = device.clock()
+        size = max(1, pack_size)
         # Everyone crosses at the start within a few seconds (chip start), then laps
-        self.next_at = {epc: start + self.rng.uniform(0, 4) for epc in epcs}
-        self.pace = {epc: lap_seconds * self.rng.uniform(1 - spread, 1 + spread) for epc in epcs}
+        self.packs = []
+        for i in range(0, len(epcs), size):
+            self.packs.append({
+                "epcs": epcs[i:i + size],
+                "next_at": start + self.rng.uniform(0, start_spread),
+                "pace": lap_seconds * self.rng.uniform(1 - spread, 1 + spread),
+            })
 
     def tick(self, now: float):
-        for epc, at in self.next_at.items():
-            if at <= now:
-                self.device.place_tag(epc, rssi=self.rng.uniform(-58, -38), seconds=self.on_mat_seconds, at=at)
-                self.next_at[epc] = at + self.pace[epc] * self.rng.uniform(0.95, 1.05)
+        for pack in self.packs:
+            at = pack["next_at"]
+            if at > now:
+                continue
+            for epc in pack["epcs"]:
+                offset = self.rng.uniform(0, self.pack_gap) if len(pack["epcs"]) > 1 else 0.0
+                self.device.place_tag(epc, rssi=self.rng.uniform(-58, -38), seconds=self.on_mat_seconds,
+                                      at=at + offset)
+                self.crossings[epc] += 1
+            pack["next_at"] = at + pack["pace"] * self.rng.uniform(0.95, 1.05)
 
 
 def capture_chunks(path: str) -> Iterator[Tuple[float, bytes]]:
