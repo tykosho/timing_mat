@@ -11,6 +11,10 @@ logger = logging.getLogger("LapEngine")
 # Longest a single crossing's burst of reads may last before it's resolved anyway (issue #11).
 # A runner passing the mat is in the antenna field for 1-2 s.
 MAX_BURST_SECONDS = 8.0
+# A first crossing between the minimum lap time and this many typical laps after the gun is
+# flagged as a possible missed start (#72); before there are enough laps, within 10 minutes.
+MISSED_START_LAPS = 2.5
+MISSED_START_DEFAULT_WINDOW = 600.0
 
 class LapEngine:
     def __init__(self, db: Database, 
@@ -115,6 +119,19 @@ class LapEngine:
             if reads:
                 await self._resolve_crossing(epc, reads)
 
+    def _missed_start_reason(self, seconds_after_gun: float, min_lap_sec: float) -> Optional[str]:
+        """Issue #72: in the crowd at the gun a tag may not be read at all. Then the runner's
+        first lap crossing becomes their start and they silently lose a lap. A first crossing
+        about a lap or so after the gun looks like that; it could also be someone joining late,
+        so it is only flagged for the admin to decide."""
+        race_seconds = seconds_after_gun * self.speed_multiplier
+        typical = self.db.typical_lap_seconds()
+        latest = MISSED_START_LAPS * typical if typical else MISSED_START_DEFAULT_WINDOW
+        if not (min_lap_sec <= race_seconds <= latest):
+            return None
+        m, sec = divmod(int(round(race_seconds)), 60)
+        return f"First seen {m}:{sec:02d} after the gun: start missed in the crowd, or joined late?"
+
     async def _resolve_crossing(self, epc: str, reads: List[Tuple[float, float]], force: bool = False) -> Optional[str]:
         """Determines peak timestamp and updates participant state (start, lap, or break resume).
 
@@ -171,14 +188,19 @@ class LapEngine:
         if runner_start is None:
             self.db.set_participant_start(bib, peak_time)
             logger.info(f"🚀 CHIP START: Bib {bib} ({name}) started running at {peak_time:.2f} (RSSI: {peak_rssi:.1f} dBm)")
-            
+            start_flag = None if force else self._missed_start_reason(peak_time - race_start, min_lap_sec)
+            if start_flag:
+                self.db.flag_start(bib, start_flag)
+                logger.warning(f"⚠️ START REVIEW: Bib {bib} ({name}): {start_flag}")
+
             if self.on_runner_started:
                 start_data = {
                     "bib_number": bib,
                     "name": name,
                     "start_time": peak_time,
                     "event_offset_seconds": round(peak_time - race_start, 1),
-                    "peak_rssi": round(peak_rssi, 1)
+                    "peak_rssi": round(peak_rssi, 1),
+                    "start_flag_reason": start_flag,
                 }
                 if asyncio.iscoroutinefunction(self.on_runner_started):
                     await self.on_runner_started(start_data)

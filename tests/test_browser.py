@@ -216,6 +216,38 @@ class LiveUpdatesTest(BrowserTestCase):
         self.assertEqual(errors, [])
         ctx.close()
 
+    def test_admin_reviews_a_missed_start(self):
+        """#72: a possible missed start shows in Needs Review; each button calls its endpoint."""
+        ctx = self.admin_context()
+        calls = []
+        flagged = [{"bib_number": 777, "name": "Pat <b>Q</b>", "start_time": 1.0, "seconds_after_gun": 92.0,
+                    "start_flag_reason": "First seen 1:32 after the gun: start missed in the crowd, or joined late?"}]
+        ctx.route("**/api/starts/flagged", lambda route: route.fulfill(json=flagged))
+
+        def resolve(route):
+            calls.append(route.request.url.split("/api/")[1])
+            flagged.clear()
+            route.fulfill(json={"status": "ok"})
+        ctx.route("**/api/participants/777/**", resolve)
+
+        page, errors = self.open(ctx, "/admin")
+        row = page.locator(".flagged-start[data-bib='777']")
+        row.wait_for(timeout=10_000)
+        self.assertIn("First seen 1:32 after the gun", row.inner_text())
+        self.assertIn("Pat <b>Q</b>", row.inner_text(), "names are escaped")
+        row.locator(".start-from-gun").click()
+        row.wait_for(state="detached", timeout=10_000)
+        self.assertEqual(calls, ["participants/777/start-from-gun"])
+
+        flagged.append({"bib_number": 777, "name": "Pat", "start_time": 1.0, "seconds_after_gun": 92.0,
+                        "start_flag_reason": "First seen"})
+        page.evaluate("fetchFlaggedLaps()")
+        page.locator(".flagged-start[data-bib='777'] .keep-start").click()
+        page.locator(".flagged-start").wait_for(state="detached", timeout=10_000)
+        self.assertEqual(calls[-1], "participants/777/keep-start")
+        self.assertEqual(errors, [])
+        ctx.close()
+
     def test_merge_keeps_the_server_order(self):
         ctx = self.browser.new_context()
         page, errors = self.open(ctx, "/leaderboard")

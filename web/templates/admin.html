@@ -134,7 +134,7 @@
               0
             </span>
           </div>
-          <p class="text-xs text-slate-400 mb-3">Laps flagged for suspected missed reads or pacing anomalies.</p>
+          <p class="text-xs text-slate-400 mb-3">Starts and laps flagged for suspected missed reads or pacing anomalies.</p>
         </div>
 
         <div id="flaggedLapsList" class="space-y-2 overflow-y-auto max-h-52 pr-1">
@@ -786,18 +786,42 @@
 
     async function fetchFlaggedLaps() {
       try {
-        const res = await fetch("/api/laps/flagged");
+        const [res, startsRes] = await Promise.all([fetch("/api/laps/flagged"), fetch("/api/starts/flagged")]);
         if (!res.ok) return;
         const laps = await res.json();
+        const starts = startsRes.ok ? await startsRes.json() : [];
         const container = document.getElementById("flaggedLapsList");
         const badge = document.getElementById("flaggedCountBadge");
-        if (badge) badge.innerText = laps.length;
+        if (badge) badge.innerText = laps.length + starts.length;
         if (!container) return;
-        if (laps.length === 0) {
+        if (laps.length === 0 && starts.length === 0) {
           container.innerHTML = `<div class="text-xs text-slate-500 italic py-4 text-center">No laps currently flagged for review.</div>`;
           return;
         }
         container.innerHTML = "";
+        // Possible missed starts (#72): the tag wasn't read in the crowd at the gun
+        starts.forEach(p => {
+          const row = document.createElement("div");
+          row.className = "flagged-start bg-slate-950/70 border border-sky-900/50 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs";
+          row.dataset.bib = p.bib_number;
+          row.innerHTML = `
+            <div>
+              <div class="font-bold text-white flex items-center gap-1.5">
+                <span class="text-sky-400 font-mono">#${esc(p.bib_number)}</span> ${esc(p.name || '')} &bull; Start
+              </div>
+              <div class="text-[11px] text-slate-400 mt-0.5">${esc(p.start_flag_reason || 'Late first crossing')}</div>
+            </div>
+            <div class="flex items-center gap-1.5 flex-shrink-0">
+              <button onclick="startFromGun(${p.bib_number})" title="Their tag was missed at the start: start them at the gun and add the missing first lap" class="start-from-gun bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
+                Started at gun
+              </button>
+              <button onclick="keepStart(${p.bib_number})" title="They joined late: keep their start" class="keep-start bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
+                Joined late
+              </button>
+            </div>
+          `;
+          container.appendChild(row);
+        });
         laps.forEach(l => {
           const row = document.createElement("div");
           row.className = "bg-slate-950/70 border border-amber-900/40 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs";
@@ -822,6 +846,20 @@
       } catch (e) {
         console.error("Flagged laps fetch error:", e);
       }
+    }
+
+    async function startFromGun(bib) {
+      const res = await fetch(`/api/participants/${bib}/start-from-gun`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert("Could not change the start: " + (data.detail || res.status));
+      }
+      fetchFlaggedLaps();
+    }
+
+    async function keepStart(bib) {
+      const res = await fetch(`/api/participants/${bib}/keep-start`, { method: "POST" });
+      if (res.ok) fetchFlaggedLaps();
     }
 
     async function splitLap(id) {
@@ -874,6 +912,8 @@
         } else if (msg.type === "event_switched") {
           window.location.reload();
         } else if (msg.type === "flagged_laps_updated" || msg.type === "lap_completed") {
+          fetchFlaggedLaps();
+        } else if (msg.type === "runner_started" && msg.data && msg.data.start_flag_reason) {
           fetchFlaggedLaps();
         } else if (msg.type === "reader_health") {
           renderReaderHealth(msg.health);

@@ -114,6 +114,23 @@ def check_laps(crossings: Dict[str, int], seen: Dict[str, int], laps_by_epc: Dic
     return app_errors, reader_misses
 
 
+def starts_from_db(db_path: str) -> Dict[str, Any]:
+    """Runners whose first read came a lap or more after the gun (their start was missed in
+    the crowd, #72), and whether the app flagged each of them for review."""
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    try:
+        gun = conn.execute("SELECT start_time FROM events ORDER BY id DESC LIMIT 1").fetchone()[0]
+        first = dict(conn.execute("SELECT epc, MIN(timestamp) FROM raw_reads GROUP BY epc"))
+        flagged = {epc for (epc,) in conn.execute(
+            "SELECT epc FROM participants WHERE start_flag_reason IS NOT NULL")}
+    finally:
+        conn.close()
+    missed = {epc for epc, t in first.items() if gun and t - gun >= MIN_LAP_SECONDS}
+    return {"missed_starts": len(missed), "flagged_starts": len(flagged),
+            "missed_starts_not_flagged": sorted(missed - flagged)}
+
+
 def seen_from_db(db_path: str) -> Dict[str, int]:
     import sqlite3
     conn = sqlite3.connect(db_path)
@@ -169,6 +186,7 @@ def run_fast(runners: int = 60, hours: float = 3.0, seed: int = 1, step: float =
 
             async def race():
                 buffer = bytearray()
+                engine.refresh_event()  # log raw reads from the first one (the app does this every 0.2 s)
                 reader._arm()
                 start = now()
                 end = start + hours * 3600
@@ -229,12 +247,13 @@ def run_fast(runners: int = 60, hours: float = 3.0, seed: int = 1, step: float =
             result = {
                 "mode": "fast", "runners": runners, "race_hours": hours, "rows": rows,
                 "laps": sum(laps_by_epc.values()), "expected_laps": sum(max(0, n - 1) for n in crossings.values()),
-                "app_errors": app_errors, "reader_misses": reader_misses,
+                "app_errors": app_errors, "reader_misses": reader_misses, **starts_from_db(db_path),
                 "unknown_tags": len(unknown), "too_soon_prompts": len(too_soon), "flagged_laps": flagged,
                 "corrupted_frames": r200.corrupted, "dropped_frames": r200.dropped, "polls": r200.polls,
                 "poll_limit_stops": r200.stops_at_limit,
             }
-            result["ok"] = not app_errors and not unknown and not too_soon
+            result["ok"] = (not app_errors and not unknown and not too_soon
+                            and not result["missed_starts_not_flagged"])
             return result
     finally:
         if track_memory:
@@ -377,11 +396,12 @@ def run_live(runners: int = 60, minutes: float = 130.0, clients: int = 40, seed:
         result.update({
             "laps": sum(laps_by_epc.values()),
             "expected_laps": sum(max(0, n - 1) for n in crossings.values()),
-            "app_errors": app_errors, "reader_misses": reader_misses,
+            "app_errors": app_errors, "reader_misses": reader_misses, **starts_from_db(db_path),
             "corrupted_frames": r200.corrupted, "dropped_frames": r200.dropped,
             "csv": csv_path, "server_log": log.name,
         })
         result["ok"] = (not app_errors and not result["unknown_tags"]
+                        and not result["missed_starts_not_flagged"]
                         and server.poll() is None)
         return result
     finally:
@@ -469,6 +489,9 @@ def summarize(result: Dict[str, Any]) -> str:
                  f"{len(result['reader_misses'])}")
     for miss in result["reader_misses"][:10]:
         lines.append(f"    {miss}")
+    lines.append(f"  starts missed in the crowd: {result['missed_starts']}, flagged for review: "
+                 f"{result['flagged_starts']}" + (f", NOT flagged: {result['missed_starts_not_flagged']}"
+                                                  if result["missed_starts_not_flagged"] else ""))
     if rows:
         first, last = rows[0], rows[-1]
         for key in ("py_mem_mb", "rss_mb", "db_mb", "board_p95_ms", "board_ms", "open_files"):
