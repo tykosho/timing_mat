@@ -45,6 +45,7 @@ Status as of 2026-11-16. Open items link to their GitHub issue where one exists.
 - DONE: Reader health strip on the admin page (#48, #50).
 - DONE: Reader watchdog re-arms the inventory (#28). To verify on hardware: #5.
 - DONE: Raw R200 traffic capture from the running server (#51, #53).
+- DONE: Soak test, a 3-hour race on a laptop in 2 minutes, or 2+ hours live against the app (#69).
 - DONE (software): Pi as its own Wi-Fi hotspot with a printable QR join page (#44). To verify on a Pi: #42.
 - DONE: R200 frame parsing + RSSI scale verified against frames captured on the Pi (#7, #58).
 - TODO: Power check on the USB battery (#18).
