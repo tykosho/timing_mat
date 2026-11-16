@@ -106,11 +106,15 @@ def parse_tag_frame(frame: bytes) -> Optional[Tuple[str, int]]:
     if len(frame) != 5 + length + 2 or length < 5:
         return None
 
-    # Checksum and PC are verified leniently (logged, not rejected): the frame structure
-    # is already validated above. Both rules hold on every frame captured from the real
-    # R200 (tests/test_real_frames.py), so a mismatch here means a corrupted frame.
+    # The checksum rule holds on every frame captured from the real R200
+    # (tests/test_real_frames.py), so a mismatch means bytes were damaged on the wire. Drop
+    # the frame: a single changed EPC byte would otherwise show up as a new, unknown tag
+    # (issue #67). Losing one read of a burst costs nothing; the runner sends many more.
     if calculate_checksum(frame[1:-2]) != frame[-2]:
-        logger.debug("Tag frame checksum mismatch")
+        logger.debug(f"Dropping tag frame with a bad checksum: {frame.hex()}")
+        return None
+
+    # The PC check is lenient (logged, not rejected): it also holds on every real frame.
 
     # Payload = RSSI(1) + PC(2) + EPC(n) + CRC(2)
     epc_len = length - 5
