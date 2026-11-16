@@ -823,6 +823,31 @@ async def split_flagged_lap(lap_id: int):
     await broadcast_ws({"type": "flagged_laps_updated", "flagged": db.get_flagged_laps()})
     return {"status": "split"}
 
+# --- possible missed starts (issue #72) ---
+@app.get("/api/starts/flagged")
+async def get_flagged_starts():
+    """Runners first seen a lap or so after the gun: their start may have been missed."""
+    return db.get_flagged_starts()
+
+async def _flagged_changed():
+    await broadcast_ws({"type": "flagged_laps_updated", "flagged": db.get_flagged_laps()}, admin_only=True)
+
+@app.post("/api/participants/{bib_number}/start-from-gun")
+async def start_from_gun(bib_number: int):
+    """Their tag wasn't read at the gun: start them at the gun and add the missing first lap."""
+    _require_not_ended()
+    result = db.start_from_gun(bib_number)
+    await push_leaderboard()
+    await _flagged_changed()
+    return {"status": "started_from_gun", **result}
+
+@app.post("/api/participants/{bib_number}/keep-start")
+async def keep_start(bib_number: int):
+    """They really did join late: keep their start as recorded."""
+    db.keep_start(bib_number)
+    await _flagged_changed()
+    return {"status": "kept"}
+
 class AcceptTooSoonRequest(BaseModel):
     bib_number: int
     crossing_time: float

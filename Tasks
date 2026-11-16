@@ -8,6 +8,8 @@ Status as of 2026-11-16. Open items link to their GitHub issue where one exists.
 - Display settings panel and larger default font (#43).
 - Self-registration prompt when an unknown tag crosses the mat (#45, #47).
 - Confirm or reject a crossing that comes too soon after the last one, auto-reject after 30 s (#66).
+- A start missed in the crowd at the gun is flagged in Needs Review: "Started at gun" adds the lost first lap, "Joined late" keeps it (#72).
+- Live updates send one runner's row per lap, the full leaderboard at most every 10 s: ~7x less Wi-Fi traffic (#71).
 
 ## 2. Multi-Level Simulator
 - DONE — Level 2, race dynamics & flaws (#36): pack crossings, missed reads, weak stray reads,

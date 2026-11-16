@@ -32,6 +32,14 @@ class ShortSoakTest(unittest.TestCase):
         self.assertGreater(result["corrupted_frames"], 100)
         self.assertGreaterEqual(result["rows"][-1]["rearms"], 2, "routine re-arm every 300 s")
 
+    def test_a_start_missed_in_the_crowd_is_flagged(self):
+        """#72: seed 10 has one runner whose tag isn't read at the gun; the app flags them."""
+        result = run_fast(runners=60, hours=0.05, seed=10, report=lambda *_: None, track_memory=False)
+        self.assertEqual(result["missed_starts"], 1)
+        self.assertEqual(result["flagged_starts"], 1)
+        self.assertEqual(result["missed_starts_not_flagged"], [])
+        self.assertTrue(result["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -164,6 +164,7 @@ class Database:
             for table, column, ddl in [
                 ("events", "paused_at", "REAL DEFAULT NULL"),      # issue #11
                 ("laps", "flag_reason", "TEXT DEFAULT NULL"),      # suspicious-lap review (#10)
+                ("participants", "start_flag_reason", "TEXT DEFAULT NULL"),  # missed start (#72)
             ]:
                 cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table});")]
                 if column not in cols:
@@ -486,6 +487,60 @@ class Database:
             row = conn.execute("SELECT * FROM participants WHERE event_id = ? AND epc = ?;",
                                (self._eid(event_id), (epc or "").strip().upper())).fetchone()
             return dict(row) if row else None
+
+    # --- missed starts (issue #72) ---
+    def flag_start(self, bib_number: int, reason: str, event_id: Optional[int] = None):
+        with self.connect() as conn:
+            conn.execute("UPDATE participants SET start_flag_reason = ? WHERE event_id = ? AND bib_number = ?;",
+                         (reason, self._eid(event_id), bib_number))
+
+    def get_flagged_starts(self, event_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        eid = self._eid(event_id)
+        with self.connect() as conn:
+            gun = conn.execute("SELECT start_time FROM events WHERE id = ?;", (eid,)).fetchone()["start_time"]
+            rows = conn.execute("""SELECT bib_number, name, start_time, start_flag_reason FROM participants
+                                   WHERE event_id = ? AND start_flag_reason IS NOT NULL AND start_time IS NOT NULL
+                                   ORDER BY start_time DESC;""", (eid,)).fetchall()
+        return [dict(r, seconds_after_gun=round(r["start_time"] - gun, 1) if gun else None) for r in rows]
+
+    def typical_lap_seconds(self, min_laps: int = 5, event_id: Optional[int] = None) -> Optional[float]:
+        """Median lap time of everyone so far, or None before there are min_laps laps."""
+        with self.connect() as conn:
+            rows = [r[0] for r in conn.execute(
+                "SELECT lap_duration_seconds FROM laps WHERE event_id = ? ORDER BY lap_duration_seconds;",
+                (self._eid(event_id),)).fetchall()]
+        return rows[len(rows) // 2] if len(rows) >= min_laps else None
+
+    def keep_start(self, bib_number: int, event_id: Optional[int] = None):
+        """The runner really did join late: keep their start, drop the flag."""
+        self.flag_start(bib_number, None, event_id)
+
+    def start_from_gun(self, bib_number: int, event_id: Optional[int] = None) -> Dict[str, Any]:
+        """The runner's tag wasn't read at the gun, so their first lap's crossing became their
+        start. Moves their start to the gun and turns that crossing into lap 1."""
+        eid = self._eid(event_id)
+        with self.connect() as conn:
+            gun_row = conn.execute("SELECT start_time, min_lap_seconds FROM events WHERE id = ?;", (eid,)).fetchone()
+            gun = gun_row["start_time"] if gun_row else None
+            min_lap = (gun_row["min_lap_seconds"] if gun_row else None) or 0.0
+            p = conn.execute("SELECT * FROM participants WHERE event_id = ? AND bib_number = ?;",
+                             (eid, bib_number)).fetchone()
+            if not p or p["start_time"] is None:
+                raise LapEditError(f"Bib {bib_number} hasn't started.")
+            if not gun or p["start_time"] - gun < min_lap:
+                raise LapEditError(f"Bib {bib_number} started less than a lap after the gun: "
+                                   "there's no missed lap to add.")
+            first_seen = p["start_time"]
+            conn.execute("""INSERT INTO laps (event_id, bib_number, lap_number, crossing_time,
+                                              lap_duration_seconds, peak_rssi, manual_entry, flag_reason)
+                            VALUES (?, ?, 0, ?, ?, 0.0, 1, NULL);""",
+                         (eid, bib_number, first_seen, round(first_seen - gun, 2)))
+            conn.execute("""UPDATE participants SET start_time = ?, start_flag_reason = NULL,
+                            last_crossing_time = MAX(COALESCE(last_crossing_time, ?), ?)
+                            WHERE event_id = ? AND bib_number = ?;""",
+                         (gun, first_seen, first_seen, eid, bib_number))
+            self._renumber_laps(conn, eid, bib_number)
+        return {"bib_number": bib_number, "start_time": gun, "lap_seconds": round(first_seen - gun, 2)}
 
     def get_participant_by_bib(self, bib_number: int, event_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         with self.connect() as conn:
