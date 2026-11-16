@@ -25,6 +25,7 @@ from hardware.serial_reader import SerialReader, DEFAULT_REARM_INTERVAL, DEFAULT
 from hardware.frame_capture import open_capture
 from web import auth, join
 from web.reader_health import ReaderHealth
+from web.live_board import CoalescedPush
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("RaceApp")
@@ -81,32 +82,33 @@ def _forget_ws(ws: WebSocket):
         if ws in conns:
             conns.remove(ws)
 
+async def push_leaderboard():
+    full_board.pushed_now()
+    await broadcast_ws({"type": "leaderboard_update", "leaderboard": db.get_leaderboard()})
+
+# Full leaderboard at most every FULL_BOARD_INTERVAL s while laps come in (issue #71)
+full_board = CoalescedPush(push_leaderboard)
+
+async def broadcast_runner_change(message: Dict[str, Any], bib_number: int):
+    """Lap/start/resume: the message carries only this runner's updated row ("row"), which the
+    pages merge into their leaderboard; the full board follows within FULL_BOARD_INTERVAL."""
+    rows = db.get_leaderboard(bib_number=bib_number)
+    message["row"] = rows[0] if rows else None
+    await broadcast_ws(message)
+    if active_connections:
+        full_board.mark_dirty()
+
 # Callback when a lap is completed
 async def on_lap_completed(lap_data: Dict[str, Any]):
-    leaderboard = db.get_leaderboard()
-    await broadcast_ws({
-        "type": "lap_completed",
-        "lap": lap_data,
-        "leaderboard": leaderboard
-    })
+    await broadcast_runner_change({"type": "lap_completed", "lap": lap_data}, lap_data["bib_number"])
 
 # Callback when a runner begins (Chip Start / Lap 0)
 async def on_runner_started(start_data: Dict[str, Any]):
-    leaderboard = db.get_leaderboard()
-    await broadcast_ws({
-        "type": "runner_started",
-        "data": start_data,
-        "leaderboard": leaderboard
-    })
+    await broadcast_runner_change({"type": "runner_started", "data": start_data}, start_data["bib_number"])
 
 # Callback when a runner resumes after a break
 async def on_runner_resumed(resume_data: Dict[str, Any]):
-    leaderboard = db.get_leaderboard()
-    await broadcast_ws({
-        "type": "runner_resumed",
-        "data": resume_data,
-        "leaderboard": leaderboard
-    })
+    await broadcast_runner_change({"type": "runner_resumed", "data": resume_data}, resume_data["bib_number"])
 
 # Callback when an unrecognized/unassigned tag crosses the mat (issue #45)
 async def on_unassigned_tag(tag_data: Dict[str, Any]):
@@ -258,6 +260,7 @@ async def lifespan(app: FastAPI):
     flush_task.cancel()
     tag_task.cancel()
     health_task.cancel()
+    full_board.cancel()
     if sim_task:
         sim_task.cancel()
     lap_engine.flush_raw_reads()
@@ -310,9 +313,6 @@ async def push_event_status(include_leaderboard: bool = True):
     if include_leaderboard:
         message["leaderboard"] = db.get_leaderboard()
     await broadcast_ws(message)
-
-async def push_leaderboard():
-    await broadcast_ws({"type": "leaderboard_update", "leaderboard": db.get_leaderboard()})
 
 # ----------------- LOGIN -----------------
 @app.get("/login", response_class=HTMLResponse)

@@ -343,6 +343,7 @@
       flex-shrink: 0;
     }
   </style>
+  <script src="/static/live_board.js"></script>
 </head>
 <body class="trackside-body bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased" data-theme="dark">
 
@@ -1039,14 +1040,14 @@
             knownBootId = msg.boot_id;
           }
           eventState = msg.event;
-          currentLeaderboard = msg.leaderboard || currentLeaderboard;
+          currentLeaderboard = boardFromMessage(currentLeaderboard, msg);
           applyEventStatus();
           renderCrossingFeed(false);
           if (msg.sim) updateSimWidget(msg.sim);
         } else if (msg.type === "sim_state") {
           if (msg.sim) updateSimWidget(msg.sim);
         } else if (msg.type === "lap_completed") {
-          currentLeaderboard = msg.leaderboard || currentLeaderboard;
+          currentLeaderboard = boardFromMessage(currentLeaderboard, msg);
           addCrossing({
             id: msg.lap.id,
             bib_number: msg.lap.bib_number,
@@ -1057,7 +1058,7 @@
             is_start: false
           });
         } else if (msg.type === "runner_started") {
-          currentLeaderboard = msg.leaderboard || currentLeaderboard;
+          currentLeaderboard = boardFromMessage(currentLeaderboard, msg);
           addCrossing({
             id: null,
             bib_number: msg.data.bib_number,
@@ -1069,7 +1070,7 @@
             is_resume: false
           });
         } else if (msg.type === "runner_resumed") {
-          currentLeaderboard = msg.leaderboard || currentLeaderboard;
+          currentLeaderboard = boardFromMessage(currentLeaderboard, msg);
           addCrossing({
             id: null,
             bib_number: msg.data.bib_number,
@@ -1082,7 +1083,7 @@
             is_resume: true
           });
         } else if (msg.type === "lap_removed") {
-          currentLeaderboard = msg.leaderboard || currentLeaderboard;
+          currentLeaderboard = boardFromMessage(currentLeaderboard, msg);
           if (msg.removed_lap && msg.removed_lap.id != null) {
             recentCrossings = recentCrossings.filter(c => c.id !== msg.removed_lap.id);
           } else if (msg.bib_number != null) {
@@ -1091,7 +1092,7 @@
           }
           renderCrossingFeed(false);
         } else if (msg.type === "leaderboard_update") {
-          currentLeaderboard = msg.leaderboard || currentLeaderboard;
+          currentLeaderboard = boardFromMessage(currentLeaderboard, msg);
         } else if (msg.type === "unassigned_tag_detected") {
           if (msg.data && msg.data.epc) {
             showUnrecognizedTagPrompt(msg.data.epc);

@@ -839,7 +839,9 @@ class Database:
         return {"status": "resumed", "bib": bib_number, "duration_seconds": round(duration, 2)}
 
     # ------------------------------------------------------------------ leaderboard
-    def get_leaderboard(self, event_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_leaderboard(self, event_id: Optional[int] = None,
+                        bib_number: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Standings, best first. With bib_number: just that runner's row (for live updates, #71)."""
         eid = self._eid(event_id)
         ev = self.get_event(eid)
         max_rest = ev.get("max_lap_rest_seconds")
@@ -866,10 +868,10 @@ class Database:
                       WHERE event_id = p.event_id AND bib_number = p.bib_number), 0.0) AS total_rest_seconds
                 FROM participants p
                 LEFT JOIN laps l ON l.event_id = p.event_id AND l.bib_number = p.bib_number
-                WHERE p.event_id = ?
+                WHERE p.event_id = ? AND (? IS NULL OR p.bib_number = ?)
                 GROUP BY p.bib_number, p.name
                 ORDER BY total_laps DESC, (last_crossing_time_laps IS NULL), last_crossing_time_laps ASC;""",
-                (eid,)).fetchall()
+                (eid, bib_number, bib_number)).fetchall()
             on_break = {r["bib_number"] for r in conn.execute(
                 "SELECT bib_number FROM breaks WHERE event_id = ? AND end_time = 0.0;", (eid,)).fetchall()}
 
