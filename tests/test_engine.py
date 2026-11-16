@@ -186,5 +186,41 @@ class TestTimingMat(unittest.TestCase):
             asyncio.run(engine._resolve_crossing("E28099990000000000000099", [(now + 1.0, -50.0)]))
             self.assertEqual(len(unassigned), 1)
 
+    def test_crossing_too_soon_callback_and_accept(self):
+        import tempfile
+        too_soon = []
+        laps = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(os.path.join(tmpdir, "test.db"))
+            db.update_event_settings(min_lap_seconds=45.0)
+            db.add_participant(12, "Fast Runner", "E28099990000000000000012")
+            db.start_event()
+            engine = LapEngine(
+                db=db,
+                crossing_window=0.2,
+                on_lap_completed=lambda lap: laps.append(lap),
+                on_crossing_too_soon=lambda data: too_soon.append(data),
+            )
+            t0 = time.time()
+            # Chip start
+            asyncio.run(engine._resolve_crossing("E28099990000000000000012", [(t0, -45.0)]))
+            # Too-soon crossing at +20s (< 45s)
+            outcome = asyncio.run(engine._resolve_crossing("E28099990000000000000012", [(t0 + 20.0, -44.0)]))
+            self.assertEqual(outcome, "debounced")
+            self.assertEqual(len(too_soon), 1)
+            self.assertEqual(too_soon[0]["bib_number"], 12)
+            self.assertAlmostEqual(too_soon[0]["elapsed_seconds"], 20.0, places=1)
+            self.assertEqual(len(laps), 0)
+
+            # Accepting it records the 20s lap
+            accepted = asyncio.run(engine.accept_too_soon_crossing(12, too_soon[0]["crossing_time"], -44.0))
+            self.assertIsNotNone(accepted)
+            self.assertEqual(accepted["lap_number"], 1)
+            self.assertAlmostEqual(accepted["lap_duration_seconds"], 20.0, places=1)
+            self.assertEqual(len(laps), 1)
+
+            # Re-accepting the same crossing is rejected
+            self.assertIsNone(asyncio.run(engine.accept_too_soon_crossing(12, too_soon[0]["crossing_time"], -44.0)))
+
 if __name__ == "__main__":
     unittest.main()

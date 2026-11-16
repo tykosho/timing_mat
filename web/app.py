@@ -116,6 +116,12 @@ async def on_unassigned_tag(tag_data: Dict[str, Any]):
         "data": tag_data,
     }, admin_only=True)
 
+async def on_crossing_too_soon(too_soon_data: Dict[str, Any]):
+    await broadcast_ws({
+        "type": "crossing_too_soon",
+        "data": too_soon_data,
+    }, admin_only=True)
+
 # Callback when any tag is detected (used for Admin auto-fill / registration)
 # Raw tag reads arrive 5-20 per crossing per runner. Only the admin and Prepare Bibs pages use
 # them, so they go only to admin connections, combined per tag: one message per tag every
@@ -179,7 +185,8 @@ lap_engine = LapEngine(
     on_runner_started=on_runner_started,
     on_runner_resumed=on_runner_resumed,
     on_tag_detected=on_tag_detected,
-    on_unassigned_tag=on_unassigned_tag
+    on_unassigned_tag=on_unassigned_tag,
+    on_crossing_too_soon=on_crossing_too_soon
 )
 # A Pi without an RTC can boot with an older time than what's already stored (issue #2)
 clock.clock.ensure_not_before(db.latest_timestamp())
@@ -815,6 +822,22 @@ async def split_flagged_lap(lap_id: int):
     })
     await broadcast_ws({"type": "flagged_laps_updated", "flagged": db.get_flagged_laps()})
     return {"status": "split"}
+
+class AcceptTooSoonRequest(BaseModel):
+    bib_number: int
+    crossing_time: float
+    peak_rssi: float = -45.0
+
+@app.post("/api/crossings/accept-too-soon")
+async def accept_too_soon_crossing(req: AcceptTooSoonRequest):
+    """Records a debounced (too-soon) crossing after operator confirmation."""
+    lap = await lap_engine.accept_too_soon_crossing(req.bib_number, req.crossing_time, req.peak_rssi)
+    if lap is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Crossing could not be accepted (event not running or superseded).",
+        )
+    return {"status": "accepted", "lap": lap}
 
 @app.post("/api/participants/{bib}/quick-add-lap")
 async def quick_add_lap(bib: int, req: Optional[QuickLapAdjustRequest] = None):

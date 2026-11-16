@@ -225,6 +225,30 @@ class TestApi(unittest.TestCase):
         self.assertEqual(res.status_code, 200, res.text)
         self.assertEqual(res.json()["event"]["max_lap_rest_seconds"], 0.0)
 
+    def test_accept_too_soon_crossing_endpoint(self):
+        self.client.post("/api/participants", json={"bib_number": 77, "name": "Sprinter", "epc": "E28000000000000000000077"})
+        self.client.post("/api/event/start")
+        start_res = self.client.post("/api/participants/77/quick-add-lap")
+        t0 = start_res.json()["start_time"]
+
+        res = self.client.post("/api/crossings/accept-too-soon", json={
+            "bib_number": 77,
+            "crossing_time": t0 + 15.0,
+            "peak_rssi": -43.5,
+        })
+        self.assertEqual(res.status_code, 200, res.text)
+        body = res.json()
+        self.assertEqual(body["status"], "accepted")
+        self.assertEqual(body["lap"]["lap_number"], 1)
+        self.assertGreater(body["lap"]["lap_duration_seconds"], 0)
+
+        # Duplicate accept at same timestamp is rejected (409)
+        dup = self.client.post("/api/crossings/accept-too-soon", json={
+            "bib_number": 77,
+            "crossing_time": t0 + 15.0,
+        })
+        self.assertEqual(dup.status_code, 409)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,7 +19,8 @@ class LapEngine:
                  on_runner_started: Optional[Callable[[Dict[str, Any]], None]] = None,
                  on_runner_resumed: Optional[Callable[[Dict[str, Any]], None]] = None,
                  on_tag_detected: Optional[Callable[[Dict[str, Any]], None]] = None,
-                 on_unassigned_tag: Optional[Callable[[Dict[str, Any]], None]] = None):
+                 on_unassigned_tag: Optional[Callable[[Dict[str, Any]], None]] = None,
+                 on_crossing_too_soon: Optional[Callable[[Dict[str, Any]], None]] = None):
         self.db = db
         self.crossing_window = crossing_window
         self.on_lap_completed = on_lap_completed
@@ -27,6 +28,7 @@ class LapEngine:
         self.on_runner_resumed = on_runner_resumed
         self.on_tag_detected = on_tag_detected
         self.on_unassigned_tag = on_unassigned_tag
+        self.on_crossing_too_soon = on_crossing_too_soon
         self.speed_multiplier: float = 1.0
 
         # Buffer to aggregate bursts of reads: epc -> list of (timestamp, rssi)
@@ -194,6 +196,19 @@ class LapEngine:
         # a lap time is always the real time since the last crossing, never an invented one.
         if time_since_last < effective_min_lap:
             logger.info(f"Debounce: Bib {bib} ({name}) {'forced crossing rejected' if force else 'read ignored'}. Only {time_since_last:.1f}s since last crossing (min {effective_min_lap:.1f}s).")
+            if not force and self.on_crossing_too_soon:
+                too_soon_data = {
+                    "bib_number": bib,
+                    "name": name,
+                    "elapsed_seconds": round(time_since_last * self.speed_multiplier, 2),
+                    "min_lap_seconds": round(min_lap_sec, 1),
+                    "crossing_time": peak_time,
+                    "peak_rssi": round(peak_rssi, 1),
+                }
+                if asyncio.iscoroutinefunction(self.on_crossing_too_soon):
+                    await self.on_crossing_too_soon(too_soon_data)
+                else:
+                    self.on_crossing_too_soon(too_soon_data)
             return "debounced"
 
         if not force:
@@ -229,18 +244,32 @@ class LapEngine:
             lap_duration = time_since_last * self.speed_multiplier
 
         # Record completed lap
+        await self._record_completed_lap(bib, name, peak_time, lap_duration, peak_rssi, manual_entry=force)
+        return "lap"
+
+    async def _record_completed_lap(
+        self,
+        bib: int,
+        name: str,
+        peak_time: float,
+        lap_duration: float,
+        peak_rssi: float,
+        manual_entry: bool = False,
+        check_suspicious: bool = True,
+    ) -> Dict[str, Any]:
         last_lap = self.db.get_last_lap(bib)
         lap_number = (last_lap["lap_number"] + 1) if last_lap else 1
 
         # Check for suspicious long lap (possible missed reading: >= 1.75x previous lap if >= 2 laps exist)
         flag_reason = None
-        prior_laps = self.db.get_laps_for_runner(bib)
-        if len(prior_laps) >= 2 and not force:
-            durations = sorted([l["lap_duration_seconds"] for l in prior_laps])
-            median_dur = durations[len(durations) // 2]
-            if lap_duration >= (1.75 * median_dur) and median_dur >= 20.0:
-                flag_reason = f"Missed reading suspected ({round(lap_duration, 1)}s vs median {round(median_dur, 1)}s)"
-                logger.warning(f"⚠️ SUSPICIOUS LAP: Bib {bib} ({name}) Lap {lap_number} flagged: {flag_reason}")
+        if check_suspicious and not manual_entry:
+            prior_laps = self.db.get_laps_for_runner(bib)
+            if len(prior_laps) >= 2:
+                durations = sorted([l["lap_duration_seconds"] for l in prior_laps])
+                median_dur = durations[len(durations) // 2]
+                if lap_duration >= (1.75 * median_dur) and median_dur >= 20.0:
+                    flag_reason = f"Missed reading suspected ({round(lap_duration, 1)}s vs median {round(median_dur, 1)}s)"
+                    logger.warning(f"⚠️ SUSPICIOUS LAP: Bib {bib} ({name}) Lap {lap_number} flagged: {flag_reason}")
 
         lap_id = self.db.record_lap(
             bib_number=bib,
@@ -248,28 +277,52 @@ class LapEngine:
             crossing_time=peak_time,
             lap_duration_seconds=round(lap_duration, 2),
             peak_rssi=round(peak_rssi, 1),
-            manual_entry=force,
-            flag_reason=flag_reason
+            manual_entry=manual_entry,
+            flag_reason=flag_reason,
         )
         self.db.update_participant_last_crossing(bib, peak_time)
 
         logger.info(f"🏁 LAP RECORDED: Bib {bib} ({name}) - Lap {lap_number} in {lap_duration:.2f}s (RSSI: {peak_rssi:.1f} dBm)")
 
+        lap_data = {
+            "id": lap_id,
+            "bib_number": bib,
+            "name": name,
+            "lap_number": lap_number,
+            "lap_duration_seconds": round(lap_duration, 2),
+            "crossing_time": peak_time,
+            "peak_rssi": round(peak_rssi, 1),
+        }
         if self.on_lap_completed:
-            lap_data = {
-                "id": lap_id,
-                "bib_number": bib,
-                "name": name,
-                "lap_number": lap_number,
-                "lap_duration_seconds": round(lap_duration, 2),
-                "crossing_time": peak_time,
-                "peak_rssi": round(peak_rssi, 1)
-            }
             if asyncio.iscoroutinefunction(self.on_lap_completed):
                 await self.on_lap_completed(lap_data)
             else:
                 self.on_lap_completed(lap_data)
-        return "lap"
+        return lap_data
+
+    async def accept_too_soon_crossing(
+        self, bib_number: int, crossing_time: float, peak_rssi: float = -45.0
+    ) -> Optional[Dict[str, Any]]:
+        """Records a previously debounced (too-soon) crossing after operator confirmation."""
+        event_state = self.db.get_event_state()
+        if event_state.get("status") != "running":
+            return None
+        participant = self.db.get_participant_by_bib(bib_number)
+        if not participant or participant.get("start_time") is None:
+            return None
+        last_crossing = participant.get("last_crossing_time") or participant["start_time"]
+        if crossing_time <= last_crossing:
+            return None
+        lap_duration = (crossing_time - last_crossing) * self.speed_multiplier
+        return await self._record_completed_lap(
+            bib_number,
+            participant["name"],
+            crossing_time,
+            lap_duration,
+            peak_rssi,
+            manual_entry=True,
+            check_suspicious=False,
+        )
 
     async def trigger_manual_crossing(self, bib_number: int, force: bool = True) -> Optional[Dict[str, Any]]:
         """Allows admin UI to manually trigger an immediate crossing for testing or missed bib.
