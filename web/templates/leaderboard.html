@@ -18,6 +18,7 @@
       box-shadow: 0 0 15px rgba(234, 179, 8, 0.3);
     }
   </style>
+  <script src="/static/live_board.js"></script>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
 
@@ -212,6 +213,8 @@
       }
     }, 500);
 
+    let liveBoard = [];  // this page's copy; lap messages update one row (issue #71)
+
     function renderLeaderboard(data) {
       const tbody = document.getElementById("leaderboardBody");
       tbody.innerHTML = "";
@@ -348,29 +351,34 @@
           }
           eventState = msg.event;
           applyEventStatus();
-          renderLeaderboard(msg.leaderboard);
+          liveBoard = boardFromMessage(liveBoard, msg);
+          renderLeaderboard(liveBoard);
         } else if (msg.type === "lap_completed") {
-          renderLeaderboard(msg.leaderboard);
+          liveBoard = boardFromMessage(liveBoard, msg);
+          renderLeaderboard(liveBoard);
           showCrossingAlert(msg.lap);
         } else if (msg.type === "runner_started") {
-          renderLeaderboard(msg.leaderboard);
+          liveBoard = boardFromMessage(liveBoard, msg);
+          renderLeaderboard(liveBoard);
           showBannerAlert(
             `🚀 <strong>${esc(msg.data.name)}</strong> (#${msg.data.bib_number}) crossed the mat & began their race!`,
             msg.data.peak_rssi,
             "from-indigo-600 to-blue-600"
           );
         } else if (msg.type === "runner_resumed") {
-          renderLeaderboard(msg.leaderboard);
+          liveBoard = boardFromMessage(liveBoard, msg);
+          renderLeaderboard(liveBoard);
           showBannerAlert(
             `☕ <strong>${esc(msg.data.name)}</strong> (#${msg.data.bib_number}) resumed running after a <strong>${formatTime(msg.data.break_duration_seconds)}</strong> break!`,
             null,
             "from-amber-600 to-orange-600"
           );
         } else if (msg.type === "leaderboard_update") {
-          renderLeaderboard(msg.leaderboard);
+          liveBoard = boardFromMessage(liveBoard, msg);
+          renderLeaderboard(liveBoard);
         } else if (msg.type === "event_status") {
           eventState = msg.event;
-          if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
+          if (msg.leaderboard) { liveBoard = msg.leaderboard; renderLeaderboard(liveBoard); }
           applyEventStatus();
         } else if (msg.type === "event_switched") {
           window.location.reload();
@@ -384,7 +392,8 @@
 
     // Initial render
     applyEventStatus();
-    renderLeaderboard(initialLeaderboard);
+    liveBoard = initialLeaderboard;
+    renderLeaderboard(liveBoard);
     connectWS();
   </script>
 </body>

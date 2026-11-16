@@ -178,6 +178,64 @@ class LiveUpdatesTest(BrowserTestCase):
         self.assertEqual(errors, [])
         ctx.close()
 
+    def test_lap_messages_carry_one_row_and_the_page_stays_in_order(self):
+        """#71: laps send only the runner's row; the merged board matches the server's."""
+        ctx = self.browser.new_context()
+        frames = []
+        page = ctx.new_page()
+        page.on("websocket", lambda ws: ws.on("framereceived", lambda p: frames.append(p)))
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(BASE + "/leaderboard")
+
+        def laps():
+            return [json.loads(f) for f in frames if '"lap_completed"' in f]
+
+        deadline = time.time() + 60
+        while len(laps()) < 3 and time.time() < deadline:
+            page.wait_for_timeout(250)
+        self.assertGreaterEqual(len(laps()), 3, "simulated laps arrive")
+        for msg in laps():
+            self.assertNotIn("leaderboard", msg)
+            self.assertEqual(msg["row"]["bib_number"], msg["lap"]["bib_number"])
+
+        def shown_vs_server():
+            return page.evaluate("""async () => {
+                const server = await (await fetch('/api/leaderboard')).json();
+                const key = b => b.map(r => r.bib_number + ':' + r.total_laps).join(',');
+                return [key(liveBoard), key(server)];
+            }""")
+        same = False
+        for _ in range(40):  # a lap can land between the two reads: try again
+            shown, server = shown_vs_server()
+            if shown == server:
+                same = True
+                break
+            page.wait_for_timeout(100)
+        self.assertTrue(same, f"page {shown} vs server {server}")
+        self.assertEqual(errors, [])
+        ctx.close()
+
+    def test_merge_keeps_the_server_order(self):
+        ctx = self.browser.new_context()
+        page, errors = self.open(ctx, "/leaderboard")
+        result = page.evaluate("""() => {
+            const board = [
+                {bib_number: 1, total_laps: 3, last_crossing_time_laps: 100},
+                {bib_number: 2, total_laps: 3, last_crossing_time_laps: 120},
+                {bib_number: 3, total_laps: 2, last_crossing_time_laps: 90},
+                {bib_number: 4, total_laps: 0, last_crossing_time_laps: null},
+            ];
+            const lapFor3 = mergeLeaderboardRow(board, {bib_number: 3, total_laps: 3, last_crossing_time_laps: 130});
+            const lapFor2 = mergeLeaderboardRow(board, {bib_number: 2, total_laps: 4, last_crossing_time_laps: 140});
+            const newcomer = mergeLeaderboardRow(board, {bib_number: 5, total_laps: 0, last_crossing_time_laps: null});
+            const full = boardFromMessage(board, {leaderboard: [{bib_number: 9}], row: {bib_number: 1}});
+            return [lapFor3, lapFor2, newcomer, full, board].map(b => b.map(r => r.bib_number));
+        }""")
+        self.assertEqual(result, [[1, 2, 3, 4], [2, 1, 3, 4], [1, 2, 3, 4, 5], [9], [1, 2, 3, 4]])
+        self.assertEqual(errors, [])
+        ctx.close()
+
     def test_race_timer_is_right_when_the_device_clock_is_off(self):
         """#2: the TV/phone clock 2 h behind the Pi must not change the race timer."""
         ctx = self.browser.new_context()
