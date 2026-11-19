@@ -157,11 +157,14 @@ cmd_setup() {
 
   echo "Pointing http://$HOSTNAME_ALIAS at the Pi"
   local dns_line="address=/$HOSTNAME_ALIAS/$PI_IP"
+  # no-ping: dnsmasq pings each new address before offering it, which holds back the
+  # offers when many phones join at once (issue #77). The Pi is the only DHCP server on
+  # its own network, so the check guards against nothing here.
   if [ "$DRY_RUN" = "1" ]; then
-    echo "+ write $DNS_CONF: $dns_line"
+    echo "+ write $DNS_CONF: $dns_line no-ping"
   else
     mkdir -p "$(dirname "$DNS_CONF")"
-    printf '# Written by deploy/pi/hotspot.sh: phones on the race network resolve this name to the Pi\n%s\n' \
+    printf '# Written by deploy/pi/hotspot.sh\n# Phones on the race network resolve this name to the Pi\n%s\n# Offer addresses without pinging them first, so a crowd joining at once all get one (#77)\nno-ping\n' \
       "$dns_line" > "$DNS_CONF"
   fi
 
