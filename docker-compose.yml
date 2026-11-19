@@ -9,5 +9,11 @@ services:
       - MOCK_HARDWARE=true
       - CONFIG_PATH=config.yaml
       - DB_PATH=data/race.db
+      # Optional, from .env next to this file (Compose doesn't pass .env to the container
+      # by itself). Unset = as before: no PIN in mock mode, no Wi-Fi QR on /join.
+      - ADMIN_PIN=${ADMIN_PIN:-}
+      - HOTSPOT_SSID=${HOTSPOT_SSID:-}
+      - HOTSPOT_PASSWORD=${HOTSPOT_PASSWORD:-}
+      - HOTSPOT_HOSTNAME=${HOTSPOT_HOSTNAME:-}
     volumes:
       - .:/app
