@@ -21,6 +21,8 @@ Open your browser to:
 - **Prepare Bibs & Tags**: [http://localhost:8000/prepare](http://localhost:8000/prepare)
 - **Race Admin & Control Center**: [http://localhost:8000/admin](http://localhost:8000/admin)
 
+*(The simulator runs with no admin PIN, so every page is open. To try the login and the spectator view, put `ADMIN_PIN=123456` in a `.env` file next to `docker-compose.yml` and restart. The `HOTSPOT_*` settings from the Race Wi-Fi section below work there too.)*
+
 *(In simulator mode the first event is pre-seeded with 5 demo runners: Bibs 101 to 105. On real hardware nothing is seeded; set `SEED_DEMO=true` or `event.seed_demo: true` in `config.yaml` to force it.)*
 
 ---
