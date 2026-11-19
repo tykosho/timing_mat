@@ -190,10 +190,15 @@ run() {
   if [ -f "$RUN_DIR/${NS_PREFIX}1.lease" ]; then
     local dns; read -r _ dns < "$RUN_DIR/${NS_PREFIX}1.lease"
     local addr code
-    addr="$(ip netns exec "${NS_PREFIX}1" dig +short +time=3 "@$dns" www.raspberrypi.com A | grep -E '^[0-9.]+$' | tail -1)"
+    # The page Android itself checks to decide whether to show "No internet"
+    addr="$(ip netns exec "${NS_PREFIX}1" dig +short +time=3 "@$dns" connectivitycheck.gstatic.com A | grep -E '^[0-9.]+$' | tail -1)"
     code="$(ip netns exec "${NS_PREFIX}1" curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
-            --resolve "www.raspberrypi.com:443:${addr:-0.0.0.0}" https://www.raspberrypi.com/)"
-    echo "   https://www.raspberrypi.com/ -> HTTP ${code:-none} (needs Ethernet with internet on the Pi)"
+            --resolve "connectivitycheck.gstatic.com:80:${addr:-0.0.0.0}" http://connectivitycheck.gstatic.com/generate_204)"
+    if [ "$code" = 204 ]; then
+      echo "   connectivitycheck.gstatic.com -> 204: phones get internet through the Pi"
+    else
+      echo "   connectivitycheck.gstatic.com -> ${code:-no answer}: no internet through the Pi (fine with no Ethernet; see #78)"
+    fi
   fi
 
   echo
