@@ -55,6 +55,7 @@ class HotspotScriptTest(unittest.TestCase):
         self.assertIn(["rfkill", "unblock", "wifi"], cmds)
         self.assertEqual(cmds[-1], ["nmcli", "connection", "up", "race-hotspot"])
         self.assertIn("address=/race.lan/10.42.0.1", res.stdout)
+        self.assertIn("no-ping", res.stdout)  # a crowd joining at once must all get addresses (#77)
         self.assertIn("http://race.lan", res.stdout)
 
     def test_settings_from_env_file_are_passed_verbatim(self):
