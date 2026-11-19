@@ -27,6 +27,7 @@ set -euo pipefail
 
 CON_NAME="race-hotspot"
 DNS_CONF="${HOTSPOT_DNS_CONF:-/etc/NetworkManager/dnsmasq-shared.d/race-hotspot.conf}"
+FORWARD_HOOK="${HOTSPOT_FORWARD_HOOK:-/etc/NetworkManager/dispatcher.d/90-race-hotspot-forward}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_FILE="${HOTSPOT_ENV_FILE:-$REPO_DIR/.env}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -117,6 +118,40 @@ con_exists() {
   nmcli -t -f NAME connection show | grep -qx "$CON_NAME"
 }
 
+# Docker sets the firewall's FORWARD policy to DROP, which blocks the internet sharing
+# NetworkManager sets up for the hotspot (issue #78). This NetworkManager hook allows the
+# hotspot's traffic out (and replies back in) while the hotspot is up.
+write_forward_hook() {
+  mkdir -p "$(dirname "$FORWARD_HOOK")"
+  cat > "$FORWARD_HOOK" <<HOOK
+#!/bin/sh
+# Written by deploy/pi/hotspot.sh (issue #78). Docker sets the firewall's FORWARD policy to
+# DROP, which blocks the internet sharing NetworkManager sets up for the race hotspot. While
+# the hotspot is up, let its phones out and the replies back in. Docker keeps these rules
+# when it restarts, so it doesn't matter which of the two starts first at boot.
+[ "\${CONNECTION_ID:-}" = "$CON_NAME" ] || exit 0
+command -v iptables >/dev/null 2>&1 || exit 0   # no iptables: nothing is dropping it
+IFACE="\$1"
+SUBNET="$ADDRESS"
+case "\$2" in
+  up) op=add ;;
+  down|pre-down) op=del ;;
+  *) exit 0 ;;
+esac
+rule() {
+  if iptables -C FORWARD "\$@" 2>/dev/null; then
+    [ "\$op" = del ] && iptables -D FORWARD "\$@"
+  else
+    [ "\$op" = add ] && iptables -A FORWARD "\$@"
+  fi
+  return 0
+}
+rule -i "\$IFACE" -s "\$SUBNET" -j ACCEPT
+rule -o "\$IFACE" -d "\$SUBNET" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+HOOK
+  chmod 755 "$FORWARD_HOOK"   # NetworkManager only runs root-owned hooks nobody else can write
+}
+
 cmd_setup() {
   load_settings
   validate
@@ -168,6 +203,13 @@ cmd_setup() {
       "$dns_line" > "$DNS_CONF"
   fi
 
+  echo "Letting phones reach the internet through the Pi's Ethernet, if it has one"
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "+ write $FORWARD_HOOK: forward $ADDRESS"
+  else
+    write_forward_hook
+  fi
+
   run nmcli connection up "$CON_NAME"
 
   cat <<EOF
@@ -200,7 +242,10 @@ cmd_status() {
 cmd_remove() {
   load_settings
   preflight
+  local device="$IFACE"
   if con_exists; then
+    device="$(nmcli -g GENERAL.DEVICES connection show "$CON_NAME" 2>/dev/null)"
+    device="${device:-$IFACE}"
     run nmcli connection delete "$CON_NAME"
   elif [ "$DRY_RUN" = "1" ]; then
     run nmcli connection delete "$CON_NAME"
@@ -208,6 +253,12 @@ cmd_remove() {
     echo "No '$CON_NAME' connection to remove."
   fi
   run rm -f "$DNS_CONF"
+  # NetworkManager runs hooks in the background, so the delete's "down" may not have run
+  # yet: take the forwarding rules out here before removing the hook.
+  if [ "$DRY_RUN" != "1" ] && [ -x "$FORWARD_HOOK" ]; then
+    CONNECTION_ID="$CON_NAME" "$FORWARD_HOOK" "$device" down
+  fi
+  run rm -f "$FORWARD_HOOK"
   echo "Hotspot removed. To join a normal Wi-Fi network: sudo nmcli device wifi connect <SSID> --ask"
 }
 

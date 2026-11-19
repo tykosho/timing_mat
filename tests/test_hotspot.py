@@ -56,6 +56,10 @@ class HotspotScriptTest(unittest.TestCase):
         self.assertEqual(cmds[-1], ["nmcli", "connection", "up", "race-hotspot"])
         self.assertIn("address=/race.lan/10.42.0.1", res.stdout)
         self.assertIn("no-ping", res.stdout)  # a crowd joining at once must all get addresses (#77)
+        # internet through the Pi despite Docker's FORWARD DROP (#78), installed before the AP comes up
+        hook = "+ write /etc/NetworkManager/dispatcher.d/90-race-hotspot-forward: forward 10.42.0.1/24"
+        self.assertIn(hook, res.stdout)
+        self.assertLess(res.stdout.index(hook), res.stdout.index("+ nmcli connection up"))
         self.assertIn("http://race.lan", res.stdout)
 
     def test_settings_from_env_file_are_passed_verbatim(self):
@@ -109,6 +113,8 @@ class HotspotScriptTest(unittest.TestCase):
         remove = self.run_script("remove")
         self.assertIn(["nmcli", "connection", "delete", "race-hotspot"], self.commands(remove.stdout))
         self.assertIn(["rm", "-f", "/etc/NetworkManager/dnsmasq-shared.d/race-hotspot.conf"], self.commands(remove.stdout))
+        self.assertIn(["rm", "-f", "/etc/NetworkManager/dispatcher.d/90-race-hotspot-forward"],
+                      self.commands(remove.stdout))
 
     def test_usage(self):
         res = self.run_script()

@@ -119,7 +119,7 @@ The Pi can run its own Wi-Fi network, so the TV, the admin's phone and runners' 
 
 Good to know:
 - `sudo deploy/pi/hotspot.sh status` shows whether it's up and how many devices are connected. `sudo deploy/pi/hotspot.sh remove` goes back to normal Wi-Fi. `DRY_RUN=1` prints what it would do without doing it.
-- Phones will say the network has **no internet**. Tell people to stay connected. If the Pi also has Ethernet with internet, connected devices get internet through it.
+- Phones will say the network has **no internet**. Tell people to stay connected. If the Pi also has Ethernet with internet, connected devices get internet through it. (`hotspot.sh` adds the firewall rules for that, since Docker blocks forwarding by default.)
 - **How many devices:** the Pi's built-in Wi-Fi is commonly reported to handle only around 8–10 devices well. Test with the phones you expect. For a big field, use a cheap travel router as the Wi-Fi instead: plug the Pi into it by Ethernet, skip `hotspot.sh`, and either open the Pi's IP or add a local DNS entry for `race.lan` on the router (most have one).
 - It uses 2.4 GHz (channel 6 by default, `HOTSPOT_CHANNEL` to change it) for range outdoors. Keep the Pi up off the ground and away from the antenna mat's cable if you can.
 - Needs Raspberry Pi OS Bookworm or later (NetworkManager).
