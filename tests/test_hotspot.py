@@ -11,6 +11,7 @@ from web.join import qr_svg, site_url, wifi_qr_payload
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "deploy", "pi", "hotspot.sh")
+SIM_SCRIPT = os.path.join(ROOT, "deploy", "pi", "hotspot-sim.sh")
 
 
 @unittest.skipIf(shutil.which("bash") is None, "bash not available")
@@ -120,6 +121,29 @@ class HotspotScriptTest(unittest.TestCase):
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("Run with sudo", res.stderr)
 
+
+
+@unittest.skipIf(shutil.which("bash") is None, "bash not available")
+class HotspotSimScriptTest(unittest.TestCase):
+    """deploy/pi/hotspot-sim.sh needs root and a Pi kernel to really run; check what we can here."""
+    def run_sim(self, *args):
+        return subprocess.run(["bash", SIM_SCRIPT, *args], env={"PATH": os.environ["PATH"]},
+                              capture_output=True, text=True, timeout=30)
+
+    def test_parses(self):
+        self.assertEqual(subprocess.run(["bash", "-n", SIM_SCRIPT]).returncode, 0)
+
+    def test_usage(self):
+        res = self.run_sim()
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("simulated phones", res.stdout)
+
+    @unittest.skipIf(os.name != "posix" or os.geteuid() == 0, "needs a non-root user")
+    def test_needs_root(self):
+        for cmd in ("run", "clean"):
+            res = self.run_sim(cmd)
+            self.assertEqual(res.returncode, 1)
+            self.assertIn("sudo", res.stderr)
 
 class JoinHelpersTest(unittest.TestCase):
     def test_wifi_payload(self):

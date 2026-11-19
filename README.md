@@ -123,6 +123,7 @@ Good to know:
 - **How many devices:** the Pi's built-in Wi-Fi is commonly reported to handle only around 8–10 devices well. Test with the phones you expect. For a big field, use a cheap travel router as the Wi-Fi instead: plug the Pi into it by Ethernet, skip `hotspot.sh`, and either open the Pi's IP or add a local DNS entry for `race.lan` on the router (most have one).
 - It uses 2.4 GHz (channel 6 by default, `HOTSPOT_CHANNEL` to change it) for range outdoors. Keep the Pi up off the ground and away from the antenna mat's cable if you can.
 - Needs Raspberry Pi OS Bookworm or later (NetworkManager).
+- **Testing without phones:** `sudo deploy/pi/hotspot-sim.sh run 10` starts the hotspot on a simulated radio (the kernel's `mac80211_hwsim`) and has 10 simulated phones join it at once. Each one joins with WPA2, gets an address, looks up `race.lan` through the Pi and checks `/` → leaderboard, `/leaderboard` and that `/admin` asks for the PIN. It also checks internet through the Pi's Ethernet. The real Wi-Fi isn't touched, so it's safe over SSH. It needs `sudo apt install iw wpasupplicant udhcpc dnsutils`, the app on port 80 and `ADMIN_PIN` set. `sudo deploy/pi/hotspot-sim.sh clean` removes everything. It tests the setup (DHCP, DNS, WPA2, the app); it can't tell you range or how many phones the Pi's own Wi-Fi chip handles.
 
 ### 🔒 Admin access
 
