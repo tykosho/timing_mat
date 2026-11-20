@@ -478,7 +478,8 @@ class Database:
     def reset_participant_start(self, bib_number: int, event_id: Optional[int] = None):
         eid = self._eid(event_id)
         with self.connect() as conn:
-            conn.execute("UPDATE participants SET start_time = NULL, last_crossing_time = NULL WHERE event_id = ? AND bib_number = ?;", (eid, bib_number))
+            conn.execute("""UPDATE participants SET start_time = NULL, last_crossing_time = NULL, start_flag_reason = NULL
+                            WHERE event_id = ? AND bib_number = ?;""", (eid, bib_number))
             conn.execute("DELETE FROM laps WHERE event_id = ? AND bib_number = ?;", (eid, bib_number))
             conn.execute("DELETE FROM breaks WHERE event_id = ? AND bib_number = ?;", (eid, bib_number))
 
@@ -955,7 +956,8 @@ class Database:
         with self.connect() as conn:
             for table in ("laps", "breaks", "raw_reads"):
                 conn.execute(f"DELETE FROM {table} WHERE event_id = ?;", (eid,))
-            conn.execute("UPDATE participants SET start_time = NULL, last_crossing_time = NULL WHERE event_id = ?;", (eid,))
+            conn.execute("""UPDATE participants SET start_time = NULL, last_crossing_time = NULL, start_flag_reason = NULL
+                            WHERE event_id = ?;""", (eid,))
             conn.execute("UPDATE events SET status = 'setup', start_time = NULL, end_time = NULL WHERE id = ?;", (eid,))
 
     def reset_all_event_data(self, event_id: Optional[int] = None):
