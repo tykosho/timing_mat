@@ -18,6 +18,12 @@ logger = logging.getLogger("SerialReader")
 # module has gone quiet, in case it stopped for any other reason.
 DEFAULT_REARM_INTERVAL = 300.0   # seconds between routine stop + restart of the inventory
 DEFAULT_SILENCE_REARM = 30.0     # re-arm if no frame of any kind arrived for this long
+# pyserial's default write_timeout is None (block forever): a wedged USB-UART adapter would
+# hang the reader thread in write() for good, with no reconnect (issue #89). A stuck write now
+# raises SerialTimeoutException and the normal reconnect path takes over. Commands are never
+# flush()ed: that's tcdrain(), which ignores write_timeout and would hang the same way, and
+# write() already hands the bytes to the kernel.
+WRITE_TIMEOUT = 1.0
 
 
 class SerialReader(BaseRFIDReader):
@@ -74,13 +80,17 @@ class SerialReader(BaseRFIDReader):
         self._stop_event.set()
 
         # Send stop inventory command if open
-        if self.serial_conn and self.serial_conn.is_open:
+        conn = self.serial_conn
+        if conn and conn.is_open:
             try:
                 self._send(READ_STOP_COMMAND)
-                self.serial_conn.flush()
-                self.serial_conn.close()
             except Exception as e:
                 logger.error(f"Error stopping inventory command: {e}")
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
@@ -101,7 +111,6 @@ class SerialReader(BaseRFIDReader):
         if restart:
             self._send(READ_STOP_COMMAND)
         self._send(READ_MULTI_COMMAND)
-        self.serial_conn.flush()
         now = self._clock()
         self.last_arm_at = now
         # Count silence from the (re)arm, so a quiet field doesn't re-arm on every pass. This
@@ -132,11 +141,13 @@ class SerialReader(BaseRFIDReader):
         while not self._stop_event.is_set():
             # Connection management with automatic reconnection
             if not self.serial_conn or not self.serial_conn.is_open:
+                conn = None
                 try:
-                    self.serial_conn = self._serial_factory(
+                    conn = self.serial_conn = self._serial_factory(
                         port=self.port,
                         baudrate=self.baud_rate,
-                        timeout=0.1
+                        timeout=0.1,
+                        write_timeout=WRITE_TIMEOUT,
                     )
                     logger.info(f"Connected to R200 RFID reader on {self.port}")
                     buffer = bytearray()
@@ -147,6 +158,11 @@ class SerialReader(BaseRFIDReader):
                     self.last_error = None
                 except Exception as e:
                     logger.warning(f"Could not connect to {self.port}: {e}. Retrying in 2 seconds...")
+                    if conn is not None:  # opened, but arming it failed
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
                     self.serial_conn = None
                     self.connected = False
                     self.last_error = self._describe_open_error(e)
