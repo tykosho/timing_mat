@@ -186,6 +186,35 @@ class PagesLoadTest(BrowserTestCase):
         ctx.close()
 
 
+class PhoneLayoutTest(BrowserTestCase):
+    """At phone width no page scrolls sideways (#82); wide tables scroll inside their card."""
+    PHONE = {"width": 390, "height": 844}
+
+    def overflow(self, page):
+        return page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
+
+    def test_pages_fit_a_phone(self):
+        for ctx, paths in ((self.browser.new_context(viewport=self.PHONE), ["/leaderboard", "/runner/101", "/login"]),
+                           (self.admin_context(viewport=self.PHONE),
+                            ["/leaderboard", "/admin", "/prepare", "/crossings", "/replay", "/simulator", "/join"])):
+            for path in paths:
+                with self.subTest(path=path):
+                    page, _ = self.open(ctx, path)
+                    self.assertEqual(self.overflow(page), 0, f"{path} is wider than the screen")
+                    page.close()
+            ctx.close()
+
+    def test_leaderboard_shows_laps_and_distance_on_a_phone(self):
+        ctx = self.browser.new_context(viewport=self.PHONE)
+        page, _ = self.open(ctx, "/leaderboard")
+        headers = [h.strip() for h in page.locator("thead th:visible").all_inner_texts()]
+        self.assertIn("TOTAL LAPS", [h.upper() for h in headers])
+        self.assertIn("DISTANCE", [h.upper() for h in headers])
+        table = page.locator("table")
+        self.assertLessEqual(table.bounding_box()["width"], self.PHONE["width"])
+        ctx.close()
+
+
 class LoginTest(BrowserTestCase):
     def test_login_flow(self):
         ctx = self.browser.new_context()
@@ -416,6 +445,30 @@ class PausedClockTest(BrowserTestCase):
         finally:
             ctx.request.post(BASE + "/api/event/start")
             ctx.close()
+
+
+class ReplayChartTest(BrowserTestCase):
+    def test_empty_chart_has_no_negative_times(self):
+        """#114: before any laps the x-axis showed -1:-1."""
+        ctx = self.admin_context()
+        ctx.route("**/api/replay", lambda route: route.fulfill(json={"runners": [], "total_laps": 0}))
+        page, errors = self.open(ctx, "/replay")
+        self.assertEqual(errors, [])
+        self.assertTrue(page.is_visible("#replayEmpty"))
+        labels = page.evaluate("replayChart.scales.x.ticks.map(t => replayChart.options.scales.x.ticks.callback(t.value))")
+        self.assertTrue(labels)
+        self.assertFalse([t for t in labels if "-" in t], labels)
+        ctx.close()
+
+    def test_chart_with_laps_hides_the_empty_state(self):
+        ctx = self.admin_context()
+        while ctx.request.get(BASE + "/api/replay").json()["total_laps"] == 0:
+            time.sleep(0.5)
+        page, errors = self.open(ctx, "/replay")
+        self.assertEqual(errors, [])
+        self.assertFalse(page.is_visible("#replayEmpty"))
+        ctx.close()
+
 
 if __name__ == "__main__":
     unittest.main()
