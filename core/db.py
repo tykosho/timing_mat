@@ -641,14 +641,19 @@ class Database:
         with self.connect() as conn:
             conn.execute("UPDATE laps SET flag_reason = NULL WHERE id = ?;", (lap_id,))
 
-    def split_lap(self, lap_id: int, event_id: Optional[int] = None) -> bool:
-        """Splits a flagged double lap into 2 equal-time laps."""
-        eid = self._eid(event_id)
+    def get_lap(self, lap_id: int) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM laps WHERE id = ?;", (lap_id,)).fetchone()
+            return dict(row) if row else None
+
+    def split_lap(self, lap_id: int) -> bool:
+        """Splits a flagged double lap into 2 equal-time laps, in the lap's own event."""
         with self.connect() as conn:
             lap = conn.execute("SELECT * FROM laps WHERE id = ?;", (lap_id,)).fetchone()
             if not lap:
                 return False
             lap = dict(lap)
+            eid = lap["event_id"]
             bib = lap["bib_number"]
             total_dur = lap["lap_duration_seconds"]
             half_dur = round(total_dur / 2.0, 2)
