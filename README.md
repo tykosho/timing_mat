@@ -18,12 +18,31 @@ docker compose up --build
 Open your browser to:
 - **Trackside Live Crossing Feed**: [http://localhost:8000/crossings](http://localhost:8000/crossings)
 - **Live Big-Screen Leaderboard**: [http://localhost:8000/leaderboard](http://localhost:8000/leaderboard)
+- **Race Replay & Progression Chart**: [http://localhost:8000/replay](http://localhost:8000/replay)
 - **Prepare Bibs & Tags**: [http://localhost:8000/prepare](http://localhost:8000/prepare)
 - **Race Admin & Control Center**: [http://localhost:8000/admin](http://localhost:8000/admin)
+- **Printable Wi-Fi & Leaderboard QR Poster**: [http://localhost:8000/join](http://localhost:8000/join)
+- **Hardware & Glitch Simulator Studio** *(mock mode)*: [http://localhost:8000/simulator](http://localhost:8000/simulator)
 
 *(The simulator runs with no admin PIN, so every page is open. To try the login and the spectator view, put `ADMIN_PIN=123456` in a `.env` file next to `docker-compose.yml` and restart. The `HOTSPOT_*` settings from the Race Wi-Fi section below work there too.)*
 
 *(In simulator mode the first event is pre-seeded with 5 demo runners: Bibs 101 to 105. On real hardware nothing is seeded; set `SEED_DEMO=true` or `event.seed_demo: true` in `config.yaml` to force it.)*
+
+---
+
+## 📸 Screenshots
+
+*(Shown with sample demo runners and simulated splits.)*
+
+| Trackside Crossing Feed (`/crossings`) | Big-Screen Leaderboard (`/leaderboard`) |
+|---|---|
+| ![Trackside Crossing Feed](docs/screenshots/crossings.png) | ![Live Leaderboard](docs/screenshots/leaderboard.png) |
+| Live crossing cards, cumulative club distance banner, display scaling (`0.9x–2.0x`), and quick `+1`/`-1` lap adjustments. | High-contrast ranked standings with live elapsed timers, pace, fastest lap, and rest-break badges. |
+
+| Race Admin & Anomaly Review (`/admin`) | Race Replay & Step Chart (`/replay`) |
+|---|---|
+| ![Race Admin Panel](docs/screenshots/admin.png) | ![Race Replay Chart](docs/screenshots/replay.png) |
+| Event lifecycle controls, RFID reader health, flagged missed-lap review (**Split** / **Accept**), and runner management. | Interactive lap-progression step chart and timeline replay across any event. |
 
 ---
 
@@ -47,34 +66,43 @@ Everything (runners, bibs, tags, laps, raw reads) belongs to an **event**. The r
 ## 🎛️ How It Works
 
 ```
-[ UHF RFID Antenna + R200 Module ]
-               │ (UART / USB-Serial)
+[ UHF RFID Antenna + MagicRF R200 Module ]
+               │ (UART / USB-Serial, ~35 polls/sec + inventory watchdog)
                ▼
 [ Raspberry Pi / Docker Container ]
-   ├── 1. Serial Driver / Mock Reader (Emits tag read bursts)
-   ├── 2. Lap Engine (Peak RSSI detection & debounce filtering)
-   ├── 3. SQLite Database (`data/race.db` volume persisted)
-   └── 4. FastAPI Server (WebSockets for zero-latency live updates)
-               │ (Local Wi-Fi)
+   ├── 1. Serial Driver / FakeR200 / Mock Reader (Tag read bursts + RSSI)
+   ├── 2. Lap Engine (Peak RSSI, debounce, rest breaks, monotonic RaceClock)
+   ├── 3. SQLite WAL Database (`data/race.db` + automatic backups)
+   └── 4. FastAPI Server (Coalesced WebSockets & PIN-guarded control API)
+               │ (Local Race Wi-Fi Hotspot / LAN)
                ▼
-[ Display Screen / Phones ]
-   ├── TV / Projector: Live ranked standings, fastest splits, audio chime
-   ├── Admin Phone: Gun start/pause, tag sniffer auto-registration
-   └── Runner Phones: Individual split breakdown (pace per km)
+[ Screens, Tablets & Phones ]
+   ├── Trackside Display (`/crossings`): Live feed, cumulative km, +1/-1 lap fixes, walk-up tag registration
+   ├── Big-Screen TV (`/leaderboard`, `/replay`): Ranked standings, live clocks, progression step chart
+   ├── Admin Phone / Laptop (`/admin`, `/prepare`): Gun start/pause/end, anomaly review, CSV import & tagging
+   └── Runner Phones (`/runner/<bib>`): Individual split breakdown, pace per km, rest intervals
 ```
 
-### 1. Lap Detection & Anti-Double-Counting (Debounce)
-- When a runner crosses the antenna, the reader registers 5–20 reads within ~1.5 seconds.
-- The **Lap Engine** groups these reads, calculates the **Peak RSSI** timestamp as the crossing instant, and ignores all subsequent reads for that runner within the configurable **Min Lap Threshold** (e.g. 45–60 seconds).
-- Runners standing or chatting near the antenna will not trigger duplicate laps.
-- **Missed start:** in the crowd at the gun a tag may not be read at all. That runner's first lap crossing would then become their start and they'd lose a lap. A first crossing between the min lap time and ~2.5 typical laps after the gun (10 min before there are enough laps) shows in the admin page's **Needs Review** card. **Started at gun** moves their start to the gun and adds the missing first lap; **Joined late** keeps it as recorded.
+### 1. Lap Detection, Debounce & Monotonic Timing
+- When a runner crosses the antenna, the reader registers 5–20 reads within a short burst (`burst_window_seconds`, default `3.0s`).
+- The **Lap Engine** groups the burst, takes the **Peak RSSI** timestamp as the exact crossing instant, and enforces a configurable **Min Lap Threshold** (`min_lap_seconds`, e.g. 45–60s) so runners standing or chatting near the mat do not trigger duplicate laps.
+- **Too-soon prompt:** If a registered tag is scanned again after the burst window closes but before `min_lap_seconds`, `/crossings` surfaces a confirmation prompt so fast repeats or accidental walk-bys can be confirmed or dismissed on the spot.
+- **Monotonic RaceClock:** Split math uses `time.monotonic()` anchored at race start rather than `time.time()`, so NTP or phone-hotspot clock jumps on an offline Raspberry Pi never corrupt lap durations.
 
-### 2. Live RFID Tag Sniffer (Admin Feature)
-- In the Admin panel (`/admin`), when you wave any RFID sticker/bib near the antenna, the system instantly detects the tag's hex EPC and shows an **"Auto-fill into Registration"** button so you never have to manually type a 24-character hex code.
-- To check the reader from a terminal (shows each read as it happens): `python -m hardware.sniffer` (add `--raw` to also print the raw frame bytes).
+### 2. Rest Breaks & Anomaly Detection (`Needs Review`)
+- **Automatic & manual rest breaks:** Any gap longer than `max_lap_rest_seconds` (e.g. a water or bathroom break) is automatically recorded as a rest break instead of a slow lap so average pace stays accurate. Breaks can also be toggled manually (**Break** / **Resume**).
+- **Suspicious double laps:** If a lap is `>= 1.75x` a runner's typical (median) split while still under the rest threshold, it is flagged in `/admin` under **Needs Review** with one-click **Split** (divides into two equal laps when an antenna pass was missed) or **Accept**.
+- **Missed gun start:** In a crowded pack at the gun, a tag may go unread; without correction, that runner's Lap 1 crossing would become their start time and cost them a lap. First crossings between `min_lap_seconds` and ~2.5 typical laps after the gun appear in **Needs Review** with **Started at gun** (moves start to gun and backfills Lap 1) or **Joined late** (keeps chip start).
 
-### 3. Raw Read Log
-- While an event is running or paused, every tag read (including tags not assigned to anyone) is stored with its timestamp and RSSI. Laps are derived from these reads, so a missed or doubled lap can be investigated afterwards.
+### 3. Trackside Self-Service (`/crossings`) & Live Tag Sniffer
+- **Trackside display:** `/crossings` shows a cumulative club laps/distance banner, recent crossing cards, display scaling (`0.9x–2.0x`) and themes for outdoor readability, and quick `+1`/`-1` lap adjustment buttons.
+- **Walk-up tags & Admin Sniffer:** Scanning an unassigned RFID tag during a race prompts on `/crossings` so a walk-up runner can register their name on the spot. In `/admin`, waving any tag near the antenna shows an **"Auto-fill into Registration"** button (no typing 24-character hex EPCs). From a terminal, run `python -m hardware.sniffer` (`--raw` to include raw frame bytes).
+- **Zero-touch client recovery:** Connected browsers automatically reconnect dropped WebSockets and reload cleanly if the server restarts on a new version.
+
+### 4. Hardware Resilience, Raw Read Log & Coalesced Broadcasts
+- **R200 watchdog & reconnect:** `SerialReader` proactively re-arms the MagicRF R200 inventory loop before its 65,535-poll hardware limit (~31 minutes) and whenever serial traffic goes silent, and automatically reconnects if the USB-UART adapter is unplugged and replugged mid-race.
+- **Raw read audit log:** While an event is running or paused, every tag read (assigned or unknown) is stored with its timestamp and RSSI so laps can always be audited or exported afterwards.
+- **Coalesced WebSockets:** High-volume pack crossings coalesce leaderboard deltas and push over isolated per-client queues so a slow phone on weak Wi-Fi never blocks trackside displays.
 
 ---
 
@@ -130,7 +158,7 @@ Good to know:
 Runners' phones are on the same Wi-Fi as the timer, so race control is behind a PIN:
 
 - **Open to everyone:** the leaderboard (`/leaderboard`), runner pages (`/runner/<bib>`), the live WebSocket, and the read-only `GET /api/leaderboard` and `GET /api/event`.
-- **Admin only:** `/admin`, `/prepare`, every change (start/pause/end, runners, tags, laps, settings), runner lists and CSV exports (they contain emails). Opening an admin page asks for the PIN, and the login lasts 7 days on that device. The log-out button is in the admin header.
+- **Admin only:** `/admin`, `/crossings` (since it has `+1`/`-1` lap controls and tag registration), `/prepare`, `/replay`, `/join`, every write endpoint (start/pause/end, runners, tags, laps, settings), runner lists, and CSV exports (they contain emails). Opening an admin page asks for the PIN, and the login lasts 7 days on that device. The log-out button is in the admin header.
 - **Setting the PIN:** `ADMIN_PIN` env var (or `admin.pin` in `config.yaml`). Changing it logs everyone out.
 - **No PIN set:** in mock mode the admin is left open (with a warning banner) for local development. With a real reader, the app makes up a PIN and prints it in the log (`docker compose logs race-timer`).
 - Five wrong PINs from one device lock it out for a minute.
@@ -140,39 +168,58 @@ Runners' phones are on the same Wi-Fi as the timer, so race control is behind a 
 ## 📁 Project Structure
 
 ```
-├── Dockerfile                   # Python 3.11 container definition
+├── Dockerfile                   # Python 3.11 container definition (with healthcheck)
 ├── docker-compose.yml           # Dev / Mock mode container setup
-├── docker-compose.pi.yml        # Production Pi setup with /dev/ttyUSB0
-├── config.yaml                  # Race rules, port, baud rate
-├── requirements.txt             # FastAPI, Uvicorn, PySerial, etc.
+├── docker-compose.pi.yml        # Production Pi setup with /dev/ttyUSB0 & required ADMIN_PIN
+├── config.yaml                  # Race rules, port, baud rate, rest & debounce thresholds
+├── requirements.txt             # FastAPI, Uvicorn, PySerial, QRCode, etc.
 │
 ├── core/
-│   ├── db.py                    # SQLite persistence (events, participants, laps, breaks, raw reads) + migration
-│   ├── lap_engine.py            # Debounce, peak RSSI, lap timing engine, raw read log
+│   ├── clock.py                 # Monotonic RaceClock immune to system time jumps
+│   ├── db.py                    # SQLite WAL persistence (events, runners, laps, breaks, raw reads) + backups
+│   ├── lap_engine.py            # Burst grouping, peak RSSI, debounce, rest breaks & anomaly flags
 │   ├── registration_import.py   # Registration CSV parser (Google Forms style headers)
 │   ├── exports.py               # Results / laps / runners / raw-read CSV exports
 │   └── models.py                # Data classes
 │
 ├── hardware/
 │   ├── base.py                  # Abstract RFID reader interface
-│   ├── mock_reader.py           # Realistic runner simulator with RSSI bell curve
-│   ├── serial_reader.py         # PySerial background thread with auto-reconnect
+│   ├── serial_reader.py         # PySerial driver with R200 poll watchdog & USB auto-reconnect
 │   ├── r200_protocol.py         # MagicRF R200 frame builder, splitter and tag parser
-│   └── sniffer.py               # Terminal tool: print every tag read (uses the same parser)
+│   ├── fake_r200.py             # Byte-accurate virtual-serial R200 emulator + fault injection
+│   ├── mock_reader.py           # In-process runner & glitch simulator with RSSI bell curve
+│   ├── frame_capture.py         # Non-intrusive rx/tx serial frame recorder & replay loader
+│   ├── capture_report.py        # Summary analyzer for recorded R200 serial captures
+│   ├── sniffer.py               # Terminal tool: print live tag reads & raw frames
+│   └── simulator_cli.py         # Interactive CLI controller for the mock simulator
 │
 ├── web/
-│   ├── app.py                   # FastAPI application & WebSockets
+│   ├── app.py                   # FastAPI routes, API endpoints & WebSocket hub
+│   ├── auth.py                  # HMAC cookie PIN auth & brute-force lockout middleware
+│   ├── broadcaster.py           # Non-blocking per-client WebSocket queues
+│   ├── live_board.py            # Coalesced live leaderboard delta broadcaster
+│   ├── reader_health.py         # Live R200 serial & event-loop health monitor
+│   ├── join.py                  # Wi-Fi & leaderboard QR poster generator
+│   ├── simulator_routes.py      # Web API for the interactive simulator studio
 │   └── templates/
-│       ├── crossings.html       # Trackside live crossing feed & quick +1/-1 lap correction
-│       ├── leaderboard.html     # High-contrast, dark-mode TV display view
-│       ├── admin.html           # Event control (start/pause/end), events, runner registration
-│       ├── prepare.html         # CSV import + tag assignment before the event
-│       └── runner_detail.html   # Detailed split breakdown & pace analysis
+│       ├── crossings.html       # Trackside live crossing feed, display scaling & +1/-1 lap fixes
+│       ├── leaderboard.html     # High-contrast, dark-mode TV standings view
+│       ├── replay.html          # Interactive race replay & lap-progression step chart
+│       ├── admin.html           # Event control, anomaly review, reader status & runner management
+│       ├── prepare.html         # CSV import + sequential antenna tag assignment
+│       ├── runner_detail.html   # Individual runner split breakdown & pace analysis
+│       ├── join.html            # Printable Race Wi-Fi + Leaderboard QR sheet
+│       ├── simulator.html       # Mock hardware & RF glitch simulator studio
+│       └── login.html           # Admin PIN sign-in screen
 │
-└── tests/
-    ├── test_engine.py           # Lap engine, debounce, R200 protocol framing
-    ├── test_events.py           # Event lifecycle, migration, CSV import, tags, exports
-    └── test_api.py              # HTTP API and page rendering (needs requirements-dev.txt)
+├── deploy/pi/
+│   ├── hotspot.sh               # Turn Raspberry Pi into an offline `race.lan` Wi-Fi AP
+│   └── hotspot-sim.sh           # Multi-client `mac80211_hwsim` WPA2/DNS/DHCP integration test
+│
+├── tools/
+│   └── soak.py                  # Fast (simulated clock) & live multi-hour race soak harness
+│
+└── tests/                       # 26+ unit, integration, FakeR200, soak & offline Playwright suites
 ```
 
 ---
