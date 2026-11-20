@@ -49,6 +49,9 @@ class SerialReader(BaseRFIDReader):
         self.serial_conn: Optional[serial.Serial] = None
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        # Held for every write and for open/close, so stop() can't run in the middle of an arm
+        # on the reader thread and leave the module scanning after it (issue #111)
+        self._io_lock = threading.RLock()
 
         # Watchdog state (monotonic clock, so wall-clock jumps don't matter)
         self.last_arm_at: float = 0.0
@@ -79,18 +82,20 @@ class SerialReader(BaseRFIDReader):
         self.connected = False
         self._stop_event.set()
 
-        # Send stop inventory command if open
-        conn = self.serial_conn
-        if conn and conn.is_open:
-            try:
-                self._send(READ_STOP_COMMAND)
-            except Exception as e:
-                logger.error(f"Error stopping inventory command: {e}")
-            finally:
+        # Send stop inventory command if open. Under the lock: an arm or connect already under
+        # way on the reader thread finishes first, and none starts after (it checks the event).
+        with self._io_lock:
+            conn = self.serial_conn
+            if conn and conn.is_open:
                 try:
-                    conn.close()
-                except Exception:
-                    pass
+                    self._send(READ_STOP_COMMAND)
+                except Exception as e:
+                    logger.error(f"Error stopping inventory command: {e}")
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
@@ -141,33 +146,11 @@ class SerialReader(BaseRFIDReader):
         while not self._stop_event.is_set():
             # Connection management with automatic reconnection
             if not self.serial_conn or not self.serial_conn.is_open:
-                conn = None
-                try:
-                    conn = self.serial_conn = self._serial_factory(
-                        port=self.port,
-                        baudrate=self.baud_rate,
-                        timeout=0.1,
-                        write_timeout=WRITE_TIMEOUT,
-                    )
-                    logger.info(f"Connected to R200 RFID reader on {self.port}")
+                if self._connect():
                     buffer = bytearray()
-                    self._connected_at = self._clock()
-                    self._arm()
-                    self.connected = True
-                    self.connect_count += 1
-                    self.last_error = None
-                except Exception as e:
-                    logger.warning(f"Could not connect to {self.port}: {e}. Retrying in 2 seconds...")
-                    if conn is not None:  # opened, but arming it failed
-                        try:
-                            conn.close()
-                        except Exception:
-                            pass
-                    self.serial_conn = None
-                    self.connected = False
-                    self.last_error = self._describe_open_error(e)
+                else:
                     self._stop_event.wait(2.0)
-                    continue
+                continue
 
             try:
                 data = self.serial_conn.read(256)
@@ -178,20 +161,55 @@ class SerialReader(BaseRFIDReader):
                     buffer = self._process_stream(buffer)
                 else:
                     time.sleep(0.01)
-                self._maybe_rearm()
+                with self._io_lock:
+                    if not self._stop_event.is_set():
+                        self._maybe_rearm()
             except Exception as e:
                 logger.error(f"Serial read error on {self.port}: {e}")
                 self.connected = False
                 self.last_error = f"Read error: {e}"
                 if self.capture:
                     self.capture.note(f"serial error: {e}")
-                if self.serial_conn:
+                with self._io_lock:
+                    if self.serial_conn:
+                        try:
+                            self.serial_conn.close()
+                        except Exception:
+                            pass
+                    self.serial_conn = None
+                self._stop_event.wait(1.0)
+
+    def _connect(self) -> bool:
+        """Opens the port and starts inventory. False if that failed, or the reader is stopping."""
+        with self._io_lock:
+            if self._stop_event.is_set():
+                return False
+            conn = None
+            try:
+                conn = self.serial_conn = self._serial_factory(
+                    port=self.port,
+                    baudrate=self.baud_rate,
+                    timeout=0.1,
+                    write_timeout=WRITE_TIMEOUT,
+                )
+                logger.info(f"Connected to R200 RFID reader on {self.port}")
+                self._connected_at = self._clock()
+                self._arm()
+                self.connected = True
+                self.connect_count += 1
+                self.last_error = None
+                return True
+            except Exception as e:
+                logger.warning(f"Could not connect to {self.port}: {e}. Retrying in 2 seconds...")
+                if conn is not None:  # opened, but arming it failed
                     try:
-                        self.serial_conn.close()
+                        conn.close()
                     except Exception:
                         pass
                 self.serial_conn = None
-                self._stop_event.wait(1.0)
+                self.connected = False
+                self.last_error = self._describe_open_error(e)
+                return False
 
     def _describe_open_error(self, e: Exception) -> str:
         """Short, actionable text for the admin page instead of pyserial's nested message."""
