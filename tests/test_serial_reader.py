@@ -241,5 +241,52 @@ class WriteTimeoutTest(unittest.TestCase):
         self.assertIn("Write timeout", reader.last_error)
 
 
+class BlockingArmSerial(FakeSerial):
+    """The first inventory start blocks until released, so stop() can be called mid-arm."""
+    def __init__(self):
+        super().__init__()
+        self.arming = threading.Event()
+        self.release = threading.Event()
+
+    def write(self, data):
+        if bytes(data) == READ_MULTI_COMMAND and not self.arming.is_set():
+            self.arming.set()
+            self.release.wait(2.0)
+        super().write(data)
+
+
+class StopRaceTest(unittest.TestCase):
+    """Issue #111: stop() during an arm on the reader thread left the module scanning."""
+
+    def test_stop_during_arm_ends_with_inventory_stopped(self):
+        conn = BlockingArmSerial()
+        reader = SerialReader(serial_factory=lambda **_: conn)
+        reader.start()
+        self.assertTrue(conn.arming.wait(2.0))
+        stopper = threading.Thread(target=reader.stop)
+        stopper.start()
+        time.sleep(0.1)              # stop() is now waiting for the arm to finish
+        conn.release.set()
+        stopper.join(3.0)
+        self.assertFalse(stopper.is_alive())
+        self.assertEqual(conn.writes, [READ_MULTI_COMMAND, READ_STOP_COMMAND])
+        self.assertFalse(conn.is_open)
+        self.assertFalse(reader._thread.is_alive())
+
+    def test_no_connect_once_stopping(self):
+        opened = []
+        reader = SerialReader(serial_factory=lambda **_: opened.append(1) or FakeSerial())
+        reader._stop_event.set()
+        self.assertFalse(reader._connect())
+        self.assertEqual(opened, [])
+
+
+class SnifferTest(unittest.TestCase):
+    def test_sniffer_opens_the_port_with_a_write_timeout(self):  # issue #111
+        import hardware.sniffer as sniffer
+        with open(sniffer.__file__) as f:
+            self.assertIn("write_timeout=WRITE_TIMEOUT", f.read())
+
+
 if __name__ == "__main__":
     unittest.main()

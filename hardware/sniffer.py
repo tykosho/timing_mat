@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hardware.r200_protocol import (  # noqa: E402
     READ_MULTI_COMMAND, READ_STOP_COMMAND, extract_frames, parse_tag_frame, raw_rssi_to_dbm
 )
+from hardware.serial_reader import WRITE_TIMEOUT  # noqa: E402
 
 def default_port() -> str:
     """SERIAL_PORT if set; otherwise the Pi's /dev/ttyUSB0, or the first USB serial port on a Mac."""
@@ -62,7 +63,7 @@ def main():
     print(f"\033[1;36m{'─'*58}\033[0m\n", flush=True)
 
     try:
-        s = serial.Serial(port, BAUD, timeout=0.1)
+        s = serial.Serial(port, BAUD, timeout=0.1, write_timeout=WRITE_TIMEOUT)  # #111: no hang on a wedged adapter
     except serial.SerialException as e:
         print(f"\033[91mERROR: {e}\033[0m")
         sys.exit(1)
