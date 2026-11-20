@@ -262,11 +262,10 @@ class LapEngine:
         # CASE 1: Runner has NOT started yet -> Record CHIP START (Lap 0)
         # -------------------------------------------------------------
         if runner_start is None:
-            self.db.set_participant_start(bib, peak_time)
-            logger.info(f"🚀 CHIP START: Bib {bib} ({name}) started running at {peak_time:.2f} (RSSI: {peak_rssi:.1f} dBm)")
             start_flag = None if force else self._missed_start_reason(peak_time - race_start, min_lap_sec)
+            self.db.set_participant_start(bib, peak_time, flag_reason=start_flag)
+            logger.info(f"🚀 CHIP START: Bib {bib} ({name}) started running at {peak_time:.2f} (RSSI: {peak_rssi:.1f} dBm)")
             if start_flag:
-                self.db.flag_start(bib, start_flag)
                 logger.warning(f"⚠️ START REVIEW: Bib {bib} ({name}): {start_flag}")
 
             if self.on_runner_started:
@@ -326,8 +325,7 @@ class LapEngine:
                     start_time=last_crossing,
                     end_time=peak_time,
                     duration_seconds=round(break_duration, 2)
-                )
-                self.db.update_participant_last_crossing(bib, peak_time)
+                )  # also moves the last crossing to peak_time
                 logger.info(f"☕ BREAK DETECTED & RESUMED: Bib {bib} ({name}) resumed after {break_duration/60:.1f}m break!")
 
                 await self._notify_resumed(bib, name, break_duration, peak_time)
@@ -388,8 +386,7 @@ class LapEngine:
             peak_rssi=round(peak_rssi, 1),
             manual_entry=manual_entry,
             flag_reason=flag_reason,
-        )
-        self.db.update_participant_last_crossing(bib, peak_time)
+        )  # also moves the last crossing to peak_time
 
         logger.info(f"🏁 LAP RECORDED: Bib {bib} ({name}) - Lap {lap_number} in {lap_duration:.2f}s (RSSI: {peak_rssi:.1f} dBm)")
 
