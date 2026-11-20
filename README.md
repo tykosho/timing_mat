@@ -197,7 +197,7 @@ Every pull request (and every push to `main`) runs `.github/workflows/ci.yml`:
 |---|---|
 | `tests` | `python -m unittest discover tests` on Python 3.11 |
 | `lint` | `ruff check .`, using the bug-only rules in `ruff.toml` (syntax errors, undefined names) |
-| `browser` | starts the app in mock mode and checks every page in headless Chromium: no JS errors or failed requests, login, live leaderboard updates, race clock, admin-only tag reads (`tests/test_browser.py`) |
+| `browser` | starts the app in mock mode and checks every page in headless Chromium with no internet (any request off the app fails the test): no JS errors or failed requests, login, live leaderboard updates, race clock, admin-only tag reads (`tests/test_browser.py`) |
 | `css` | rebuilds `web/static/app.css` with the pinned Tailwind and fails if it differs from the committed file |
 | `docker` | builds the `Dockerfile` (nothing is pushed) |
 

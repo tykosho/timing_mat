@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import unittest
+import urllib.parse
 import urllib.request
 
 try:
@@ -88,6 +89,31 @@ def _launch(p):
     raise unittest.SkipTest("no browser: run `python -m playwright install chromium`")
 
 
+class _OfflineBrowser:
+    """The browser as trackside: no uplink (#87). Every context aborts requests that
+    don't go to the app under test (its exact origin) and records them, so a page that
+    needs a CDN fails the test."""
+
+    def __init__(self, browser, external: list):
+        self._browser = browser
+        self._external = external
+
+    def _guard(self, route):
+        if urllib.parse.urlsplit(route.request.url)[:2] == urllib.parse.urlsplit(BASE)[:2]:  # scheme, host:port
+            route.continue_()
+        else:
+            self._external.append(route.request.url)
+            route.abort("internetdisconnected")
+
+    def new_context(self, **kwargs):
+        ctx = self._browser.new_context(**kwargs)
+        ctx.route("**/*", self._guard)  # tests' own ctx.route() calls are added later, so they run first
+        return ctx
+
+    def close(self):
+        self._browser.close()
+
+
 def _clock_seconds(text: str) -> int:
     h, m, s = (int(x) for x in text.strip().split(":"))
     return h * 3600 + m * 60 + s
@@ -97,7 +123,8 @@ class BrowserTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.pw = sync_playwright().start()
-        cls.browser = _launch(cls.pw)
+        cls.external_requests = []
+        cls.browser = _OfflineBrowser(_launch(cls.pw), cls.external_requests)
         # A running event with the simulator sped up, so there's live data to see
         admin = cls.admin_context()
         admin.request.post(BASE + "/api/event/start")
@@ -108,6 +135,12 @@ class BrowserTestCase(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close()
         cls.pw.stop()
+
+    def setUp(self):
+        self.external_requests.clear()
+
+    def tearDown(self):
+        self.assertEqual(self.external_requests, [], "pages must work offline: only the app itself may be fetched")
 
     @classmethod
     def admin_context(cls, **kwargs):
