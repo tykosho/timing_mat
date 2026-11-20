@@ -124,6 +124,7 @@ class BroadcasterTest(unittest.TestCase):
 class StalledClientDuringLapsTest(unittest.TestCase):
     """End to end through the app's real callbacks: the lap engine resolves crossings while
     one connected phone has stopped reading."""
+    SEND_TIMEOUT = 3.0
 
     @classmethod
     def setUpClass(cls):
@@ -141,7 +142,7 @@ class StalledClientDuringLapsTest(unittest.TestCase):
         self.stalled, self.good = StalledWS(), GoodWS()
         for name, value in [("db", self.db), ("active_connections", [self.stalled, self.good]),
                             ("admin_connections", [self.stalled, self.good]),
-                            ("broadcaster", Broadcaster(on_drop=self.app._forget_ws, send_timeout=0.3))]:
+                            ("broadcaster", Broadcaster(on_drop=self.app._forget_ws, send_timeout=self.SEND_TIMEOUT))]:
             patcher = mock.patch.object(self.app, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -152,6 +153,8 @@ class StalledClientDuringLapsTest(unittest.TestCase):
                                 on_unassigned_tag=self.app.on_unassigned_tag)
 
     def test_laps_are_recorded_without_waiting_for_the_stalled_phone(self):
+        """A crossing that waited on the stalled phone would take at least SEND_TIMEOUT (30 of them
+        far longer), so the limit sits well below it rather than near the normal ~0.1 s (#110)."""
         async def scenario():
             started = time.monotonic()
             for lap in range(3):                       # start + 2 laps for 10 runners
@@ -160,14 +163,15 @@ class StalledClientDuringLapsTest(unittest.TestCase):
                     await self.engine._resolve_crossing(epc, [(1010.0 + lap * 60 + bib, -50.0)])
             await self.engine._resolve_crossing("DEADBEEF", [(1200.0, -60.0)])  # admin-only push
             elapsed = time.monotonic() - started
-            await wait_until(lambda: self.stalled not in self.app.active_connections)
+            self.assertIn(self.stalled, self.app.active_connections)  # its send hasn't timed out yet
+            await wait_until(lambda: self.stalled not in self.app.active_connections, timeout=self.SEND_TIMEOUT + 2)
             await wait_until(lambda: self.stalled.closed)
             await self.app.broadcaster.drain()
             self.app.full_board.cancel()
             return elapsed
 
         elapsed = asyncio.run(scenario())
-        self.assertLess(elapsed, 0.25, "lap recording waited on the network")
+        self.assertLess(elapsed, self.SEND_TIMEOUT - 1, "lap recording waited on the network")
         self.assertEqual(sum(len(self.db.get_laps_for_runner(b)) for b in range(1, 11)), 20)
         types = [m["type"] for m in self.good.sent]
         self.assertEqual(types.count("runner_started"), 10)

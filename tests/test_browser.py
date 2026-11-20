@@ -446,5 +446,29 @@ class PausedClockTest(BrowserTestCase):
             ctx.request.post(BASE + "/api/event/start")
             ctx.close()
 
+
+class ReplayChartTest(BrowserTestCase):
+    def test_empty_chart_has_no_negative_times(self):
+        """#114: before any laps the x-axis showed -1:-1."""
+        ctx = self.admin_context()
+        ctx.route("**/api/replay", lambda route: route.fulfill(json={"runners": [], "total_laps": 0}))
+        page, errors = self.open(ctx, "/replay")
+        self.assertEqual(errors, [])
+        self.assertTrue(page.is_visible("#replayEmpty"))
+        labels = page.evaluate("replayChart.scales.x.ticks.map(t => replayChart.options.scales.x.ticks.callback(t.value))")
+        self.assertTrue(labels)
+        self.assertFalse([t for t in labels if "-" in t], labels)
+        ctx.close()
+
+    def test_chart_with_laps_hides_the_empty_state(self):
+        ctx = self.admin_context()
+        while ctx.request.get(BASE + "/api/replay").json()["total_laps"] == 0:
+            time.sleep(0.5)
+        page, errors = self.open(ctx, "/replay")
+        self.assertEqual(errors, [])
+        self.assertFalse(page.is_visible("#replayEmpty"))
+        ctx.close()
+
+
 if __name__ == "__main__":
     unittest.main()
