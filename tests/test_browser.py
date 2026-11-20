@@ -186,6 +186,35 @@ class PagesLoadTest(BrowserTestCase):
         ctx.close()
 
 
+class PhoneLayoutTest(BrowserTestCase):
+    """At phone width no page scrolls sideways (#82); wide tables scroll inside their card."""
+    PHONE = {"width": 390, "height": 844}
+
+    def overflow(self, page):
+        return page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
+
+    def test_pages_fit_a_phone(self):
+        for ctx, paths in ((self.browser.new_context(viewport=self.PHONE), ["/leaderboard", "/runner/101", "/login"]),
+                           (self.admin_context(viewport=self.PHONE),
+                            ["/leaderboard", "/admin", "/prepare", "/crossings", "/replay", "/simulator", "/join"])):
+            for path in paths:
+                with self.subTest(path=path):
+                    page, _ = self.open(ctx, path)
+                    self.assertEqual(self.overflow(page), 0, f"{path} is wider than the screen")
+                    page.close()
+            ctx.close()
+
+    def test_leaderboard_shows_laps_and_distance_on_a_phone(self):
+        ctx = self.browser.new_context(viewport=self.PHONE)
+        page, _ = self.open(ctx, "/leaderboard")
+        headers = [h.strip() for h in page.locator("thead th:visible").all_inner_texts()]
+        self.assertIn("TOTAL LAPS", [h.upper() for h in headers])
+        self.assertIn("DISTANCE", [h.upper() for h in headers])
+        table = page.locator("table")
+        self.assertLessEqual(table.bounding_box()["width"], self.PHONE["width"])
+        ctx.close()
+
+
 class LoginTest(BrowserTestCase):
     def test_login_flow(self):
         ctx = self.browser.new_context()
