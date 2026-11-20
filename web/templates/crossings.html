@@ -415,6 +415,15 @@
         </div>
       </section>
 
+      <!-- Unclaimed auto-registered tags currently timing: click any pill to enter your name -->
+      <section id="unclaimedRunnersBar" aria-label="Unclaimed tags"
+               class="hidden bg-amber-950/30 border border-amber-500/40 rounded-2xl px-4 py-2.5 flex flex-wrap items-center gap-2">
+        <span class="text-xs font-bold uppercase tracking-wider text-amber-300 mr-1">
+          <i class="fa-solid fa-tag mr-1"></i>Unclaimed Tags (click to set name):
+        </span>
+        <div id="unclaimedRunnersList" class="flex flex-wrap items-center gap-2"></div>
+      </section>
+
       <div class="flex items-center justify-between px-1">
         <span class="text-xs font-bold uppercase tracking-wider text-slate-400">
           Most Recent Crossings (Last <span id="feedLimitLabel">10</span>)
@@ -583,69 +592,58 @@
   </div>
   {% endif %}
 
-  <!-- Crossing Too Soon Prompt -->
+  <!-- Crossing Too Soon Prompt (stacked list so concurrent runners never overwrite each other) -->
   <div id="tooSoonPrompt" role="dialog" aria-labelledby="tooSoonTitle"
        class="hidden fixed top-20 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md z-50 bg-slate-900/95 backdrop-blur border border-amber-500/70 rounded-2xl shadow-2xl p-4 text-slate-100">
-    <div class="flex items-start justify-between gap-3 mb-2">
-      <div class="flex items-center gap-2">
-        <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
-        <h2 id="tooSoonTitle" class="text-sm font-bold text-white">Crossing Too Soon</h2>
-      </div>
-      <span id="tooSoonCountdown" class="text-[11px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full shrink-0">30s</span>
+    <div class="flex items-center gap-2 mb-2">
+      <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+      <h2 id="tooSoonTitle" class="text-sm font-bold text-white">Crossing Too Soon</h2>
     </div>
-    <p id="tooSoonMessage" class="text-xs text-slate-300 mt-1"></p>
-    <p id="tooSoonError" class="hidden text-xs text-rose-400 font-medium mt-2"></p>
-    <div class="flex items-center justify-end gap-2 mt-4">
-      <button type="button" id="tooSoonRejectBtn" onclick="rejectTooSoonPrompt()"
-              class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors">
-        Reject
-      </button>
-      <button type="button" id="tooSoonAcceptBtn" onclick="acceptTooSoonPrompt()"
-              class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow transition-colors">
-        Accept Lap
-      </button>
-    </div>
+    <div id="tooSoonList" class="space-y-3 max-h-80 overflow-y-auto"></div>
   </div>
 
-  <!-- Unrecognized Tag Self-Registration Prompt (issue #45) -->
+  <!-- Unrecognized Tag Self-Registration Prompt (stacked list) -->
   <div id="unrecognizedTagPrompt" role="dialog" aria-labelledby="unrecognizedTagTitle"
        class="hidden fixed bottom-4 left-4 right-4 sm:right-auto sm:w-96 z-50 bg-slate-900/95 backdrop-blur border border-amber-500/60 rounded-2xl shadow-2xl p-4 text-slate-100">
-    <div class="flex items-start justify-between gap-3 mb-2">
-      <div>
-        <div class="flex items-center gap-2">
-          <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
-          <h2 id="unrecognizedTagTitle" class="text-sm font-bold text-white">Unrecognized Tag Detected</h2>
-        </div>
-        <p class="text-xs text-slate-400 mt-0.5">
-          Tag <span id="unrecognizedTagEpc" class="font-mono text-amber-300 font-semibold"></span> is not registered.
-        </p>
-      </div>
-      <span id="unrecognizedTagCountdown" class="text-[11px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full shrink-0">30s</span>
+    <div class="flex items-center gap-2 mb-2">
+      <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+      <h2 id="unrecognizedTagTitle" class="text-sm font-bold text-white">New Tag Detected — Enter Name</h2>
     </div>
+    <div id="unrecognizedTagList" class="space-y-3 max-h-96 overflow-y-auto"></div>
+  </div>
 
-    <form id="unrecognizedTagForm" class="space-y-2.5 mt-3">
-      <div>
-        <label for="unrecognizedNameInput" class="block text-xs font-medium text-slate-300 mb-1">Your Name</label>
-        <input id="unrecognizedNameInput" type="text" required autocomplete="name" placeholder="Enter your name"
-               class="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 outline-none" />
-      </div>
-      <div>
-        <label for="unrecognizedBibInput" class="block text-xs font-medium text-slate-300 mb-1">Bib # <span class="text-slate-500">(optional, auto-assigned if blank)</span></label>
-        <input id="unrecognizedBibInput" type="number" min="1" step="1" placeholder="Auto"
-               class="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 outline-none" />
-      </div>
-      <p id="unrecognizedTagError" class="hidden text-xs text-rose-400 font-medium"></p>
-      <div class="flex items-center justify-end gap-2 pt-1">
-        <button type="button" id="unrecognizedDismissBtn" onclick="dismissUnrecognizedTagPrompt()"
-                class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors">
-          Dismiss
-        </button>
-        <button type="submit" id="unrecognizedSubmitBtn"
-                class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow transition-colors">
-          Register
+  <!-- Inline / Quick Rename Runner Modal -->
+  <div id="renameRunnerModal" role="dialog" aria-modal="true" aria-labelledby="renameRunnerTitle"
+       class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+       onclick="if (event.target === this) closeRenameModal()">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full p-5 shadow-2xl text-slate-100">
+      <div class="flex items-center justify-between mb-3">
+        <h3 id="renameRunnerTitle" class="text-base font-bold text-white">Edit Runner Name</h3>
+        <button type="button" onclick="closeRenameModal()" class="text-slate-400 hover:text-white p-1 rounded-lg">
+          <i class="fa-solid fa-xmark"></i>
         </button>
       </div>
-    </form>
+      <form id="renameRunnerForm" class="space-y-3">
+        <div>
+          <label for="renameRunnerInput" class="block text-xs font-medium text-slate-400 mb-1">
+            Runner Name (<span id="renameRunnerBibLabel" class="font-mono text-emerald-400"></span>)
+          </label>
+          <input id="renameRunnerInput" type="text" required autocomplete="name" placeholder="Enter your name"
+                 class="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 outline-none" />
+        </div>
+        <p id="renameRunnerError" class="hidden text-xs text-rose-400 font-medium"></p>
+        <div class="flex items-center justify-end gap-2 pt-1">
+          <button type="button" onclick="closeRenameModal()"
+                  class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+            Cancel
+          </button>
+          <button id="renameRunnerSubmitBtn" type="submit"
+                  class="px-4 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow transition">
+            Save Name
+          </button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <script>
@@ -907,13 +905,28 @@
             </div>`
           : "";
 
+        const isPlaceholder = /^Runner #\d+$/.test(c.name || "");
+        const nameHtml = isPlaceholder
+          ? `<button type="button" onclick="openRenameModalByBib(${c.bib_number})"
+                     class="runner-name text-left text-amber-300 hover:text-amber-200 transition flex items-center gap-2 flex-wrap">
+               <span>${esc(c.name)}</span>
+               <span class="text-[11px] font-semibold bg-amber-500/20 border border-amber-400/50 text-amber-200 px-2 py-0.5 rounded-full">Click to set name</span>
+             </button>`
+          : `<div class="flex items-center gap-2 min-w-0">
+               <a href="/runner/${c.bib_number}" class="runner-name block hover:text-emerald-400 transition truncate">
+                 ${esc(c.name)}
+               </a>
+               <button type="button" onclick="openRenameModalByBib(${c.bib_number})" title="Edit runner name"
+                       class="text-slate-500 hover:text-emerald-400 text-xs px-1.5 py-0.5 rounded transition shrink-0">
+                 <i class="fa-solid fa-pen"></i>
+               </button>
+             </div>`;
+
         row.innerHTML = `
           <div class="flex items-center gap-3 md:gap-4 min-w-0 flex-1">
             <div class="bib-pill">#${c.bib_number}</div>
             <div class="min-w-0 flex-1">
-              <a href="/runner/${c.bib_number}" class="runner-name block hover:text-emerald-400 transition">
-                ${esc(c.name)}
-              </a>
+              ${nameHtml}
               ${timeAgoHtml}
             </div>
           </div>
@@ -1097,9 +1110,19 @@
           renderCrossingFeed(false);
         } else if (msg.type === "leaderboard_update") {
           currentLeaderboard = boardFromMessage(currentLeaderboard, msg);
+        } else if (msg.type === "participant_renamed") {
+          recentCrossings.forEach(c => {
+            if (c.bib_number === msg.bib_number) c.name = msg.name;
+          });
+          if (Array.isArray(currentLeaderboard)) {
+            currentLeaderboard.forEach(r => {
+              if (r.bib_number === msg.bib_number) r.name = msg.name;
+            });
+          }
+          renderCrossingFeed(false);
         } else if (msg.type === "unassigned_tag_detected") {
           if (msg.data && msg.data.epc) {
-            showUnrecognizedTagPrompt(msg.data.epc);
+            showUnrecognizedTagPrompt(msg.data);
           }
         } else if (msg.type === "crossing_too_soon") {
           if (msg.data && msg.data.bib_number != null) {
@@ -1116,6 +1139,7 @@
           window.location.reload();
         }
         renderCumulative();
+        renderUnclaimedRunners();
       };
 
       ws.onclose = () => {
@@ -1317,234 +1341,397 @@
       } catch (e) {}
     }
 
-    // Too-soon crossing confirmation dialog (auto-rejects after 30s)
+    // Unclaimed placeholder runners bar + click-to-rename modal
+    let renamingBib = null;
+
+    function isPlaceholderName(name) {
+      return /^Runner #\d+$/.test(name || "");
+    }
+
+    function renderUnclaimedRunners() {
+      const bar = document.getElementById("unclaimedRunnersBar");
+      const list = document.getElementById("unclaimedRunnersList");
+      if (!bar || !list) return;
+      const board = Array.isArray(currentLeaderboard) ? currentLeaderboard : [];
+      const unclaimed = board.filter(r => isPlaceholderName(r.name));
+      if (unclaimed.length === 0) {
+        bar.classList.add("hidden");
+        list.innerHTML = "";
+        return;
+      }
+      bar.classList.remove("hidden");
+      list.innerHTML = "";
+      unclaimed.forEach(r => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "text-xs font-semibold bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/50 text-amber-100 px-2.5 py-1 rounded-lg transition flex items-center gap-1.5";
+        const laps = r.total_laps || 0;
+        btn.innerHTML = `<span class="font-mono font-bold">#${r.bib_number}</span><span>(${laps} lap${laps === 1 ? "" : "s"})</span><i class="fa-solid fa-pen text-[10px] text-amber-300"></i>`;
+        btn.onclick = () => openRenameModalByBib(r.bib_number);
+        list.appendChild(btn);
+      });
+    }
+
+    function openRenameModalByBib(bib) {
+      renamingBib = bib;
+      const board = Array.isArray(currentLeaderboard) ? currentLeaderboard : [];
+      const fromBoard = board.find(r => r.bib_number === bib);
+      const fromFeed = recentCrossings.find(c => c.bib_number === bib);
+      const currentName = (fromBoard && fromBoard.name) || (fromFeed && fromFeed.name) || "";
+      document.getElementById("renameRunnerBibLabel").textContent = `#${bib}`;
+      const input = document.getElementById("renameRunnerInput");
+      input.value = isPlaceholderName(currentName) ? "" : currentName;
+      const err = document.getElementById("renameRunnerError");
+      err.textContent = "";
+      err.classList.add("hidden");
+      document.getElementById("renameRunnerSubmitBtn").disabled = false;
+      document.getElementById("renameRunnerModal").classList.remove("hidden");
+      input.focus();
+      input.select();
+    }
+
+    function closeRenameModal() {
+      renamingBib = null;
+      const modal = document.getElementById("renameRunnerModal");
+      if (modal) modal.classList.add("hidden");
+    }
+
+    (function initRenameModal() {
+      const form = document.getElementById("renameRunnerForm");
+      if (!form) return;
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (renamingBib == null) return;
+        const name = document.getElementById("renameRunnerInput").value.trim();
+        const err = document.getElementById("renameRunnerError");
+        const btn = document.getElementById("renameRunnerSubmitBtn");
+        if (!name) {
+          err.textContent = "Please enter a name.";
+          err.classList.remove("hidden");
+          return;
+        }
+        btn.disabled = true;
+        err.classList.add("hidden");
+        try {
+          const res = await fetch(`/api/participants/${renamingBib}/name`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            err.textContent = body.detail || "Could not update name.";
+            err.classList.remove("hidden");
+            btn.disabled = false;
+            return;
+          }
+          // Also close any open unknown-tag prompt card for this bib
+          removeUnrecognizedByBib(renamingBib);
+          closeRenameModal();
+        } catch (ex) {
+          err.textContent = "Network error while saving name.";
+          err.classList.remove("hidden");
+          btn.disabled = false;
+        }
+      });
+    })();
+
+    // Stacked too-soon crossing confirmation list (each item auto-rejects after 30s)
     const TOO_SOON_AUTO_REJECT_MS = 30000;
-    const tooSoonState = {
-      data: null,
-      timeoutId: null,
-      intervalId: null,
-      deadline: 0,
-    };
+    let tooSoonSeq = 0;
+    const tooSoonItems = [];
 
-    function clearTooSoonTimers() {
-      if (tooSoonState.timeoutId !== null) {
-        clearTimeout(tooSoonState.timeoutId);
-        tooSoonState.timeoutId = null;
-      }
-      if (tooSoonState.intervalId !== null) {
-        clearInterval(tooSoonState.intervalId);
-        tooSoonState.intervalId = null;
-      }
-    }
-
-    function updateTooSoonCountdown() {
-      const el = document.getElementById("tooSoonCountdown");
-      if (!el) return;
-      const secs = Math.max(0, Math.ceil((tooSoonState.deadline - Date.now()) / 1000));
-      el.textContent = `${secs}s`;
-    }
-
-    function hideTooSoonPrompt() {
-      clearTooSoonTimers();
-      tooSoonState.data = null;
+    function renderTooSoonPrompt() {
       const promptEl = document.getElementById("tooSoonPrompt");
-      if (promptEl) promptEl.classList.add("hidden");
-    }
-
-    function rejectTooSoonPrompt() {
-      hideTooSoonPrompt();
+      const listEl = document.getElementById("tooSoonList");
+      if (!promptEl || !listEl) return;
+      if (tooSoonItems.length === 0) {
+        promptEl.classList.add("hidden");
+        listEl.innerHTML = "";
+        return;
+      }
+      promptEl.classList.remove("hidden");
+      listEl.innerHTML = "";
+      tooSoonItems.forEach(item => {
+        const secs = Math.max(0, Math.ceil((item.deadline - Date.now()) / 1000));
+        const elapsed = Number(item.elapsed_seconds || 0).toFixed(1);
+        const minLap = Number(item.min_lap_seconds || 0).toFixed(0);
+        const card = document.createElement("div");
+        card.className = "bg-slate-950/80 border border-slate-800 rounded-xl p-3";
+        card.setAttribute("data-too-soon-id", String(item.id));
+        const errHtml = item.error
+          ? `<p class="text-xs text-rose-400 font-medium mt-1.5">${esc(item.error)}</p>`
+          : "";
+        card.innerHTML = `
+          <div class="flex items-start justify-between gap-2">
+            <p class="text-xs text-slate-200">
+              <strong class="text-white">${esc(item.name || `Bib #${item.bib_number}`)}</strong> (#${item.bib_number})
+              crossed after <span class="font-mono text-amber-300">${elapsed}s</span> (min ${minLap}s).
+            </p>
+            <span class="too-soon-countdown text-[11px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full shrink-0">${secs}s</span>
+          </div>
+          ${errHtml}
+          <div class="flex items-center justify-end gap-2 mt-2.5">
+            <button type="button" onclick="rejectTooSoonItem(${item.id})"
+                    class="px-3 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors">
+              Reject
+            </button>
+            <button type="button" onclick="acceptTooSoonItem(${item.id})" ${item.busy ? "disabled" : ""}
+                    class="px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white shadow transition-colors">
+              Accept Lap
+            </button>
+          </div>
+        `;
+        listEl.appendChild(card);
+      });
     }
 
     function showTooSoonPrompt(data) {
-      if (tooSoonState.data && tooSoonState.data.bib_number === data.bib_number) {
+      if (tooSoonItems.some(it => it.bib_number === data.bib_number)) {
         return;
       }
-      clearTooSoonTimers();
-      tooSoonState.data = data;
-      const elapsed = Number(data.elapsed_seconds || 0).toFixed(1);
-      const minLap = Number(data.min_lap_seconds || 0).toFixed(0);
-      const msgEl = document.getElementById("tooSoonMessage");
-      msgEl.textContent = `${data.name || `Bib #${data.bib_number}`} (#${data.bib_number}) crossed too soon (${elapsed}s since last crossing; minimum lap is ${minLap}s). Accept this lap time or reject it?`;
-      const errEl = document.getElementById("tooSoonError");
-      errEl.textContent = "";
-      errEl.classList.add("hidden");
-      document.getElementById("tooSoonAcceptBtn").disabled = false;
-      document.getElementById("tooSoonPrompt").classList.remove("hidden");
-
-      tooSoonState.deadline = Date.now() + TOO_SOON_AUTO_REJECT_MS;
-      updateTooSoonCountdown();
-      tooSoonState.timeoutId = setTimeout(() => {
-        rejectTooSoonPrompt();
-      }, TOO_SOON_AUTO_REJECT_MS);
-      tooSoonState.intervalId = setInterval(updateTooSoonCountdown, 1000);
+      tooSoonItems.push({
+        id: ++tooSoonSeq,
+        bib_number: data.bib_number,
+        name: data.name,
+        elapsed_seconds: data.elapsed_seconds,
+        min_lap_seconds: data.min_lap_seconds,
+        crossing_time: data.crossing_time,
+        peak_rssi: data.peak_rssi,
+        deadline: Date.now() + TOO_SOON_AUTO_REJECT_MS,
+        error: "",
+        busy: false,
+      });
+      renderTooSoonPrompt();
     }
 
-    async function acceptTooSoonPrompt() {
-      if (!tooSoonState.data) return;
-      const btn = document.getElementById("tooSoonAcceptBtn");
-      const errEl = document.getElementById("tooSoonError");
-      btn.disabled = true;
-      errEl.classList.add("hidden");
+    function rejectTooSoonItem(id) {
+      const idx = tooSoonItems.findIndex(it => it.id === id);
+      if (idx !== -1) {
+        tooSoonItems.splice(idx, 1);
+        renderTooSoonPrompt();
+      }
+    }
+
+    async function acceptTooSoonItem(id) {
+      const item = tooSoonItems.find(it => it.id === id);
+      if (!item || item.busy) return;
+      item.busy = true;
+      item.error = "";
+      renderTooSoonPrompt();
       try {
         const res = await fetch("/api/crossings/accept-too-soon", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            bib_number: tooSoonState.data.bib_number,
-            crossing_time: tooSoonState.data.crossing_time,
-            peak_rssi: tooSoonState.data.peak_rssi ?? -45.0,
+            bib_number: item.bib_number,
+            crossing_time: item.crossing_time,
+            peak_rssi: item.peak_rssi ?? -45.0,
           }),
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          errEl.textContent = body.detail || "Could not accept crossing.";
-          errEl.classList.remove("hidden");
-          btn.disabled = false;
+          item.error = body.detail || "Could not accept crossing.";
+          item.busy = false;
+          renderTooSoonPrompt();
           return;
         }
-        hideTooSoonPrompt();
+        rejectTooSoonItem(id);
       } catch (err) {
-        errEl.textContent = "Network error while accepting lap.";
-        errEl.classList.remove("hidden");
-        btn.disabled = false;
+        item.error = "Network error while accepting lap.";
+        item.busy = false;
+        renderTooSoonPrompt();
       }
     }
 
-    // Unrecognized tag self-registration prompt (issue #45)
+    // Stacked unknown-tag prompt list (auto-dismisses after 30s of inactivity per row;
+    // during a running race the tag is already timing as Runner #<bib>!)
     const UNRECOGNIZED_AUTO_DISMISS_MS = 30000;
     const UNRECOGNIZED_COOLDOWN_MS = 60000;
     const dismissedEpcs = new Map();
-    const unrecognizedTagState = {
-      epc: null,
-      timeoutId: null,
-      intervalId: null,
-      deadline: 0,
-    };
+    let unrecognizedSeq = 0;
+    const unrecognizedItems = [];
 
-    function clearUnrecognizedTimers() {
-      if (unrecognizedTagState.timeoutId !== null) {
-        clearTimeout(unrecognizedTagState.timeoutId);
-        unrecognizedTagState.timeoutId = null;
-      }
-      if (unrecognizedTagState.intervalId !== null) {
-        clearInterval(unrecognizedTagState.intervalId);
-        unrecognizedTagState.intervalId = null;
+    function removeUnrecognizedByBib(bib) {
+      const idx = unrecognizedItems.findIndex(it => it.bib_number === bib);
+      if (idx !== -1) {
+        const [removed] = unrecognizedItems.splice(idx, 1);
+        const card = document.querySelector(`[data-unreg-id="${removed.id}"]`);
+        if (card) card.remove();
+        syncUnrecognizedVisibility();
       }
     }
 
-    function updateUnrecognizedCountdown() {
-      const el = document.getElementById("unrecognizedTagCountdown");
-      if (!el) return;
-      const secs = Math.max(0, Math.ceil((unrecognizedTagState.deadline - Date.now()) / 1000));
-      el.textContent = `${secs}s`;
-    }
-
-    function resetUnrecognizedTagTimer() {
-      if (!unrecognizedTagState.epc) return;
-      clearUnrecognizedTimers();
-      unrecognizedTagState.deadline = Date.now() + UNRECOGNIZED_AUTO_DISMISS_MS;
-      updateUnrecognizedCountdown();
-      unrecognizedTagState.timeoutId = setTimeout(() => {
-        dismissUnrecognizedTagPrompt();
-      }, UNRECOGNIZED_AUTO_DISMISS_MS);
-      unrecognizedTagState.intervalId = setInterval(updateUnrecognizedCountdown, 1000);
-    }
-
-    function hideUnrecognizedTagPrompt() {
-      clearUnrecognizedTimers();
-      unrecognizedTagState.epc = null;
+    function syncUnrecognizedVisibility() {
       const promptEl = document.getElementById("unrecognizedTagPrompt");
-      if (promptEl) promptEl.classList.add("hidden");
-    }
-
-    function dismissUnrecognizedTagPrompt() {
-      if (unrecognizedTagState.epc) {
-        dismissedEpcs.set(unrecognizedTagState.epc, Date.now());
+      if (!promptEl) return;
+      if (unrecognizedItems.length === 0) {
+        promptEl.classList.add("hidden");
+      } else {
+        promptEl.classList.remove("hidden");
       }
-      hideUnrecognizedTagPrompt();
     }
 
-    function showUnrecognizedTagPrompt(epc) {
+    function touchUnrecognizedItem(id) {
+      const item = unrecognizedItems.find(it => it.id === id);
+      if (!item) return;
+      item.deadline = Date.now() + UNRECOGNIZED_AUTO_DISMISS_MS;
+      const badge = document.querySelector(`[data-unreg-id="${id}"] .unreg-countdown`);
+      if (badge) badge.textContent = "30s";
+    }
+
+    function dismissUnrecognizedItem(id) {
+      const idx = unrecognizedItems.findIndex(it => it.id === id);
+      if (idx === -1) return;
+      const [item] = unrecognizedItems.splice(idx, 1);
+      dismissedEpcs.set(item.epc, Date.now());
+      const card = document.querySelector(`[data-unreg-id="${id}"]`);
+      if (card) card.remove();
+      syncUnrecognizedVisibility();
+    }
+
+    function showUnrecognizedTagPrompt(tagOrEpc) {
+      const epc = typeof tagOrEpc === "string" ? tagOrEpc : tagOrEpc.epc;
       const lastDismissed = dismissedEpcs.get(epc);
       if (lastDismissed && (Date.now() - lastDismissed) < UNRECOGNIZED_COOLDOWN_MS) {
         return;
       }
-      if (unrecognizedTagState.epc) {
-        // Do not clobber an active prompt already waiting on user input.
+      if (unrecognizedItems.some(it => it.epc === epc)) {
         return;
       }
-      unrecognizedTagState.epc = epc;
-      document.getElementById("unrecognizedTagEpc").textContent = epc;
-      document.getElementById("unrecognizedNameInput").value = "";
-      document.getElementById("unrecognizedBibInput").value = "";
-      const errEl = document.getElementById("unrecognizedTagError");
-      errEl.textContent = "";
-      errEl.classList.add("hidden");
-      document.getElementById("unrecognizedTagPrompt").classList.remove("hidden");
-      resetUnrecognizedTagTimer();
-      document.getElementById("unrecognizedNameInput").focus();
-    }
+      const item = {
+        id: ++unrecognizedSeq,
+        epc,
+        bib_number: (typeof tagOrEpc === "object" && tagOrEpc.bib_number != null) ? tagOrEpc.bib_number : null,
+        crossingTime: (typeof tagOrEpc === "object" && tagOrEpc.timestamp != null) ? tagOrEpc.timestamp : null,
+        peakRssi: (typeof tagOrEpc === "object" && tagOrEpc.peak_rssi != null) ? tagOrEpc.peak_rssi : null,
+        deadline: Date.now() + UNRECOGNIZED_AUTO_DISMISS_MS,
+      };
+      unrecognizedItems.push(item);
 
-    (function initUnrecognizedTagPrompt() {
-      const promptEl = document.getElementById("unrecognizedTagPrompt");
-      const formEl = document.getElementById("unrecognizedTagForm");
-      if (!promptEl || !formEl) return;
+      const listEl = document.getElementById("unrecognizedTagList");
+      if (!listEl) return;
+      const card = document.createElement("form");
+      card.className = "bg-slate-950/85 border border-slate-800 rounded-xl p-3 space-y-2";
+      card.setAttribute("data-unreg-id", String(item.id));
+      const subtitle = item.bib_number != null
+        ? `Timing now as <strong class="text-amber-300 font-mono">#${item.bib_number}</strong> (tag <span class="font-mono">${esc(epc.slice(-6))}</span>)`
+        : `Tag <span class="font-mono text-amber-300 font-semibold">${esc(epc)}</span> is not registered`;
+      card.innerHTML = `
+        <div class="flex items-start justify-between gap-2">
+          <p class="text-xs text-slate-300">${subtitle}</p>
+          <span class="unreg-countdown text-[11px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full shrink-0">30s</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <input type="text" required autocomplete="name" placeholder="Enter your name"
+                 class="unreg-name-input flex-1 min-w-0 bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 outline-none" />
+          ${item.bib_number == null ? `<input type="number" min="1" step="1" placeholder="Bib#" class="unreg-bib-input w-16 bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-lg px-2 py-1.5 text-xs text-white placeholder-slate-500 outline-none" />` : ""}
+        </div>
+        <p class="unreg-error hidden text-xs text-rose-400 font-medium"></p>
+        <div class="flex items-center justify-end gap-2">
+          <button type="button" onclick="dismissUnrecognizedItem(${item.id})"
+                  class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors">
+            Dismiss
+          </button>
+          <button type="submit" class="unreg-submit px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow transition-colors">
+            ${item.bib_number != null ? "Save Name" : "Register"}
+          </button>
+        </div>
+      `;
 
-      ["input", "keydown", "pointerdown", "click"].forEach((evt) => {
-        promptEl.addEventListener(evt, () => {
-          if (unrecognizedTagState.epc) resetUnrecognizedTagTimer();
-        });
+      ["input", "keydown", "pointerdown", "click"].forEach(evt => {
+        card.addEventListener(evt, () => touchUnrecognizedItem(item.id));
       });
 
-      formEl.addEventListener("submit", async (e) => {
+      card.addEventListener("submit", async (e) => {
         e.preventDefault();
-        if (!unrecognizedTagState.epc) return;
-        const name = document.getElementById("unrecognizedNameInput").value.trim();
-        const bibRaw = document.getElementById("unrecognizedBibInput").value.trim();
-        const errEl = document.getElementById("unrecognizedTagError");
-        const submitBtn = document.getElementById("unrecognizedSubmitBtn");
-
+        const nameInput = card.querySelector(".unreg-name-input");
+        const bibInput = card.querySelector(".unreg-bib-input");
+        const errEl = card.querySelector(".unreg-error");
+        const submitBtn = card.querySelector(".unreg-submit");
+        const name = (nameInput ? nameInput.value : "").trim();
+        const bibRaw = bibInput ? bibInput.value.trim() : "";
         if (!name) {
           errEl.textContent = "Please enter your name.";
           errEl.classList.remove("hidden");
           return;
         }
-
         submitBtn.disabled = true;
         errEl.classList.add("hidden");
         try {
-          const payload = {
-            name,
-            epc: unrecognizedTagState.epc,
-            bib_number: bibRaw ? parseInt(bibRaw, 10) : null,
-          };
           const res = await fetch("/api/self-register", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            body: JSON.stringify({
+              name,
+              epc: item.epc,
+              bib_number: bibRaw ? parseInt(bibRaw, 10) : null,
+              crossing_time: item.crossingTime,
+              peak_rssi: item.peakRssi,
+            }),
           });
           if (!res.ok) {
             const body = await res.json().catch(() => ({}));
-            errEl.textContent = body.detail || "Could not register tag.";
+            errEl.textContent = body.detail || "Could not save name.";
             errEl.classList.remove("hidden");
-            resetUnrecognizedTagTimer();
+            touchUnrecognizedItem(item.id);
+            submitBtn.disabled = false;
             return;
           }
-          dismissedEpcs.delete(unrecognizedTagState.epc);
-          hideUnrecognizedTagPrompt();
+          dismissedEpcs.delete(item.epc);
+          const idx = unrecognizedItems.findIndex(it => it.id === item.id);
+          if (idx !== -1) unrecognizedItems.splice(idx, 1);
+          card.remove();
+          syncUnrecognizedVisibility();
         } catch (err) {
-          errEl.textContent = "Network error while registering.";
+          errEl.textContent = "Network error while saving.";
           errEl.classList.remove("hidden");
-          resetUnrecognizedTagTimer();
-        } finally {
+          touchUnrecognizedItem(item.id);
           submitBtn.disabled = false;
         }
       });
-    })();
+
+      listEl.appendChild(card);
+      syncUnrecognizedVisibility();
+      if (unrecognizedItems.length === 1) {
+        const firstInput = card.querySelector(".unreg-name-input");
+        if (firstInput) firstInput.focus();
+      }
+    }
+
+    // Shared 1s countdown ticker for both stacked prompt lists (updates text in place without losing input focus)
+    setInterval(() => {
+      const now = Date.now();
+      let tooSoonExpired = false;
+      for (let i = tooSoonItems.length - 1; i >= 0; i--) {
+        const it = tooSoonItems[i];
+        const secs = Math.max(0, Math.ceil((it.deadline - now) / 1000));
+        if (secs <= 0 && !it.busy) {
+          tooSoonItems.splice(i, 1);
+          tooSoonExpired = true;
+        } else {
+          const badge = document.querySelector(`[data-too-soon-id="${it.id}"] .too-soon-countdown`);
+          if (badge) badge.textContent = `${secs}s`;
+        }
+      }
+      if (tooSoonExpired) renderTooSoonPrompt();
+
+      for (let i = unrecognizedItems.length - 1; i >= 0; i--) {
+        const it = unrecognizedItems[i];
+        const secs = Math.max(0, Math.ceil((it.deadline - now) / 1000));
+        if (secs <= 0) {
+          dismissUnrecognizedItem(it.id);
+        } else {
+          const badge = document.querySelector(`[data-unreg-id="${it.id}"] .unreg-countdown`);
+          if (badge) badge.textContent = `${secs}s`;
+        }
+      }
+    }, 1000);
 
     applyDisplaySettings();
     applyEventStatus();
     renderCrossingFeed(false);
+    renderUnclaimedRunners();
     connectWS();
   </script>
 </body>

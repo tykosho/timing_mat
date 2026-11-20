@@ -242,6 +242,45 @@ class ParkedTagTest(EngineTestCase):
         self.assertNotIn(EPC, self.engine.buffers)
         self.assertIsNotNone(self.db.get_participant_by_bib(101)["start_time"])
 
+    def test_intermittent_fringe_reads_never_trigger_phantom_laps(self):
+        """A runner chatting 2-3 m from the mat gets read every ~6 s (wider than crossing_window,
+        so self.lingering never engages). Even after 300 s (> 6x min_lap_seconds), zero phantom
+        laps are recorded until they actually leave the field for >= min_lap_seconds."""
+        self.db.update_event_settings(min_lap_seconds=45.0, max_lap_rest_seconds=600.0)
+        self.db.start_event(at=1000.0)
+        too_soon = self.too_soon_events()
+        self.cross(1000.0)   # Start
+        self.cross(1100.0)   # Real Lap 1 (100s)
+        self.assertEqual(self.durations(), [100.0])
+
+        # Intermittent fringe reads every 6 s for 180 s (each burst flushes with quiet=True)
+        for step in range(1, 31):
+            t = 1100.0 + step * 6.0
+            self.engine.process_tag_read(TagRead(epc=EPC, timestamp=t, rssi=-74.0))
+            asyncio.run(self.engine.flush_once(t + 2.0))
+
+        self.assertEqual(self.durations(), [100.0], "intermittent reads near mat must not record phantom laps")
+        self.assertEqual(len(too_soon), 1, "too-soon prompt fires once, not on every 6 s fringe ping")
+
+        # Now the runner actually leaves for 70 s (>= 45 s min_lap) and finishes Lap 2
+        self.engine.process_tag_read(TagRead(epc=EPC, timestamp=1280.0 + 70.0, rssi=-44.0))
+        self.leave(1350.0)
+        self.assertEqual(self.durations(), [100.0, 250.0])
+
+    def test_lap_requires_min_lap_silence_since_last_read(self):
+        """Even if >= min_lap_seconds has passed since the previous crossing, a read < min_lap_seconds
+        after a debounced stray read is still debounced."""
+        self.db.update_event_settings(min_lap_seconds=45.0, max_lap_rest_seconds=600.0)
+        self.db.start_event(at=1000.0)
+        self.cross(1000.0)
+        self.assertEqual(self.cross(1030.0), "debounced")
+        # 55 s since start (>= 45 s), but only 25 s since the 1030.0 read (< 45 s)
+        self.assertEqual(self.cross(1055.0), "debounced")
+        self.assertEqual(self.durations(), [])
+        # 50 s of true silence after 1055.0 -> valid lap!
+        self.assertEqual(self.cross(1105.0), "lap")
+        self.assertEqual(self.durations(), [105.0])
+
 
 class ManualBreakTest(EngineTestCase):
     """Issue #86: the mat and the Break/Resume buttons must agree about a runner's rest."""
