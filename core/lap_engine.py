@@ -20,6 +20,7 @@ MISSED_START_DEFAULT_WINDOW = 600.0
 # recorded: /api/event fails (Docker healthcheck) and the admin strip turns red (issue #83).
 FLUSH_STALE_SECONDS = 10.0
 FLUSH_INTERVAL = 0.2
+FLUSH_RETRY_DELAY = 1.0  # after a failed tick: don't hammer a failing disk 5 times a second
 
 class LapEngine:
     def __init__(self, db: Database, 
@@ -119,27 +120,31 @@ class LapEngine:
         ticks = 0
         failures = 0
         self.flush_started_at = self._monotonic()
-        while True:
-            await asyncio.sleep(FLUSH_INTERVAL)
-            try:
-                self.refresh_event()
-                self.flush_raw_reads()
-                ticks += 1
-                if ticks % 150 == 0:  # every ~30 s
-                    self.maintain_clock()
-                await self.flush_once(clock.now())
-            except Exception as e:
-                failures += 1
-                self.flush_errors += 1
-                self.last_flush_error = f"{type(e).__name__}: {e}"
-                if failures == 1 or failures % 50 == 0:  # first one, then every ~10 s
-                    logger.exception(f"Flush loop tick failed ({failures} in a row); retrying")
-                continue
-            if failures:
-                logger.info(f"Flush loop recovered after {failures} failed tick(s)")
-                failures = 0
-            self.last_flush_at = self._monotonic()
-            self.last_flush_error = None
+        self.last_flush_at = None
+        try:
+            while True:
+                await asyncio.sleep(FLUSH_RETRY_DELAY if failures else FLUSH_INTERVAL)
+                try:
+                    self.refresh_event()
+                    self.flush_raw_reads()
+                    ticks += 1
+                    if ticks % 150 == 0:  # every ~30 s
+                        self.maintain_clock()
+                    await self.flush_once(clock.now())
+                except Exception as e:
+                    failures += 1
+                    self.flush_errors += 1
+                    self.last_flush_error = f"{type(e).__name__}: {e}"
+                    if failures == 1 or failures % 10 == 0:  # first one, then every ~10 s
+                        logger.exception(f"Flush loop tick failed ({failures} in a row); retrying")
+                    continue
+                if failures:
+                    logger.info(f"Flush loop recovered after {failures} failed tick(s)")
+                    failures = 0
+                self.last_flush_at = self._monotonic()
+                self.last_flush_error = None
+        finally:
+            self.flush_started_at = None  # stopped on purpose (shutdown): not "stalled"
 
     def flush_health(self) -> Dict[str, Any]:
         """Is flush_loop still ticking? Before it has started (tests, startup) it counts as ok."""

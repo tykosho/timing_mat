@@ -47,9 +47,10 @@ class FlushLoopSurvivesErrorsTest(unittest.TestCase):
         self.db.start_event(at=self.now - 1000)
         self.engine = LapEngine(db=self.db, crossing_window=0.15)
         self.engine.refresh_event()
-        patcher = mock.patch.object(lap_engine_module, "FLUSH_INTERVAL", 0.01)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for name in ("FLUSH_INTERVAL", "FLUSH_RETRY_DELAY"):
+            patcher = mock.patch.object(lap_engine_module, name, 0.01)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def read(self, ago):
         self.engine.process_tag_read(TagRead(epc=EPC, timestamp=self.now - ago, rssi=-50.0))
@@ -75,8 +76,11 @@ class FlushLoopSurvivesErrorsTest(unittest.TestCase):
                     await wait_for(lambda: len(self.db.get_laps_for_runner(1)) == 1)
                     await wait_for(lambda: self.db.count_raw_reads() == 2)
                     self.assertFalse(task.done(), "flush loop must keep running")
+                    self.assertTrue(self.engine.flush_health()["running"])
                 finally:
                     task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                self.assertFalse(self.engine.flush_health()["running"], "a stopped loop isn't stalled")
 
         with self.assertLogs("LapEngine", level="ERROR") as logs:
             asyncio.run(scenario())
