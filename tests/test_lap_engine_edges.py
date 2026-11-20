@@ -121,14 +121,84 @@ class ParkedTagTest(EngineTestCase):
             t += every
         return outcomes
 
+    def too_soon_events(self):
+        events = []
+        self.engine.on_crossing_too_soon = events.append
+        return events
+
+    def leave(self, t):
+        """The tag leaves the field after its last read at `t`."""
+        asyncio.run(self.engine.flush_once(t + 5.0))
+
     def test_parked_tag_is_resolved_and_buffer_stays_small(self):
         self.db.start_event(at=1000.0)
+        too_soon = self.too_soon_events()
         sizes = self.feed(1000.0, 60.0)
         # Resolved after ~MAX_BURST_SECONDS instead of never; the buffer never grows past one burst
         self.assertEqual(self.db.get_participant_by_bib(101)["start_time"], 1000.0)
         self.assertLessEqual(max(sizes), MAX_BURST_SECONDS / 0.5 + 1)
-        # 60 s parked: the burst every 8 s after the start is a "lap" only once 20 s have passed
-        self.assertTrue(all(d >= 20.0 for d in self.durations()))
+        self.leave(1060.0)
+        # Issue #85: 60 s parked is one visit to the mat, not a start plus laps every 8 s
+        self.assertEqual(self.durations(), [])
+        self.assertEqual(too_soon, [])
+
+    def test_lingering_after_a_lap_adds_no_phantom_laps(self):
+        # The repro from issue #85: min lap 45 s, a tag left on the mat for 180 s after a real lap
+        self.db.update_event_settings(min_lap_seconds=45.0, max_lap_rest_seconds=600.0)
+        self.db.start_event(at=1000.0)
+        too_soon = self.too_soon_events()
+        self.cross(1000.0)
+        self.feed(1100.0, 180.0)
+        self.leave(1280.0)
+        self.assertEqual(self.durations(), [100.0])
+        self.assertEqual(too_soon, [])
+        # Once it has left the field, the next crossing is an ordinary lap again
+        self.feed(1400.0, 1.0)
+        self.leave(1401.0)
+        self.assertEqual(self.durations(), [100.0, 300.0])
+
+    def test_tag_leaving_right_after_a_forced_resolve_is_forgotten(self):
+        self.db.start_event(at=1000.0)
+        self.cross(1000.0)
+        # Parked exactly long enough to be force-resolved, then gone with nothing left buffered
+        self.feed(1050.0, MAX_BURST_SECONDS + 0.5)
+        self.leave(1050.0 + MAX_BURST_SECONDS)
+        self.assertEqual(self.durations(), [50.0])
+        self.feed(1100.0, 1.0)
+        self.leave(1101.0)
+        self.assertEqual(self.durations(), [50.0, 50.0])
+
+    def test_lingering_tag_that_left_and_came_back_before_a_flush_counts(self):
+        self.db.start_event(at=1000.0)
+        self.cross(1000.0)
+        self.feed(1050.0, MAX_BURST_SECONDS + 0.5)       # parked, force-resolved as a lap
+        # Gone for 60 s, then back across the mat with no flush in between (e.g. a stall)
+        for t in (1110.0, 1110.2):
+            self.engine.process_tag_read(TagRead(epc=EPC, timestamp=t, rssi=-50.0))
+        self.leave(1110.2)
+        self.assertEqual(self.durations(), [50.0, 60.0])
+
+    def test_reset_forgets_parked_tags(self):
+        self.db.start_event(at=1000.0)
+        self.engine.refresh_event()
+        self.feed(1000.0, 10.0)
+        self.engine.refresh_event()
+        self.assertIn(EPC, self.engine.lingering)
+        with self.at(1010.0):
+            self.db.pause_event()
+        self.db.reset_race_data()
+        self.engine.refresh_event()
+        self.assertEqual(self.engine.lingering, {})
+
+    def test_runner_waiting_on_the_mat_before_the_gun_still_starts(self):
+        self.feed(990.0, 10.0)          # standing on the mat, event not started yet
+        self.db.start_event(at=1000.0)
+        self.feed(1000.0, 20.0)
+        self.leave(1020.0)
+        start = self.db.get_participant_by_bib(101)["start_time"]
+        self.assertIsNotNone(start)
+        self.assertLessEqual(start, 1000.0 + MAX_BURST_SECONDS)
+        self.assertEqual(self.durations(), [])
 
     def test_normal_crossing_still_resolves_on_the_quiet_gap(self):
         self.db.start_event(at=1000.0)

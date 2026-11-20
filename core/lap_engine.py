@@ -37,6 +37,10 @@ class LapEngine:
 
         # Buffer to aggregate bursts of reads: epc -> list of (timestamp, rssi)
         self.buffers: Dict[str, List[Tuple[float, float]]] = {}
+        # Tags still in the field after a burst was resolved for running too long (issue #85):
+        # epc -> time of its last read. Their later reads are the same visit to the mat, so they
+        # are dropped until the tag has been quiet for the crossing window.
+        self.lingering: Dict[str, float] = {}
 
         # Raw read log. The reader thread appends (deque.append is thread-safe) and flush_loop
         # writes batches to the DB. Only reads while an event is running/paused are kept.
@@ -46,7 +50,11 @@ class LapEngine:
     def refresh_event(self):
         """Re-reads the current event so raw reads are tagged with the right event (or dropped)."""
         event = self.db.get_event()
-        self.log_event_id = event["id"] if event and event["status"] in ("running", "paused") else None
+        log_event_id = event["id"] if event and event["status"] in ("running", "paused") else None
+        if log_event_id is None or log_event_id != self.log_event_id:
+            # Reset, or another event: a tag parked by the mat starts afresh in it
+            self.lingering.clear()
+        self.log_event_id = log_event_id
 
     def maintain_clock(self):
         """Keeps the race clock honest about system clock changes (see core/clock.py)."""
@@ -106,18 +114,34 @@ class LapEngine:
         for epc, reads in list(self.buffers.items()):
             if not reads:
                 continue
-            last_read_time = reads[-1][0]
             # If no new read for effective_window seconds, runner has exited antenna beam.
             # A tag that never leaves (spare bib by the mat, runner standing on it) is
-            # resolved anyway once its burst is MAX_BURST_SECONDS old; later reads start a
-            # new burst, which the min-lap debounce then ignores.
-            if (now - last_read_time) >= effective_window or (now - reads[0][0]) >= max_burst:
-                epcs_to_process.append(epc)
+            # resolved anyway once its burst is MAX_BURST_SECONDS old, so it isn't stuck.
+            quiet = (now - reads[-1][0]) >= effective_window
+            if quiet or (now - reads[0][0]) >= max_burst:
+                epcs_to_process.append((epc, quiet))
 
-        for epc in epcs_to_process:
-            reads = self.buffers.pop(epc, [])
-            if reads:
-                await self._resolve_crossing(epc, reads)
+        # A lingering tag that was quiet for the crossing window has left the field, even if it
+        # is already back (its new reads are a new crossing) or left no buffer behind.
+        for epc, last_read in list(self.lingering.items()):
+            reads = self.buffers.get(epc)
+            if ((reads[0][0] if reads else now) - last_read) >= effective_window:
+                del self.lingering[epc]
+
+        # Take the bursts before resolving any: a read arriving while a callback awaits starts
+        # a new burst instead of being swept into (or dropped with) one already finished.
+        bursts = [(epc, self.buffers.pop(epc), quiet) for epc, quiet in epcs_to_process]
+        for epc, reads, quiet in bursts:
+            if epc in self.lingering:
+                # Same visit to the mat as a crossing already resolved: no lap, no too-soon prompt
+                if quiet:
+                    del self.lingering[epc]
+                else:
+                    self.lingering[epc] = reads[-1][0]
+                continue
+            outcome = await self._resolve_crossing(epc, reads)
+            if not quiet and outcome is not None:
+                self.lingering[epc] = reads[-1][0]
 
     def _missed_start_reason(self, seconds_after_gun: float, min_lap_sec: float) -> Optional[str]:
         """Issue #72: in the crowd at the gun a tag may not be read at all. Then the runner's
