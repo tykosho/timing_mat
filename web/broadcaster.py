@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 import weakref
-from typing import Any, Callable, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional, Set
 
 logger = logging.getLogger("Broadcaster")
 
@@ -64,6 +64,7 @@ class Broadcaster:
         self.max_queued = max_queued
         self._clients: Dict[Any, _Client] = {}
         self._gone: "weakref.WeakSet[Any]" = weakref.WeakSet()  # dropped or ended: never again
+        self._closing: Set[asyncio.Task] = set()
         self.dropped = 0
 
     def _client(self, ws) -> _Client:
@@ -98,12 +99,14 @@ class Broadcaster:
             return
         self.dropped += 1
         logger.warning(f"Dropping live client: {reason}")
-        if client.task is not asyncio.current_task() and client.alive():
+        if client.alive() and client.task is not asyncio.current_task():
             client.task.cancel()
         if self.on_drop:
             self.on_drop(ws)
         if close and hasattr(ws, "close"):
-            asyncio.get_running_loop().create_task(self._close(ws))
+            task = asyncio.get_running_loop().create_task(self._close(ws))
+            self._closing.add(task)  # the loop only keeps weak references to tasks
+            task.add_done_callback(self._closing.discard)
 
     async def _close(self, ws):
         try:
@@ -115,7 +118,7 @@ class Broadcaster:
         """The connection ended: stop its sender (no close, no on_drop)."""
         self._gone.add(ws)
         client = self._clients.pop(ws, None)
-        if client is not None and client.task is not asyncio.current_task() and client.alive():
+        if client is not None and client.alive() and client.task is not asyncio.current_task():
             client.task.cancel()
 
     async def drain(self, timeout: float = 2.0):
@@ -130,3 +133,5 @@ class Broadcaster:
     def cancel(self):
         for ws in list(self._clients):
             self.forget(ws)
+        for task in list(self._closing):
+            task.cancel()

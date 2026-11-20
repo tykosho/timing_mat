@@ -161,6 +161,7 @@ class StalledClientDuringLapsTest(unittest.TestCase):
             await self.engine._resolve_crossing("DEADBEEF", [(1200.0, -60.0)])  # admin-only push
             elapsed = time.monotonic() - started
             await wait_until(lambda: self.stalled not in self.app.active_connections)
+            await wait_until(lambda: self.stalled.closed)
             await self.app.broadcaster.drain()
             self.app.full_board.cancel()
             return elapsed
