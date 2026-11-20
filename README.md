@@ -198,6 +198,7 @@ Every pull request (and every push to `main`) runs `.github/workflows/ci.yml`:
 | `tests` | `python -m unittest discover tests` on Python 3.11 |
 | `lint` | `ruff check .`, using the bug-only rules in `ruff.toml` (syntax errors, undefined names) |
 | `browser` | starts the app in mock mode and checks every page in headless Chromium: no JS errors or failed requests, login, live leaderboard updates, race clock, admin-only tag reads (`tests/test_browser.py`) |
+| `css` | rebuilds `web/static/app.css` with the pinned Tailwind and fails if it differs from the committed file |
 | `docker` | builds the `Dockerfile` (nothing is pushed) |
 
 Run the same checks before you push:
@@ -205,6 +206,11 @@ Run the same checks before you push:
 python3 -m unittest discover tests
 pip install ruff==0.17.5 && ruff check .
 docker build -t timing-mat .
+```
+
+Changed or added Tailwind classes in `web/templates`? Rebuild the stylesheet and commit it (needs Node; the Pi itself never builds CSS):
+```bash
+npm ci && npm run build:css
 ```
 
 Browser tests (skipped by `unittest discover` when Playwright isn't installed):

@@ -1,0 +1,11 @@
+{
+  "name": "timing-mat-css",
+  "private": true,
+  "description": "Builds web/static/app.css from the templates. Run `npm ci && npm run build:css` after changing classes in web/templates; CI fails if app.css is out of date.",
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i web/tailwind.input.css -o web/static/app.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  }
+}
