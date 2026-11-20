@@ -197,6 +197,31 @@ class WriteTimeoutTest(unittest.TestCase):
         self.assertFalse(conns[0].is_open)
         self.assertEqual(conns[1].writes[0], READ_MULTI_COMMAND)
 
+    def test_commands_are_never_drained(self):
+        """flush() is tcdrain(): it ignores write_timeout, so a wedged adapter hangs in it."""
+        class NoDrain(FakeSerial):
+            def flush(self):
+                raise AssertionError("flush() would block in tcdrain()")
+
+        conn = NoDrain()
+        reader = SerialReader(serial_factory=lambda **_: conn, silence_rearm=0.05, rearm_interval=0)
+        ReadLoopTest.run_loop(self, reader, seconds=0.3)
+        self.assertGreaterEqual(reader.rearm_count, 1)
+        self.assertEqual(reader.connect_count, 1, "no flush error forced a reconnect")
+        self.assertIn(READ_STOP_COMMAND, conn.writes)
+
+    def test_stop_closes_the_port_even_if_the_stop_command_times_out(self):
+        class Wedged(FakeSerial):
+            def write(self, data):
+                if data == READ_STOP_COMMAND:
+                    raise serial.SerialTimeoutException("Write timeout")
+                super().write(data)
+
+        conn = Wedged()
+        reader = SerialReader(serial_factory=lambda **_: conn, rearm_interval=0, silence_rearm=0)
+        ReadLoopTest.run_loop(self, reader, seconds=0.1)
+        self.assertFalse(conn.is_open)
+
     def test_port_closed_when_arming_fails_right_after_open(self):
         class CantArm(FakeSerial):
             def write(self, data):
