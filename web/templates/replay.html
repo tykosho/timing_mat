@@ -59,6 +59,9 @@
       <!-- Canvas -->
       <div class="relative w-full h-[520px]">
         <canvas id="replayChart"></canvas>
+        <div id="replayEmpty" class="hidden absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span class="text-slate-400 text-sm font-semibold bg-slate-900/80 border border-slate-700 rounded-lg px-4 py-2">No laps yet</span>
+        </div>
       </div>
     </div>
   </main>
@@ -72,6 +75,7 @@
     ];
 
     function formatElapsed(sec) {
+      sec = Math.max(0, sec);  // Chart.js puts an empty axis at -1..1 (#114)
       const mins = Math.floor(sec / 60);
       const s = Math.floor(sec % 60);
       return `${mins}:${String(s).padStart(2, '0')}`;
@@ -86,6 +90,7 @@
         document.getElementById("chartRunnerCount").innerText = `${data.runners.length} Runners`;
         document.getElementById("chartLapCount").innerText = `${data.total_laps} Laps Plotted`;
 
+        document.getElementById("replayEmpty").classList.toggle("hidden", data.total_laps > 0);
         renderChart(data.runners);
       } catch (e) {
         console.error("Replay fetch error:", e);
@@ -153,6 +158,8 @@
           scales: {
             x: {
               type: 'linear',
+              min: 0,
+              suggestedMax: 60,
               title: {
                 display: true,
                 text: 'Elapsed Race Time',
