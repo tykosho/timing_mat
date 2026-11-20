@@ -91,6 +91,31 @@ class TestApi(unittest.TestCase):
         self.assertIn("Pat", self.client.get(f"/api/events/{self.event_id}/registrations.csv").text)
         self.assertEqual(self.client.get("/api/events/9999/results.csv").status_code, 404)
 
+    def test_csv_exports_run_off_the_event_loop(self):
+        """A raw_reads.csv of a whole race takes seconds to build: it must not freeze every
+        screen and the lap engine meanwhile (issue #94)."""
+        import asyncio
+        from unittest import mock
+        on_loop = {}
+
+        def probe(kind):
+            def build(db, event_id):
+                try:
+                    asyncio.get_running_loop()
+                    on_loop[kind] = True
+                except RuntimeError:
+                    on_loop[kind] = False
+                return "a,b\n"
+            return build
+
+        names = {"results": "results_csv", "laps": "laps_csv",
+                 "registrations": "registrations_csv", "raw_reads": "raw_reads_csv"}
+        for kind, name in names.items():
+            with mock.patch.object(web_app.exports, name, probe(kind)):
+                r = self.client.get(f"/api/events/{self.event_id}/{kind}.csv")
+            self.assertEqual((r.status_code, r.text), (200, "a,b\n"), kind)
+        self.assertEqual(on_loop, {kind: False for kind in names})
+
     def test_pages_render_and_escape_names(self):
         evil = "</script><script>alert(1)</script>"
         self.client.post("/api/participants", json={"bib_number": 9, "name": evil})

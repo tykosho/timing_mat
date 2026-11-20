@@ -660,6 +660,9 @@ async def select_event(event_id: int):
     await broadcast_ws({"type": "event_switched"})
     return {"status": "selected", "event": db.get_event_state()}
 
+# The CSV routes are plain `def`, so FastAPI runs them in its threadpool: a whole race's
+# raw_reads.csv takes seconds on a Pi, and on the event loop it froze every screen and the
+# lap engine meanwhile (issue #94). Database opens a connection per call, so this is safe.
 def _csv_response(event_id: int, kind: str, content_fn) -> Response:
     event = db.get_event(event_id)
     if not event:
@@ -672,19 +675,19 @@ def _csv_response(event_id: int, kind: str, content_fn) -> Response:
     )
 
 @app.get("/api/events/{event_id}/results.csv")
-async def export_results(event_id: int):
+def export_results(event_id: int):
     return _csv_response(event_id, "results", exports.results_csv)
 
 @app.get("/api/events/{event_id}/laps.csv")
-async def export_laps(event_id: int):
+def export_laps(event_id: int):
     return _csv_response(event_id, "laps", exports.laps_csv)
 
 @app.get("/api/events/{event_id}/registrations.csv")
-async def export_registrations(event_id: int):
+def export_registrations(event_id: int):
     return _csv_response(event_id, "registrations", exports.registrations_csv)
 
 @app.get("/api/events/{event_id}/raw_reads.csv")
-async def export_raw_reads(event_id: int):
+def export_raw_reads(event_id: int):
     return _csv_response(event_id, "raw-reads", exports.raw_reads_csv)
 
 # Participants API
