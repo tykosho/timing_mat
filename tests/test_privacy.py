@@ -80,13 +80,17 @@ class PrivacyTest(unittest.TestCase):
             def __init__(self):
                 self.sent = []
 
-            async def send_json(self, message):
-                self.sent.append(message)
+            async def send_text(self, text):
+                self.sent.append(json.loads(text))
+
+        async def push_and_drain():
+            await self.app.on_unassigned_tag({"epc": EPC, "rssi": -50.0, "timestamp": 1.0})
+            await self.app.broadcaster.drain()
 
         public, admin = FakeWS(), FakeWS()
         with mock.patch.object(self.app, "active_connections", [public, admin]), \
                 mock.patch.object(self.app, "admin_connections", [admin]):
-            asyncio.run(self.app.on_unassigned_tag({"epc": EPC, "rssi": -50.0, "timestamp": 1.0}))
+            asyncio.run(push_and_drain())
         self.assertEqual(public.sent, [])
         self.assertEqual(admin.sent[0]["type"], "unassigned_tag_detected")
 

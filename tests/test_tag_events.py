@@ -1,5 +1,6 @@
 """Raw tag reads go only to admin pages, one combined message per tag (issue #12)."""
 import asyncio
+import json
 import os
 import tempfile
 import unittest
@@ -23,8 +24,8 @@ class FakeWS:
     def __init__(self):
         self.sent = []
 
-    async def send_json(self, message):
-        self.sent.append(message)
+    async def send_text(self, text):
+        self.sent.append(json.loads(text))
 
 
 @unittest.skipIf(TestClient is None, "fastapi TestClient unavailable")
@@ -46,8 +47,14 @@ class TagEventTest(unittest.TestCase):
     def read(self, epc, rssi, t=1.0):
         self.app._note_tag({"epc": epc, "timestamp": t, "rssi": rssi})
 
+    def send_all(self, coro):
+        async def and_drain():
+            await coro
+            await self.app.broadcaster.drain()
+        asyncio.run(and_drain())
+
     def flush(self):
-        asyncio.run(self.app.flush_tag_events())
+        self.send_all(self.app.flush_tag_events())
 
     def test_bursts_become_one_message_per_tag_with_strongest_rssi(self):
         for i, rssi in enumerate([-70, -55, -48, -60] * 5):   # 20 reads of one tag
@@ -75,18 +82,18 @@ class TagEventTest(unittest.TestCase):
         self.assertEqual(self.app.pending_tags, {})
 
     def test_lap_broadcasts_still_reach_everyone(self):
-        asyncio.run(self.app.broadcast_ws({"type": "leaderboard_update"}))
+        self.send_all(self.app.broadcast_ws({"type": "leaderboard_update"}))
         self.assertEqual(len(self.public.sent), 1)
         self.assertEqual(len(self.admin.sent), 1)
 
     def test_dead_connection_is_dropped_from_both_lists(self):
         class Dead(FakeWS):
-            async def send_json(self, message):
+            async def send_text(self, text):
                 raise RuntimeError("closed")
         dead = Dead()
         self.app.active_connections.append(dead)
         self.app.admin_connections.append(dead)
-        asyncio.run(self.app.broadcast_ws({"type": "x"}, admin_only=True))
+        self.send_all(self.app.broadcast_ws({"type": "x"}, admin_only=True))
         self.assertNotIn(dead, self.app.admin_connections)
         self.assertNotIn(dead, self.app.active_connections)
 

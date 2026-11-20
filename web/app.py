@@ -26,6 +26,7 @@ from hardware.frame_capture import open_capture
 from web import auth, join
 from web.reader_health import ReaderHealth
 from web.live_board import CoalescedPush
+from web.broadcaster import Broadcaster
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("RaceApp")
@@ -66,21 +67,19 @@ active_connections: List[WebSocket] = []
 # Connections from logged-in admin pages that asked for raw tag reads (issue #12)
 admin_connections: List[WebSocket] = []
 
-async def broadcast_ws(message: Dict[str, Any], admin_only: bool = False):
-    targets = admin_connections if admin_only else active_connections
-    disconnected = []
-    for ws in list(targets):
-        try:
-            await ws.send_json(message)
-        except Exception:
-            disconnected.append(ws)
-    for ws in disconnected:
-        _forget_ws(ws)
-
 def _forget_ws(ws: WebSocket):
     for conns in (active_connections, admin_connections):
         if ws in conns:
             conns.remove(ws)
+    broadcaster.forget(ws)
+
+# Every push goes through per-client queues, so a stalled phone can't hold up the lap engine
+# or the other screens (issue #84). A dropped client's socket is closed and its page reconnects.
+broadcaster = Broadcaster(on_drop=_forget_ws)
+
+async def broadcast_ws(message: Dict[str, Any], admin_only: bool = False):
+    """Queues `message` for every live page (or only admin pages) and returns at once."""
+    broadcaster.publish(message, admin_connections if admin_only else active_connections)
 
 async def push_leaderboard():
     full_board.pushed_now()
@@ -274,6 +273,7 @@ async def lifespan(app: FastAPI):
     tag_task.cancel()
     health_task.cancel()
     full_board.cancel()
+    broadcaster.cancel()
     if sim_task:
         sim_task.cancel()
     lap_engine.flush_raw_reads()
@@ -510,11 +510,9 @@ async def runner_page(request: Request, bib: int):
 async def websocket_endpoint(websocket: WebSocket, channel: str = "public"):
     """Live updates. `?channel=admin` from a logged-in admin also gets raw tag reads."""
     await websocket.accept()
-    active_connections.append(websocket)
-    if channel == "admin" and admin_auth.is_admin(websocket):
-        admin_connections.append(websocket)
     try:
-        # Send initial snapshot
+        # Initial snapshot. It goes through the same queue as every later push, so it's always
+        # first, and nothing below awaits until the socket is on the lists (no push is missed).
         init_payload: Dict[str, Any] = {
             "type": "init",
             "boot_id": SERVER_BOOT_ID,
@@ -523,11 +521,16 @@ async def websocket_endpoint(websocket: WebSocket, channel: str = "public"):
         }
         if isinstance(reader, MockReader):
             init_payload["sim"] = reader.get_state()
-        await websocket.send_json(init_payload)
+        active_connections.append(websocket)
+        if channel == "admin" and admin_auth.is_admin(websocket):
+            admin_connections.append(websocket)
+        broadcaster.send(websocket, init_payload)
         while True:
             # Keepalive / ping
             await websocket.receive_text()
     except WebSocketDisconnect:
+        pass
+    finally:
         _forget_ws(websocket)
 
 # ----------------- REST API ROUTES -----------------
