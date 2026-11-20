@@ -476,6 +476,60 @@ class Database:
                  current["email"] if email is None else email.strip(), eid, bib_number))
         return True
 
+    def add_placeholder_participant(self, epc: str, event_id: Optional[int] = None) -> Dict[str, Any]:
+        """Auto-registers an unrecognized tag on the mat as 'Runner #<bib>' so laps time immediately."""
+        eid = self._eid(event_id)
+        epc = normalize_epc(epc)
+        if not epc:
+            raise RegistrationError("Tag EPC is required")
+        with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM participants WHERE event_id = ? AND epc = ?;", (eid, epc)
+            ).fetchone()
+            if existing:
+                return dict(existing)
+            used = {
+                r["bib_number"]
+                for r in conn.execute("SELECT bib_number FROM participants WHERE event_id = ?;", (eid,)).fetchall()
+            }
+            bib = 1
+            while bib in used:
+                bib += 1
+            name = f"Runner #{bib}"
+            conn.execute(
+                """INSERT INTO participants (event_id, bib_number, name, email, epc, notes, created_at)
+                   VALUES (?, ?, ?, '', ?, 'Auto-registered walk-up tag', ?);""",
+                (eid, bib, name, epc, clock.now()),
+            )
+            row = conn.execute(
+                "SELECT * FROM participants WHERE event_id = ? AND bib_number = ?;", (eid, bib)
+            ).fetchone()
+            return dict(row)
+
+    def rename_participant(self, bib_number: int, name: str, event_id: Optional[int] = None) -> Dict[str, Any]:
+        """Updates only a participant's display name (clearing any auto-registered walk-up note)."""
+        eid = self._eid(event_id)
+        clean_name = (name or "").strip()
+        if not clean_name:
+            raise RegistrationError("Name is required")
+        with self.connect() as conn:
+            current = conn.execute(
+                "SELECT * FROM participants WHERE event_id = ? AND bib_number = ?;", (eid, bib_number)
+            ).fetchone()
+            if not current:
+                raise RegistrationError(f"Bib #{bib_number} is not registered")
+            notes = current["notes"] or ""
+            if notes == "Auto-registered walk-up tag":
+                notes = ""
+            conn.execute(
+                "UPDATE participants SET name = ?, notes = ? WHERE event_id = ? AND bib_number = ?;",
+                (clean_name, notes, eid, bib_number),
+            )
+            updated = conn.execute(
+                "SELECT * FROM participants WHERE event_id = ? AND bib_number = ?;", (eid, bib_number)
+            ).fetchone()
+            return dict(updated)
+
     def set_participant_tag(self, bib_number: int, epc: Optional[str], event_id: Optional[int] = None):
         """Assigns (or with epc=None, clears) the tag for a bib. Rejects a tag already used by another bib."""
         eid = self._eid(event_id)
