@@ -309,7 +309,7 @@ class LapEngine:
 
         # A runner on a manual break crossing the mat is back from it (issue #86): end the break
         # here rather than record a lap (or a second, overlapping auto-break) that includes it.
-        closed = self.db.close_open_break(bib, peak_time, self.speed_multiplier)
+        closed = participant.get("maybe_on_break") and self.db.close_open_break(bib, peak_time, self.speed_multiplier)
         if closed:
             logger.info(f"☕ MANUAL BREAK ENDED: Bib {bib} ({name}) crossed the mat after {closed['duration_seconds']/60:.1f}m break.")
             await self._notify_resumed(bib, name, closed["duration_seconds"], peak_time)

@@ -485,7 +485,13 @@ class Database:
 
     def get_participant_by_epc(self, epc: str, event_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         with self.connect() as conn:
-            row = conn.execute("SELECT * FROM participants WHERE event_id = ? AND epc = ?;",
+            # maybe_on_break: a manual break is open, or ended after their last crossing, so the
+            # engine knows when close_open_break() is worth a query (issue #86)
+            row = conn.execute("""SELECT p.*, EXISTS(SELECT 1 FROM breaks b
+                                      WHERE b.event_id = p.event_id AND b.bib_number = p.bib_number
+                                      AND (b.end_time = 0.0 OR b.end_time > COALESCE(p.last_crossing_time, 0))
+                                  ) AS maybe_on_break
+                                  FROM participants p WHERE p.event_id = ? AND p.epc = ?;""",
                                (self._eid(event_id), (epc or "").strip().upper())).fetchone()
             return dict(row) if row else None
 
