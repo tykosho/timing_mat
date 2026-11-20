@@ -112,6 +112,23 @@ class MissedStartTest(unittest.TestCase):
         self.assertEqual((p["start_time"], p["start_flag_reason"]), (GUN + 90, None))
         self.assertEqual(self.db.get_flagged_starts(), [])
 
+    def test_clear_results_drops_old_flags(self):  # issue #92
+        self.cross(GUN + 200)
+        self.assertIsNotNone(self.flag())
+        self.db.reset_race_data()
+        self.assertIsNone(self.flag())
+        self.db.start_event(at=GUN + 5000)
+        self.cross(GUN + 5001)  # clean start at the real gun
+        self.assertIsNone(self.flag())
+        self.assertEqual(self.db.get_flagged_starts(), [])
+
+    def test_runner_reset_drops_old_flag(self):  # issue #92
+        self.cross(GUN + 200)
+        self.db.reset_participant_start(7)
+        self.assertIsNone(self.flag())
+        self.cross(GUN + 201, force=True)  # manual restart: never flagged
+        self.assertEqual(self.db.get_flagged_starts(), [])
+
 
 class MissedStartApiTest(unittest.TestCase):
     @classmethod
