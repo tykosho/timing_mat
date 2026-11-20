@@ -826,6 +826,7 @@ async def reset_runner_start(bib: int):
     if not participant:
         raise HTTPException(status_code=404, detail="Runner not found")
     db.reset_participant_start(bib)
+    lap_engine.forget_tag(participant.get("epc"))  # a tag still on the mat starts afresh (#113)
     await push_leaderboard()
     return {"status": "reset", "bib": bib}
 

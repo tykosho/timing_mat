@@ -172,6 +172,15 @@ class MissedStartApiTest(unittest.TestCase):
         board = {r["bib_number"]: r["total_laps"] for r in self.client.get("/api/leaderboard").json()}
         self.assertEqual((board[21], board[22]), (1, 0))
 
+    def test_reset_start_forgets_the_tag_on_the_mat(self):  # issue #113
+        self.db.add_participant(23, "Max", "E2000000000000000000CC23")
+        self.db.start_event(at=GUN)
+        self.db.set_participant_start(23, GUN + 5)
+        with mock.patch.object(self.app.lap_engine, "forget_tag") as forget:
+            self.assertEqual(self.client.post("/api/participants/23/reset").status_code, 200)
+        forget.assert_called_once_with("E2000000000000000000CC23")
+        self.assertIsNone(self.db.get_participant_by_bib(23)["start_time"])
+
     def test_admin_only(self):
         from web.auth import AdminAuth
         with mock.patch.object(self.app, "admin_auth", AdminAuth("482913")):
