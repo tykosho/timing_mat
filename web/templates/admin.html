@@ -73,7 +73,7 @@
   <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
 
     <!-- Reader health (issue #48): updated every 2 s over the admin WebSocket -->
-    {% set health_colors = {"ok": "#10b981", "quiet": "#f59e0b", "disconnected": "#f43f5e"} %}
+    {% set health_colors = {"ok": "#10b981", "quiet": "#f59e0b", "disconnected": "#f43f5e", "stalled": "#f43f5e"} %}
     <div id="readerHealth" role="status" aria-live="polite" data-state="{{ reader_health.state }}"
          class="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 flex items-center gap-3 text-sm">
       <span id="readerHealthDot" class="w-3 h-3 rounded-full flex-shrink-0"
@@ -874,7 +874,7 @@
 
     // WebSocket listener for live tag sniffing and status
     // Reader health strip (issue #48)
-    const HEALTH_COLORS = { ok: "#10b981", quiet: "#f59e0b", disconnected: "#f43f5e", stale: "#64748b" };
+    const HEALTH_COLORS = { ok: "#10b981", quiet: "#f59e0b", disconnected: "#f43f5e", stalled: "#f43f5e", stale: "#64748b" };
     let lastHealthAt = Date.now();
     function setReaderHealth(state, text) {
       const box = document.getElementById("readerHealth");
