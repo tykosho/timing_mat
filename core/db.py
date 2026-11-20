@@ -337,10 +337,14 @@ class Database:
                 ev["id"]))
 
     def _set_status(self, ev: Dict[str, Any], status: str, start_time: Optional[float] = None,
-                    end_time: Optional[float] = None, paused_at: Optional[float] = None):
-        with self.connect() as conn:
-            conn.execute("UPDATE events SET status = ?, start_time = ?, end_time = ?, paused_at = ? WHERE id = ?;",
-                         (status, start_time, end_time, paused_at, ev["id"]))
+                    end_time: Optional[float] = None, paused_at: Optional[float] = None,
+                    conn: Optional[sqlite3.Connection] = None):
+        """Sets the event's status; inside `conn`'s transaction when given (issue #88)."""
+        if conn is None:
+            with self.connect() as conn:
+                return self._set_status(ev, status, start_time, end_time, paused_at, conn)
+        conn.execute("UPDATE events SET status = ?, start_time = ?, end_time = ?, paused_at = ? WHERE id = ?;",
+                     (status, start_time, end_time, paused_at, ev["id"]))
 
     def start_event(self, at: Optional[float] = None) -> Dict[str, Any]:
         """setup/paused -> running. The race clock keeps its original start across pauses."""
@@ -349,12 +353,16 @@ class Database:
             raise EventStateError("This event has ended. Reopen it to continue timing.")
         if ev["status"] != "running":
             now = at or clock.now()
-            if ev["status"] == "paused" and ev.get("paused_at"):
-                self._skip_pause(ev["id"], max(0.0, now - ev["paused_at"]))
-            self._set_status(ev, "running", ev["start_time"] or now, None)
+            # One transaction: a shift saved without the status change would be applied
+            # again on the next Resume (issue #88)
+            with self.connect() as conn:
+                if ev["status"] == "paused" and ev.get("paused_at"):
+                    self._skip_pause(conn, ev["id"], max(0.0, now - ev["paused_at"]))
+                self._set_status(ev, "running", ev["start_time"] or now, None, conn=conn)
         return self.get_event()
 
-    def _skip_pause(self, event_id: int, pause_seconds: float):
+    @staticmethod
+    def _skip_pause(conn: sqlite3.Connection, event_id: int, pause_seconds: float):
         """Moves every started runner's last crossing forward by the pause (issue #11).
 
         Crossings aren't timed while paused, so without this the first lap after resuming
@@ -362,10 +370,9 @@ class Database:
         """
         if pause_seconds <= 0:
             return
-        with self.connect() as conn:
-            conn.execute("""UPDATE participants SET last_crossing_time = last_crossing_time + ?
-                            WHERE event_id = ? AND last_crossing_time IS NOT NULL;""",
-                         (pause_seconds, event_id))
+        conn.execute("""UPDATE participants SET last_crossing_time = last_crossing_time + ?
+                        WHERE event_id = ? AND last_crossing_time IS NOT NULL;""",
+                     (pause_seconds, event_id))
 
     def pause_event(self) -> Dict[str, Any]:
         ev = self.get_event()
@@ -387,7 +394,7 @@ class Database:
             for b in conn.execute("SELECT id, start_time FROM breaks WHERE event_id = ? AND end_time = 0.0;", (ev["id"],)).fetchall():
                 conn.execute("UPDATE breaks SET end_time = ?, duration_seconds = ? WHERE id = ?;",
                              (now, round(max(0.0, now - b["start_time"]), 2), b["id"]))
-        self._set_status(ev, "ended", ev["start_time"], now)
+            self._set_status(ev, "ended", ev["start_time"], now, conn=conn)
         return self.get_event()
 
     def reopen_event(self) -> Dict[str, Any]:
@@ -624,12 +631,16 @@ class Database:
     def record_lap(self, bib_number: int, lap_number: int, crossing_time: float,
                    lap_duration_seconds: float, peak_rssi: float = 0.0, manual_entry: bool = False,
                    flag_reason: Optional[str] = None, event_id: Optional[int] = None) -> int:
+        """Stores a lap and moves the runner's last crossing to it, in one transaction (#88)."""
+        eid = self._eid(event_id)
         with self.connect() as conn:
             cursor = conn.execute("""
                 INSERT INTO laps (event_id, bib_number, lap_number, crossing_time, lap_duration_seconds, peak_rssi, manual_entry, flag_reason)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?);""",
-                (self._eid(event_id), bib_number, lap_number, crossing_time, lap_duration_seconds,
+                (eid, bib_number, lap_number, crossing_time, lap_duration_seconds,
                  peak_rssi, 1 if manual_entry else 0, flag_reason))
+            conn.execute("UPDATE participants SET last_crossing_time = ? WHERE event_id = ? AND bib_number = ?;",
+                         (crossing_time, eid, bib_number))
             return cursor.lastrowid
 
     def get_flagged_laps(self, event_id: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -861,12 +872,16 @@ class Database:
     # ------------------------------------------------------------------ breaks
     def record_break(self, bib_number: int, start_time: float, end_time: float, duration_seconds: float,
                      event_id: Optional[int] = None) -> int:
+        """Stores a detected break and moves the runner's last crossing to its end, in one
+        transaction (#88)."""
         eid = self._eid(event_id)
         with self.connect() as conn:
             count = conn.execute("SELECT COUNT(*) AS c FROM breaks WHERE event_id = ? AND bib_number = ?;", (eid, bib_number)).fetchone()["c"]
             cursor = conn.execute("""
                 INSERT INTO breaks (event_id, bib_number, break_number, start_time, end_time, duration_seconds)
                 VALUES (?, ?, ?, ?, ?, ?);""", (eid, bib_number, count + 1, start_time, end_time, duration_seconds))
+            conn.execute("UPDATE participants SET last_crossing_time = ? WHERE event_id = ? AND bib_number = ?;",
+                         (end_time, eid, bib_number))
             return cursor.lastrowid
 
     def get_breaks_for_runner(self, bib_number: int, event_id: Optional[int] = None) -> List[Dict[str, Any]]:
