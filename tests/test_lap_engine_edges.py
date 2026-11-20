@@ -211,6 +211,91 @@ class ParkedTagTest(EngineTestCase):
         self.assertIsNotNone(self.db.get_participant_by_bib(101)["start_time"])
 
 
+class ManualBreakTest(EngineTestCase):
+    """Issue #86: the mat and the Break/Resume buttons must agree about a runner's rest."""
+
+    def breaks(self):
+        return [(b["start_time"], b["end_time"], b["duration_seconds"])
+                for b in self.db.get_breaks_for_runner(101)]
+
+    def test_crossing_during_a_manual_break_ends_it_instead_of_making_a_lap(self):
+        self.db.start_event(at=1000.0)
+        self.cross(1000.0)
+        resumed = []
+        self.engine.on_runner_resumed = resumed.append
+        with self.at(1010.0):
+            self.db.start_manual_break(101)
+        self.assertEqual(self.cross(1300.0), "resumed")
+        self.assertEqual(self.durations(), [])
+        self.assertEqual(self.breaks(), [(1010.0, 1300.0, 290.0)])
+        self.assertIsNone(self.db.get_open_break(101))
+        self.assertEqual(self.db.get_participant_by_bib(101)["last_crossing_time"], 1300.0)
+        self.assertEqual([r["break_duration_seconds"] for r in resumed], [290.0])
+        # The next crossing is an ordinary lap from the resume, and End adds no rest
+        self.assertEqual(self.cross(1360.0), "lap")
+        self.assertEqual(self.durations(), [60.0])
+        self.db.end_event(at=8400.0)
+        self.assertEqual(self.breaks(), [(1010.0, 1300.0, 290.0)])
+
+    def test_long_manual_break_is_not_also_an_auto_break(self):
+        self.db.start_event(at=1000.0)
+        self.cross(1000.0)
+        with self.at(1010.0):
+            self.db.start_manual_break(101)
+        self.assertEqual(self.cross(2000.0), "resumed")   # past the 600 s auto-break threshold
+        self.assertEqual(self.breaks(), [(1010.0, 2000.0, 990.0)])
+
+    def test_resume_on_an_auto_flagged_rest_keeps_the_rest_time(self):
+        self.db.start_event(at=1000.0)
+        self.cross(1000.0)
+        with self.at(1900.0):                              # 900 s since the last crossing
+            result = self.db.end_manual_break(101)
+        self.assertEqual(result["duration_seconds"], 900.0)
+        self.assertEqual(self.breaks(), [(1000.0, 1900.0, 900.0)])
+        self.assertEqual(self.db.get_participant_by_bib(101)["last_crossing_time"], 1900.0)
+
+    def test_resume_on_a_runner_who_is_not_resting_changes_nothing(self):
+        self.db.start_event(at=1000.0)
+        self.cross(1000.0)
+        with self.at(1030.0):                              # a stale or double-clicked Resume
+            self.assertEqual(self.db.end_manual_break(101)["status"], "not_on_break")
+        self.assertEqual(self.breaks(), [])
+        self.assertEqual(self.cross(1060.0), "lap")
+        self.assertEqual(self.durations(), [60.0])
+
+    def test_accepted_too_soon_crossing_ends_a_manual_break(self):
+        self.db.start_event(at=1000.0)
+        self.cross(1000.0)
+        with self.at(1005.0):
+            self.db.start_manual_break(101)
+        self.assertEqual(self.cross(1015.0), "debounced")  # back after 10 s: below the min lap
+        self.assertIsNotNone(self.db.get_open_break(101))
+        result = asyncio.run(self.engine.accept_too_soon_crossing(101, 1015.0))
+        self.assertTrue(result["resumed"])
+        self.assertEqual(self.breaks(), [(1005.0, 1015.0, 10.0)])
+        self.assertEqual(self.cross(1075.0), "lap")
+        self.assertEqual(self.durations(), [60.0])
+
+    def test_crossing_read_as_end_is_pressed_ends_the_break_there(self):
+        self.db.start_event(at=1000.0)
+        self.cross(1000.0)
+        with self.at(1010.0):
+            self.db.start_manual_break(101)
+        self.db.end_event(at=1301.0)                       # the 1300 crossing is still buffered
+        self.assertEqual(self.cross(1300.0), "resumed")
+        self.assertEqual(self.durations(), [])
+        self.assertEqual(self.breaks(), [(1010.0, 1300.0, 290.0)])
+
+    def test_resume_closes_an_open_manual_break(self):
+        self.db.start_event(at=1000.0)
+        self.cross(1000.0)
+        with self.at(1010.0):
+            self.db.start_manual_break(101)
+        with self.at(1100.0):
+            self.assertEqual(self.db.end_manual_break(101)["duration_seconds"], 90.0)
+        self.assertEqual(self.breaks(), [(1010.0, 1100.0, 90.0)])
+
+
 class AutoBreakDisabledTest(EngineTestCase):
     def test_disabled_auto_break_records_slow_crossing_as_lap_not_break(self):
         # Disable auto-break by setting max_lap_rest_seconds to 0

@@ -485,7 +485,13 @@ class Database:
 
     def get_participant_by_epc(self, epc: str, event_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         with self.connect() as conn:
-            row = conn.execute("SELECT * FROM participants WHERE event_id = ? AND epc = ?;",
+            # maybe_on_break: a manual break is open, or ended after their last crossing, so the
+            # engine knows when close_open_break() is worth a query (issue #86)
+            row = conn.execute("""SELECT p.*, EXISTS(SELECT 1 FROM breaks b
+                                      WHERE b.event_id = p.event_id AND b.bib_number = p.bib_number
+                                      AND (b.end_time = 0.0 OR b.end_time > COALESCE(p.last_crossing_time, 0))
+                                  ) AS maybe_on_break
+                                  FROM participants p WHERE p.event_id = ? AND p.epc = ?;""",
                                (self._eid(event_id), (epc or "").strip().upper())).fetchone()
             return dict(row) if row else None
 
@@ -886,6 +892,29 @@ class Database:
                     VALUES (?, ?, ?, ?, 0.0, 0.0);""", (eid, bib_number, count + 1, now))
         return {"status": "on_break", "bib": bib_number, "start_time": now}
 
+    def close_open_break(self, bib_number: int, end_time: float, speed: float = 1.0,
+                         event_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """Ends the runner's manual break at `end_time` (their crossing back over the mat,
+        issue #86) and moves their last crossing there, in one transaction. Returns the closed
+        break, or None when no break was open at `end_time`.
+
+        A break that Resume or End closed after `end_time` counts as open: the crossing was
+        still being read when the button was pressed, and it is where the break really ended."""
+        eid = self._eid(event_id)
+        with self.connect() as conn:
+            open_b = conn.execute("""SELECT * FROM breaks WHERE event_id = ? AND bib_number = ?
+                                     AND start_time < ? AND (end_time = 0.0 OR end_time > ?)
+                                     ORDER BY id DESC LIMIT 1;""",
+                                  (eid, bib_number, end_time, end_time)).fetchone()
+            if not open_b:
+                return None
+            duration = round((end_time - open_b["start_time"]) * speed, 2)
+            conn.execute("UPDATE breaks SET end_time = ?, duration_seconds = ? WHERE id = ?;",
+                         (end_time, duration, open_b["id"]))
+            conn.execute("UPDATE participants SET last_crossing_time = ? WHERE event_id = ? AND bib_number = ?;",
+                         (end_time, eid, bib_number))
+            return {**dict(open_b), "end_time": end_time, "duration_seconds": duration}
+
     def end_manual_break(self, bib_number: int, event_id: Optional[int] = None) -> Dict[str, Any]:
         eid, now = self._eid(event_id), clock.now()
         duration = 0.0
@@ -896,6 +925,23 @@ class Database:
                 duration = max(0.0, now - open_b["start_time"])
                 conn.execute("UPDATE breaks SET end_time = ?, duration_seconds = ? WHERE id = ?;",
                              (now, round(duration, 2), open_b["id"]))
+            else:
+                # Resume on a runner flagged as resting because they haven't crossed in a while
+                # (issue #86): that rest is a break from their last crossing until now. Anyone
+                # else isn't on a break (a stale or double-clicked button): leave them alone.
+                row = conn.execute("""SELECT p.last_crossing_time, e.max_lap_rest_seconds FROM participants p
+                                      JOIN events e ON e.id = p.event_id
+                                      WHERE p.event_id = ? AND p.bib_number = ?;""", (eid, bib_number)).fetchone()
+                last = row["last_crossing_time"] if row else None
+                max_rest = 600.0 if not row or row["max_lap_rest_seconds"] is None else row["max_lap_rest_seconds"]
+                if last is None or max_rest <= 0 or now - last <= max_rest:
+                    return {"status": "not_on_break", "bib": bib_number, "duration_seconds": 0.0}
+                duration = now - last
+                count = conn.execute("SELECT COUNT(*) AS c FROM breaks WHERE event_id = ? AND bib_number = ?;",
+                                     (eid, bib_number)).fetchone()["c"]
+                conn.execute("""
+                    INSERT INTO breaks (event_id, bib_number, break_number, start_time, end_time, duration_seconds)
+                    VALUES (?, ?, ?, ?, ?, ?);""", (eid, bib_number, count + 1, last, now, round(duration, 2)))
             conn.execute("UPDATE participants SET last_crossing_time = ? WHERE event_id = ? AND bib_number = ?;", (now, eid, bib_number))
         return {"status": "resumed", "bib": bib_number, "duration_seconds": round(duration, 2)}
 
