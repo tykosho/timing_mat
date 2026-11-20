@@ -420,6 +420,13 @@ class LapEngine:
         last_crossing = participant.get("last_crossing_time") or participant["start_time"]
         if crossing_time <= last_crossing:
             return None
+        # Back from a manual break sooner than a lap (issue #86): the confirmed crossing ends
+        # the break instead of being a lap that includes it
+        closed = self.db.close_open_break(bib_number, crossing_time, self.speed_multiplier)
+        if closed:
+            await self._notify_resumed(bib_number, participant["name"], closed["duration_seconds"], crossing_time)
+            return {"bib_number": bib_number, "resumed": True,
+                    "break_duration_seconds": closed["duration_seconds"], "crossing_time": crossing_time}
         lap_duration = (crossing_time - last_crossing) * self.speed_multiplier
         return await self._record_completed_lap(
             bib_number,
