@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from collections import deque
 from typing import Deque, Dict, List, Tuple, Callable, Optional, Any
 from core.db import Database
@@ -15,6 +16,11 @@ MAX_BURST_SECONDS = 8.0
 # flagged as a possible missed start (#72); before there are enough laps, within 10 minutes.
 MISSED_START_LAPS = 2.5
 MISSED_START_DEFAULT_WINDOW = 600.0
+# flush_loop ticks every 0.2 s. No successful tick for this long means laps aren't being
+# recorded: /api/event fails (Docker healthcheck) and the admin strip turns red (issue #83).
+FLUSH_STALE_SECONDS = 10.0
+FLUSH_INTERVAL = 0.2
+FLUSH_RETRY_DELAY = 1.0  # after a failed tick: don't hammer a failing disk 5 times a second
 
 class LapEngine:
     def __init__(self, db: Database, 
@@ -47,6 +53,14 @@ class LapEngine:
         self.raw_queue: Deque[Tuple[int, str, float, float]] = deque()
         self.log_event_id: Optional[int] = None
 
+        # flush_loop health (issue #83), on time.monotonic(): when it started, when a tick last
+        # completed, and the latest error (cleared by the next good tick).
+        self._monotonic: Callable[[], float] = time.monotonic
+        self.flush_started_at: Optional[float] = None
+        self.last_flush_at: Optional[float] = None
+        self.flush_errors = 0
+        self.last_flush_error: Optional[str] = None
+
     def refresh_event(self):
         """Re-reads the current event so raw reads are tagged with the right event (or dropped)."""
         event = self.db.get_event()
@@ -66,7 +80,11 @@ class LapEngine:
         while self.raw_queue:
             batch.append(self.raw_queue.popleft())
         if batch:
-            self.db.insert_raw_reads(batch)
+            try:
+                self.db.insert_raw_reads(batch)
+            except Exception:
+                self.raw_queue.extendleft(reversed(batch))  # keep them for the next try
+                raise
 
     def process_tag_read(self, tag_read: TagRead):
         """Called for every read from the RFID reader (mock or physical).
@@ -94,16 +112,48 @@ class LapEngine:
         self.buffers[epc].append((now, tag_read.rssi))
 
     async def flush_loop(self):
-        """Background coroutine that checks buffers and triggers crossings when a burst finishes."""
+        """Background coroutine that checks buffers and triggers crossings when a burst finishes.
+
+        One failing tick (disk full, SD-card I/O error, a broken callback) is logged and the
+        loop carries on; it must never end mid-race (issue #83).
+        """
         ticks = 0
-        while True:
-            await asyncio.sleep(0.2)
-            self.refresh_event()
-            self.flush_raw_reads()
-            ticks += 1
-            if ticks % 150 == 0:  # every ~30 s
-                self.maintain_clock()
-            await self.flush_once(clock.now())
+        failures = 0
+        self.flush_started_at = self._monotonic()
+        self.last_flush_at = None
+        try:
+            while True:
+                await asyncio.sleep(FLUSH_RETRY_DELAY if failures else FLUSH_INTERVAL)
+                try:
+                    self.refresh_event()
+                    self.flush_raw_reads()
+                    ticks += 1
+                    if ticks % 150 == 0:  # every ~30 s
+                        self.maintain_clock()
+                    await self.flush_once(clock.now())
+                except Exception as e:
+                    failures += 1
+                    self.flush_errors += 1
+                    self.last_flush_error = f"{type(e).__name__}: {e}"
+                    if failures == 1 or failures % 10 == 0:  # first one, then every ~10 s
+                        logger.exception(f"Flush loop tick failed ({failures} in a row); retrying")
+                    continue
+                if failures:
+                    logger.info(f"Flush loop recovered after {failures} failed tick(s)")
+                    failures = 0
+                self.last_flush_at = self._monotonic()
+                self.last_flush_error = None
+        finally:
+            self.flush_started_at = None  # stopped on purpose (shutdown): not "stalled"
+
+    def flush_health(self) -> Dict[str, Any]:
+        """Is flush_loop still ticking? Before it has started (tests, startup) it counts as ok."""
+        if self.flush_started_at is None:
+            return {"ok": True, "running": False, "seconds_since_tick": None,
+                    "errors": self.flush_errors, "last_error": self.last_flush_error}
+        since = self._monotonic() - (self.last_flush_at or self.flush_started_at)
+        return {"ok": since < FLUSH_STALE_SECONDS, "running": True, "seconds_since_tick": round(since, 1),
+                "errors": self.flush_errors, "last_error": self.last_flush_error}
 
     async def flush_once(self, now: float):
         """Resolves every burst of reads that has finished (or gone on too long) by `now`."""

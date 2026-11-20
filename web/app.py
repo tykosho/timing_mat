@@ -166,18 +166,30 @@ def reader_health_snapshot() -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"Reader health unavailable: {e}")
         details = {"kind": "unknown", "running": True, "connected": False, "last_error": f"health check failed: {e}"}
-    return reader_health.snapshot(details)
+    return reader_health.snapshot(details, engine=lap_engine.flush_health())
+
+async def _every(interval: float, name: str, tick):
+    """Runs `tick` every `interval` s for good. A failing tick is logged, never fatal (issue #83)."""
+    failures = 0
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await tick()
+            failures = 0
+        except Exception:
+            failures += 1
+            if failures == 1 or failures % 100 == 0:
+                logger.exception(f"{name} failed ({failures} in a row); retrying")
+
+async def _push_reader_health():
+    if admin_connections:
+        await broadcast_ws({"type": "reader_health", "health": reader_health_snapshot()}, admin_only=True)
 
 async def reader_health_loop():
-    while True:
-        await asyncio.sleep(READER_HEALTH_INTERVAL)
-        if admin_connections:
-            await broadcast_ws({"type": "reader_health", "health": reader_health_snapshot()}, admin_only=True)
+    await _every(READER_HEALTH_INTERVAL, "Reader health push", _push_reader_health)
 
 async def tag_event_loop():
-    while True:
-        await asyncio.sleep(TAG_EVENT_INTERVAL)
-        await flush_tag_events()
+    await _every(TAG_EVENT_INTERVAL, "Tag event push", flush_tag_events)
 
 crossing_window = config.get("event", {}).get("crossing_window_seconds", 2.0)
 lap_engine = LapEngine(
@@ -230,15 +242,16 @@ else:
 
 main_event_loop = None
 
+async def _push_sim_state():
+    if active_connections and isinstance(reader, MockReader):
+        await broadcast_ws({
+            "type": "sim_state",
+            "sim": reader.get_state()
+        })
+
 async def sim_broadcast_loop():
     """Streams live simulated track positions to connected browsers in mock mode."""
-    while True:
-        await asyncio.sleep(0.2)
-        if active_connections and isinstance(reader, MockReader):
-            await broadcast_ws({
-                "type": "sim_state",
-                "sim": reader.get_state()
-            })
+    await _every(0.2, "Simulator push", _push_sim_state)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -537,7 +550,11 @@ def _elapsed(state: Dict[str, Any]) -> float:
 @app.get("/api/event")
 async def get_event():
     state = db.get_event_state()
-    return {**state, "elapsed_seconds": round(_elapsed(state), 1), "total_laps": db.get_total_laps_count()}
+    engine = lap_engine.flush_health()
+    body = {**state, "elapsed_seconds": round(_elapsed(state), 1), "total_laps": db.get_total_laps_count(),
+            "engine_ok": engine["ok"], "engine_seconds_since_tick": engine["seconds_since_tick"]}
+    # The Docker HEALTHCHECK polls this: a stalled lap engine must make it fail (issue #83)
+    return body if engine["ok"] else JSONResponse(status_code=503, content=body)
 
 @app.post("/api/event/start")
 async def start_event():

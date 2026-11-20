@@ -2,7 +2,8 @@
 
 Counts every tag read the app receives (any reader), and combines that with the reader's
 own connection details into one status: "ok" (green), "quiet" (amber: connected but the
-reader has sent nothing for a while) or "disconnected" (red).
+reader has sent nothing for a while), "disconnected" (red), or "stalled" (red: the lap
+engine's flush loop has stopped ticking, so reads arrive but no laps are recorded, #83).
 """
 import threading
 import time
@@ -39,8 +40,9 @@ class ReaderHealth:
             self.total_reads += 1
             self.last_read_at = self._clock()
 
-    def snapshot(self, reader: Dict[str, Any]) -> Dict[str, Any]:
-        """Combines the reader's health() with read counts. Updates reads/second when sampled."""
+    def snapshot(self, reader: Dict[str, Any], engine: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Combines the reader's health() with read counts. Updates reads/second when sampled.
+        `engine` is LapEngine.flush_health(); a stalled engine overrides the reader's state."""
         now = self._clock()
         with self._lock:
             total, last = self.total_reads, self.last_read_at
@@ -61,12 +63,22 @@ class ReaderHealth:
             h["state"] = "quiet"
         else:
             h["state"] = "ok"
+        if engine is not None:
+            h["engine"] = dict(engine)
+            if not engine.get("ok", True):
+                h["state"] = "stalled"
         h["summary"] = self._summary(h)
         return h
 
     @staticmethod
     def _summary(h: Dict[str, Any]) -> str:
         name = "Simulator" if h.get("kind") == "simulator" else f"Reader on {h.get('port', '?')}"
+        if h["state"] == "stalled":
+            e = h["engine"]
+            text = f"LAP ENGINE STALLED for {e.get('seconds_since_tick') or 0:.0f}s: laps are not being recorded"
+            if e.get("last_error"):
+                text += f" ({e['last_error']})"
+            return text + ". Check the server log; restart the app if it doesn't recover."
         if h["state"] == "disconnected":
             if not h.get("running"):
                 return f"{name}: not running"
