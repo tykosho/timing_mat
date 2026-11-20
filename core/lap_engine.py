@@ -50,7 +50,11 @@ class LapEngine:
     def refresh_event(self):
         """Re-reads the current event so raw reads are tagged with the right event (or dropped)."""
         event = self.db.get_event()
-        self.log_event_id = event["id"] if event and event["status"] in ("running", "paused") else None
+        log_event_id = event["id"] if event and event["status"] in ("running", "paused") else None
+        if log_event_id is None or log_event_id != self.log_event_id:
+            # Reset, or another event: a tag parked by the mat starts afresh in it
+            self.lingering.clear()
+        self.log_event_id = log_event_id
 
     def maintain_clock(self):
         """Keeps the race clock honest about system clock changes (see core/clock.py)."""
@@ -117,15 +121,17 @@ class LapEngine:
             if quiet or (now - reads[0][0]) >= max_burst:
                 epcs_to_process.append((epc, quiet))
 
-        # A lingering tag that left right after its last burst was taken has no buffer to go quiet
+        # A lingering tag that was quiet for the crossing window has left the field, even if it
+        # is already back (its new reads are a new crossing) or left no buffer behind.
         for epc, last_read in list(self.lingering.items()):
-            if epc not in self.buffers and (now - last_read) >= effective_window:
+            reads = self.buffers.get(epc)
+            if ((reads[0][0] if reads else now) - last_read) >= effective_window:
                 del self.lingering[epc]
 
-        for epc, quiet in epcs_to_process:
-            reads = self.buffers.pop(epc, [])
-            if not reads:
-                continue
+        # Take the bursts before resolving any: a read arriving while a callback awaits starts
+        # a new burst instead of being swept into (or dropped with) one already finished.
+        bursts = [(epc, self.buffers.pop(epc), quiet) for epc, quiet in epcs_to_process]
+        for epc, reads, quiet in bursts:
             if epc in self.lingering:
                 # Same visit to the mat as a crossing already resolved: no lap, no too-soon prompt
                 if quiet:
