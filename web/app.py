@@ -331,7 +331,7 @@ async def _broadcast_manual_lap(lap: Dict[str, Any]):
 async def push_event_status(include_leaderboard: bool = True):
     """Tells the engine and every open page that the event changed."""
     lap_engine.refresh_event()
-    message: Dict[str, Any] = {"type": "event_status", "event": db.get_event_state()}
+    message: Dict[str, Any] = {"type": "event_status", "event": db.get_event_state(), "server_now": clock.now()}
     if include_leaderboard:
         message["leaderboard"] = db.get_leaderboard()
     await broadcast_ws(message)
@@ -525,6 +525,7 @@ async def websocket_endpoint(websocket: WebSocket, channel: str = "public"):
         init_payload: Dict[str, Any] = {
             "type": "init",
             "boot_id": SERVER_BOOT_ID,
+            "server_now": clock.now(),  # pages re-derive clockOffsetSec (#95)
             "event": db.get_event_state(),
             "leaderboard": db.get_leaderboard()
         }

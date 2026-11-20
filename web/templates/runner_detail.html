@@ -182,7 +182,7 @@
                 {{ (lap.lap_duration_seconds // 60) | int }}:{{ "%04.1f" | format(lap.lap_duration_seconds % 60) }}
               </td>
               <td class="py-3 px-6 text-right font-mono text-xs text-slate-400">
-                {% set pace_sec_per_mile = (lap.lap_duration_seconds / 0.24855) %}
+                {% set pace_sec_per_mile = (lap.lap_duration_seconds / (event.track_length_m / 1609.344)) %}
                 {{ (pace_sec_per_mile // 60) | int }}:{{ "%02d" | format((pace_sec_per_mile % 60) | int) }} /mi
               </td>
               <td class="py-3 px-6 text-center font-mono text-xs text-slate-400">

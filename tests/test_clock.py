@@ -165,7 +165,7 @@ class PageClockOffsetTest(unittest.TestCase):
         with mock.patch.object(clock_module, "clock", RaceClock(wall=t.wall, mono=t.mono)), \
                 mock.patch.object(web_app, "db", db):
             html = TestClient(web_app.app).get("/leaderboard").text
-        self.assertIn("const clockOffsetSec = 1234567890.000 - Date.now() / 1000;", html)
+        self.assertIn("let clockOffsetSec = 1234567890.000 - Date.now() / 1000;", html)
         self.assertIn("raceNowSec() - eventState.start_time", html)
 
 

@@ -679,8 +679,9 @@
       } catch(e) {}
     }
 
-    // Seconds the phone/TV clock is behind the race clock (a Pi without an RTC may be far off)
-    const clockOffsetSec = {{ server_now() }} - Date.now() / 1000;
+    // Seconds the phone/TV clock is behind the race clock (a Pi without an RTC may be far off).
+    // Re-derived from server_now in WS init/event_status, so a clock change (e.g. the Pi resyncing) reaches open pages (#95).
+    let clockOffsetSec = {{ server_now() }} - Date.now() / 1000;
     function raceNowSec() { return Date.now() / 1000 + clockOffsetSec; }
     let eventState = {{ event | tojson | safe }};
     let currentLeaderboard = {{ leaderboard | tojson | safe }};
@@ -1033,6 +1034,7 @@
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
+        if (typeof msg.server_now === "number") clockOffsetSec = msg.server_now - Date.now() / 1000;
         if (msg.type === "init") {
           if (msg.boot_id) {
             if (knownBootId && knownBootId !== msg.boot_id) {

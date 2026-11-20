@@ -147,6 +147,37 @@ class TestApi(unittest.TestCase):
         self.assertEqual(res.json()["status"], "resumed")
         self.assertNotIn("In progress", self.client.get("/runner/5").text)
 
+    def test_runner_page_pace_uses_the_event_track_length(self):
+        """#95: pace per mile came from a hardcoded 400 m lap."""
+        from unittest import mock
+        t0 = 1_000_000.0
+        at = lambda t: mock.patch("core.clock.now", return_value=t)  # noqa: E731
+        self.client.post("/api/event/settings", json={"track_length_m": 200})
+        self.client.post("/api/participants", json={"bib_number": 11, "name": "Sam"})
+        with at(t0):
+            self.client.post("/api/event/start")
+            self.client.post("/api/participants/11/quick-add-lap")
+        with at(t0 + 60):
+            self.client.post("/api/participants/11/quick-add-lap")
+        page = self.client.get("/runner/11").text
+        self.assertIn("8:02 /mi", page, "60 s per 200 m is 8:02 per mile")
+        self.assertNotIn("4:01 /mi", page)
+
+    def test_init_and_event_status_carry_server_time(self):
+        """#95: open pages re-derive their clock offset from these, after the Pi's clock resyncs."""
+        from unittest import mock
+        with mock.patch("core.clock.now", return_value=1_234_567.25):
+            with self.client.websocket_connect("/ws/live") as ws:
+                self.assertEqual(ws.receive_json()["server_now"], 1_234_567.25)
+            with mock.patch.object(web_app, "broadcast_ws") as broadcast:
+                self.client.post("/api/event/settings", json={"min_lap_seconds": 30})
+        sent = broadcast.call_args.args[0]
+        self.assertEqual(sent["type"], "event_status")
+        self.assertEqual(sent["server_now"], 1_234_567.25)
+        for name in ("leaderboard.html", "admin.html", "crossings.html"):
+            with open(os.path.join("web", "templates", name)) as f:
+                self.assertIn("msg.server_now", f.read(), name)
+
     def test_quick_lap_adjustments_and_event_isolation(self):
         from unittest import mock
         t0 = 1_000_000.0

@@ -313,6 +313,24 @@ class LiveUpdatesTest(BrowserTestCase):
         self.assertEqual(errors, [])
         ctx.close()
 
+    def test_race_timer_follows_a_clock_change_after_page_load(self):
+        """#95: the clock offset is re-derived from event_status, not only fixed at page render."""
+        ctx = self.browser.new_context()
+        ctx.add_init_script("(() => { const real = Date.now; window.__skewMs = 0;"
+                            " Date.now = () => real() - window.__skewMs; })()")
+        page, errors = self.open(ctx, "/leaderboard")
+        page.evaluate("window.__skewMs = -2 * 3600 * 1000")  # device clock jumps 2 h ahead after load
+        admin = self.admin_context()
+        event = _get_json("/api/event")
+        admin.request.post(BASE + "/api/event/settings", data={"min_lap_seconds": event["min_lap_seconds"]})
+        admin.close()
+        page.wait_for_timeout(1500)
+        shown = _clock_seconds(page.inner_text("#raceTimer"))
+        server = _get_json("/api/event")["elapsed_seconds"]
+        self.assertAlmostEqual(shown, server, delta=3)
+        self.assertEqual(errors, [])
+        ctx.close()
+
     def test_reader_health_strip_updates_live(self):
         """#48: the admin page's reader strip shows the simulator reading, via the WebSocket."""
         ctx = self.admin_context()
