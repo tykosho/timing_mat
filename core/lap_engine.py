@@ -20,6 +20,9 @@ MISSED_START_DEFAULT_WINDOW = 600.0
 # recorded: /api/event fails (Docker healthcheck) and the admin strip turns red (issue #83).
 FLUSH_STALE_SECONDS = 10.0
 FLUSH_INTERVAL = 0.2
+# A crossing whose resolution failed (e.g. a transient DB error) is retried every tick for this
+# long before it is given up on, loudly.
+CROSSING_RETRY_SECONDS = 300.0
 FLUSH_RETRY_DELAY = 1.0  # after a failed tick: don't hammer a failing disk 5 times a second
 
 class LapEngine:
@@ -47,6 +50,8 @@ class LapEngine:
         # epc -> time of its last read. Their later reads are the same visit to the mat, so they
         # are dropped until the tag has been quiet for the crossing window.
         self.lingering: Dict[str, float] = {}
+        # Bursts whose resolution raised, retried first on the next tick: (epc, reads, quiet)
+        self.failed_bursts: List[Tuple[str, List[Tuple[float, float]], bool]] = []
 
         # Raw read log. The reader thread appends (deque.append is thread-safe) and flush_loop
         # writes batches to the DB. Only reads while an event is running/paused are kept.
@@ -68,6 +73,7 @@ class LapEngine:
         if log_event_id is None or log_event_id != self.log_event_id:
             # Reset, or another event: a tag parked by the mat starts afresh in it
             self.lingering.clear()
+            self.failed_bursts.clear()
         self.log_event_id = log_event_id
 
     def maintain_clock(self):
@@ -180,8 +186,16 @@ class LapEngine:
 
         # Take the bursts before resolving any: a read arriving while a callback awaits starts
         # a new burst instead of being swept into (or dropped with) one already finished.
-        bursts = [(epc, self.buffers.pop(epc), quiet) for epc, quiet in epcs_to_process]
+        # Bursts that failed last tick go first, so a runner's crossings resolve in order.
+        bursts, self.failed_bursts = self.failed_bursts, []
+        bursts += [(epc, self.buffers.pop(epc), quiet) for epc, quiet in epcs_to_process]
+        error: Optional[Exception] = None
+        failed_epcs = set()
         for epc, reads, quiet in bursts:
+            if epc in failed_epcs:
+                # An earlier crossing of this tag is still failing: keep this one behind it
+                self.failed_bursts.append((epc, reads, quiet))
+                continue
             if epc in self.lingering:
                 # Same visit to the mat as a crossing already resolved: no lap, no too-soon prompt
                 if quiet:
@@ -189,9 +203,23 @@ class LapEngine:
                 else:
                     self.lingering[epc] = reads[-1][0]
                 continue
-            outcome = await self._resolve_crossing(epc, reads)
+            try:
+                outcome = await self._resolve_crossing(epc, reads)
+            except Exception as e:
+                # Keep the burst for the next tick instead of losing the crossing. A retry of
+                # one that was already written is recognised and not counted twice.
+                error = error or e
+                if now - reads[-1][0] > CROSSING_RETRY_SECONDS:
+                    logger.error(f"Giving up on a crossing of {epc} at {reads[-1][0]:.1f} after "
+                                 f"{CROSSING_RETRY_SECONDS:.0f}s of failures: {type(e).__name__}: {e}")
+                else:
+                    self.failed_bursts.append((epc, reads, quiet))
+                    failed_epcs.add(epc)
+                continue
             if not quiet and outcome is not None:
                 self.lingering[epc] = reads[-1][0]
+        if error:
+            raise error  # flush_loop counts and logs the failed tick
 
     def _missed_start_reason(self, seconds_after_gun: float, min_lap_sec: float) -> Optional[str]:
         """Issue #72: in the crowd at the gun a tag may not be read at all. Then the runner's
@@ -209,8 +237,9 @@ class LapEngine:
     async def _resolve_crossing(self, epc: str, reads: List[Tuple[float, float]], force: bool = False) -> Optional[str]:
         """Determines peak timestamp and updates participant state (start, lap, or break resume).
 
-        Returns what happened: "started", "lap", "resumed", "debounced", or None when the
-        crossing was ignored (unknown tag, event not running).
+        Returns what happened: "started", "lap", "resumed", "debounced", "duplicate" (this
+        crossing was already recorded), or None when the crossing was ignored (unknown tag,
+        event not running).
         """
         peak_time, peak_rssi = max(reads, key=lambda r: r[1])
 
@@ -288,6 +317,10 @@ class LapEngine:
         # -------------------------------------------------------------
         last_crossing = participant.get("last_crossing_time") or runner_start
         time_since_last = peak_time - last_crossing
+        if time_since_last == 0:
+            # This very crossing was already written (a retry after a failure that came later,
+            # e.g. in a broadcast): it isn't a second crossing too soon after itself
+            return "duplicate"
 
         # Debounce check (runner lingering near antenna). This applies to forced crossings too:
         # a lap time is always the real time since the last crossing, never an invented one.
