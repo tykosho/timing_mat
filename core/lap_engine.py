@@ -37,6 +37,10 @@ class LapEngine:
 
         # Buffer to aggregate bursts of reads: epc -> list of (timestamp, rssi)
         self.buffers: Dict[str, List[Tuple[float, float]]] = {}
+        # Tags still in the field after a burst was resolved for running too long (issue #85):
+        # epc -> time of its last read. Their later reads are the same visit to the mat, so they
+        # are dropped until the tag has been quiet for the crossing window.
+        self.lingering: Dict[str, float] = {}
 
         # Raw read log. The reader thread appends (deque.append is thread-safe) and flush_loop
         # writes batches to the DB. Only reads while an event is running/paused are kept.
@@ -106,18 +110,32 @@ class LapEngine:
         for epc, reads in list(self.buffers.items()):
             if not reads:
                 continue
-            last_read_time = reads[-1][0]
             # If no new read for effective_window seconds, runner has exited antenna beam.
             # A tag that never leaves (spare bib by the mat, runner standing on it) is
-            # resolved anyway once its burst is MAX_BURST_SECONDS old; later reads start a
-            # new burst, which the min-lap debounce then ignores.
-            if (now - last_read_time) >= effective_window or (now - reads[0][0]) >= max_burst:
-                epcs_to_process.append(epc)
+            # resolved anyway once its burst is MAX_BURST_SECONDS old, so it isn't stuck.
+            quiet = (now - reads[-1][0]) >= effective_window
+            if quiet or (now - reads[0][0]) >= max_burst:
+                epcs_to_process.append((epc, quiet))
 
-        for epc in epcs_to_process:
+        # A lingering tag that left right after its last burst was taken has no buffer to go quiet
+        for epc, last_read in list(self.lingering.items()):
+            if epc not in self.buffers and (now - last_read) >= effective_window:
+                del self.lingering[epc]
+
+        for epc, quiet in epcs_to_process:
             reads = self.buffers.pop(epc, [])
-            if reads:
-                await self._resolve_crossing(epc, reads)
+            if not reads:
+                continue
+            if epc in self.lingering:
+                # Same visit to the mat as a crossing already resolved: no lap, no too-soon prompt
+                if quiet:
+                    del self.lingering[epc]
+                else:
+                    self.lingering[epc] = reads[-1][0]
+                continue
+            outcome = await self._resolve_crossing(epc, reads)
+            if not quiet and outcome is not None:
+                self.lingering[epc] = reads[-1][0]
 
     def _missed_start_reason(self, seconds_after_gun: float, min_lap_sec: float) -> Optional[str]:
         """Issue #72: in the crowd at the gun a tag may not be read at all. Then the runner's
