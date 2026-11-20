@@ -4,7 +4,9 @@ import time
 import unittest
 
 from hardware.r200_protocol import READ_MULTI_COMMAND, READ_STOP_COMMAND, calculate_checksum
-from hardware.serial_reader import SerialReader
+import serial
+
+from hardware.serial_reader import WRITE_TIMEOUT, SerialReader
 
 EPC = "E28011700000020101010001"
 
@@ -158,6 +160,60 @@ class ReadLoopTest(unittest.TestCase):
         self.assertGreaterEqual(len(made), 2)
         self.assertFalse(conns[0].is_open)
         self.assertEqual(conns[1].writes[0], READ_MULTI_COMMAND)
+
+
+class WriteTimeoutTest(unittest.TestCase):
+    """A wedged USB-UART adapter must not hang the reader thread in write() (issue #89)."""
+
+    def test_port_is_opened_with_a_write_timeout(self):
+        opened = []
+
+        def factory(**kw):
+            opened.append(kw)
+            return FakeSerial()
+
+        reader = SerialReader(serial_factory=factory)
+        ReadLoopTest.run_loop(self, reader, seconds=0.1)
+        self.assertEqual(opened[0]["write_timeout"], WRITE_TIMEOUT)
+        self.assertLessEqual(WRITE_TIMEOUT, 2.0)
+
+    def test_stuck_rearm_write_reconnects(self):
+        class Wedged(FakeSerial):
+            def write(self, data):
+                if self.writes:   # the connect arm works; the next write times out
+                    raise serial.SerialTimeoutException("Write timeout")
+                super().write(data)
+
+        conns = [Wedged(), FakeSerial()]
+        made = []
+
+        def factory(**_):
+            made.append(conns[len(made)] if len(made) < len(conns) else FakeSerial())
+            return made[-1]
+
+        reader = SerialReader(serial_factory=factory, silence_rearm=0.05, rearm_interval=0)
+        ReadLoopTest.run_loop(self, reader, seconds=1.4)
+        self.assertGreaterEqual(len(made), 2)
+        self.assertFalse(conns[0].is_open)
+        self.assertEqual(conns[1].writes[0], READ_MULTI_COMMAND)
+
+    def test_port_closed_when_arming_fails_right_after_open(self):
+        class CantArm(FakeSerial):
+            def write(self, data):
+                raise serial.SerialTimeoutException("Write timeout")
+
+        made = []
+
+        def factory(**_):
+            made.append(CantArm())
+            return made[-1]
+
+        reader = SerialReader(serial_factory=factory)
+        ReadLoopTest.run_loop(self, reader, seconds=0.1)
+        self.assertEqual(len(made), 1)
+        self.assertFalse(made[0].is_open)
+        self.assertFalse(reader.connected)
+        self.assertIn("Write timeout", reader.last_error)
 
 
 if __name__ == "__main__":

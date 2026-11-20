@@ -18,6 +18,10 @@ logger = logging.getLogger("SerialReader")
 # module has gone quiet, in case it stopped for any other reason.
 DEFAULT_REARM_INTERVAL = 300.0   # seconds between routine stop + restart of the inventory
 DEFAULT_SILENCE_REARM = 30.0     # re-arm if no frame of any kind arrived for this long
+# pyserial's default write_timeout is None (block forever): a wedged USB-UART adapter would
+# hang the reader thread in write()/flush() for good, with no reconnect (issue #89). A stuck
+# write now raises SerialTimeoutException and the normal reconnect path takes over.
+WRITE_TIMEOUT = 1.0
 
 
 class SerialReader(BaseRFIDReader):
@@ -132,11 +136,13 @@ class SerialReader(BaseRFIDReader):
         while not self._stop_event.is_set():
             # Connection management with automatic reconnection
             if not self.serial_conn or not self.serial_conn.is_open:
+                conn = None
                 try:
-                    self.serial_conn = self._serial_factory(
+                    conn = self.serial_conn = self._serial_factory(
                         port=self.port,
                         baudrate=self.baud_rate,
-                        timeout=0.1
+                        timeout=0.1,
+                        write_timeout=WRITE_TIMEOUT,
                     )
                     logger.info(f"Connected to R200 RFID reader on {self.port}")
                     buffer = bytearray()
@@ -147,6 +153,11 @@ class SerialReader(BaseRFIDReader):
                     self.last_error = None
                 except Exception as e:
                     logger.warning(f"Could not connect to {self.port}: {e}. Retrying in 2 seconds...")
+                    if conn is not None:  # opened, but arming it failed
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
                     self.serial_conn = None
                     self.connected = False
                     self.last_error = self._describe_open_error(e)
