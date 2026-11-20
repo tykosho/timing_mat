@@ -45,6 +45,19 @@ class PauseTest(EngineTestCase):
         # 400 s on the wall clock, minus the 300 s pause
         self.assertEqual(self.durations(), [100.0])
 
+    def test_crossing_just_before_pause_still_counts(self):
+        # Issue #91: the burst is only resolved ~2 s after the last read, by when Pause may
+        # already have been pressed. Like a crossing just before End, it still counts.
+        self.db.start_event(at=1000.0)
+        self.cross(1000.0)
+        with self.at(1101.5):
+            self.db.pause_event()
+        self.assertEqual(self.cross(1100.0), "lap")
+        self.assertIsNone(self.cross(1102.0), "a crossing after Pause still isn't timed")
+        self.db.start_event(at=1201.5)          # 100 s pause
+        self.cross(1260.0)
+        self.assertEqual(self.durations(), [100.0, 60.0])
+
     def test_pauses_add_up(self):
         self.db.start_event(at=1000.0)
         self.cross(1000.0)

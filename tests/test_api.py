@@ -2,6 +2,7 @@
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 _tmp = tempfile.TemporaryDirectory()
 os.environ["DB_PATH"] = os.path.join(_tmp.name, "api_test.db")
@@ -45,6 +46,14 @@ class TestApi(unittest.TestCase):
         self.assertTrue(os.path.exists(res.json()["backup"]))
         self.assertEqual(self.client.post("/api/event/start").status_code, 409)
         self.assertEqual(self.client.post("/api/event/reopen").json()["event"]["status"], "paused")
+
+    def test_elapsed_time_holds_while_paused(self):
+        self.client.post("/api/event/start")
+        self.client.post("/api/event/pause")
+        paused_at = self.client.get("/api/event").json()["paused_at"]
+        with mock.patch("core.clock.now", return_value=paused_at + 100.0):   # a long hold
+            ev = self.client.get("/api/event").json()
+        self.assertEqual(ev["elapsed_seconds"], round(ev["paused_at"] - ev["start_time"], 1))
 
     def test_reset_refused_while_running_and_backs_up_otherwise(self):
         self.client.post("/api/event/start")

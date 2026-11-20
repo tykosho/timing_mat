@@ -830,6 +830,8 @@
         timer.innerText = formatClock(raceNowSec() - eventState.start_time);
       } else if (eventState.status === "ended" && eventState.end_time) {
         timer.innerText = formatClock(eventState.end_time - eventState.start_time);
+      } else if (eventState.status === "paused" && eventState.paused_at) {
+        timer.innerText = formatClock(eventState.paused_at - eventState.start_time);  // held (#91)
       }
     }
 

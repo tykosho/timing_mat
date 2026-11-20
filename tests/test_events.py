@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 from core import exports
 from core.db import Database, EventStateError, RegistrationError
@@ -304,7 +305,8 @@ class TestEngineWithEvents(DbTestCase):
         self.db.start_event(at=1000.0)
         engine = self.make_engine()
         asyncio.run(engine._resolve_crossing(EPC_A, [(1100.0, -45.0)]))
-        self.db.pause_event()
+        with mock.patch("core.clock.now", return_value=1150.0):
+            self.db.pause_event()
         asyncio.run(engine._resolve_crossing(EPC_A, [(1200.0, -45.0)]))
         self.assertEqual(self.db.get_total_laps_count(), 0)
 
