@@ -472,10 +472,14 @@ class Database:
                 conn.execute(f"DELETE FROM {table} WHERE event_id = ? AND bib_number = ?;", (eid, bib_number))
         return True
 
-    def set_participant_start(self, bib_number: int, start_time: float, event_id: Optional[int] = None):
+    def set_participant_start(self, bib_number: int, start_time: float, event_id: Optional[int] = None,
+                              flag_reason: Optional[str] = None):
+        """Records a start; with flag_reason, also flags it for review in the same write (#88)."""
         with self.connect() as conn:
-            conn.execute("UPDATE participants SET start_time = ?, last_crossing_time = ? WHERE event_id = ? AND bib_number = ?;",
-                         (start_time, start_time, self._eid(event_id), bib_number))
+            conn.execute("""UPDATE participants SET start_time = ?, last_crossing_time = ?,
+                            start_flag_reason = COALESCE(?, start_flag_reason)
+                            WHERE event_id = ? AND bib_number = ?;""",
+                         (start_time, start_time, flag_reason, self._eid(event_id), bib_number))
 
     def update_participant_last_crossing(self, bib_number: int, crossing_time: float, event_id: Optional[int] = None):
         with self.connect() as conn:

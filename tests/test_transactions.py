@@ -64,6 +64,18 @@ class SingleTransactionTest(unittest.TestCase):
         self.assertEqual(self.db.get_event()["status"], "running")
         self.assertIsNotNone(self.db.get_open_break(101))
 
+    def test_missed_start_flag_is_written_with_the_start(self):
+        self.db.add_participant(102, "Sam", "E28011700000020101010002")
+        self.fail_on_update("participants")
+        with self.assertRaises(sqlite3.IntegrityError):
+            asyncio.run(self.engine._resolve_crossing("E28011700000020101010002", [(1300.0, -50.0)]))
+        with sqlite3.connect(self.path) as conn:
+            conn.execute("DROP TRIGGER fail_participants;")
+        asyncio.run(self.engine._resolve_crossing("E28011700000020101010002", [(1300.0, -50.0)]))
+        sam = self.db.get_participant_by_bib(102)
+        self.assertEqual(sam["start_time"], 1300.0)
+        self.assertIsNotNone(sam["start_flag_reason"], "300 s after the gun: flagged for review")
+
     def test_normal_lap_still_moves_the_last_crossing(self):
         self.assertEqual(self.cross(1060.0), "lap")
         self.assertEqual(self.last_crossing(), 1060.0)
