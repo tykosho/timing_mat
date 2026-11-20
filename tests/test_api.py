@@ -124,6 +124,20 @@ class TestApi(unittest.TestCase):
             self.assertEqual(r.status_code, 200, path)
             self.assertNotIn(evil, r.text, f"{path} must not emit the name unescaped")
 
+    def test_break_buttons_and_open_break_on_runner_page(self):
+        self.client.post("/api/participants", json={"bib_number": 5, "name": "Pat", "epc": EPC_A})
+        self.client.post("/api/event/start")
+        self.client.post("/api/participants/5/start")
+        res = self.client.post("/api/participants/5/break/start")
+        self.assertEqual(res.status_code, 200, res.text)
+        page = self.client.get("/runner/5").text
+        self.assertIn("In progress", page, "an open break has no end time yet (#86)")
+        self.assertNotIn("new Date(0.0 * 1000)", page)
+        res = self.client.post("/api/participants/5/break/end")
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()["status"], "resumed")
+        self.assertNotIn("In progress", self.client.get("/runner/5").text)
+
     def test_quick_lap_adjustments_and_event_isolation(self):
         from unittest import mock
         t0 = 1_000_000.0

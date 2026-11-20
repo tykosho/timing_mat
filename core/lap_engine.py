@@ -307,6 +307,14 @@ class LapEngine:
                     self.on_crossing_too_soon(too_soon_data)
             return "debounced"
 
+        # A runner on a manual break crossing the mat is back from it (issue #86): end the break
+        # here rather than record a lap (or a second, overlapping auto-break) that includes it.
+        closed = self.db.close_open_break(bib, peak_time, self.speed_multiplier)
+        if closed:
+            logger.info(f"☕ MANUAL BREAK ENDED: Bib {bib} ({name}) crossed the mat after {closed['duration_seconds']/60:.1f}m break.")
+            await self._notify_resumed(bib, name, closed["duration_seconds"], peak_time)
+            return "resumed"
+
         if not force:
             # Break / Rest detection: if enabled (max_rest_sec > 0) and time since last crossing exceeds threshold
             if max_rest_sec > 0 and time_since_last > effective_max_rest:
@@ -320,17 +328,7 @@ class LapEngine:
                 self.db.update_participant_last_crossing(bib, peak_time)
                 logger.info(f"☕ BREAK DETECTED & RESUMED: Bib {bib} ({name}) resumed after {break_duration/60:.1f}m break!")
 
-                if self.on_runner_resumed:
-                    resumed_data = {
-                        "bib_number": bib,
-                        "name": name,
-                        "break_duration_seconds": round(break_duration, 2),
-                        "crossing_time": peak_time
-                    }
-                    if asyncio.iscoroutinefunction(self.on_runner_resumed):
-                        await self.on_runner_resumed(resumed_data)
-                    else:
-                        self.on_runner_resumed(resumed_data)
+                await self._notify_resumed(bib, name, break_duration, peak_time)
                 return "resumed"
 
             # Normal lap duration. (No floor: the min-lap debounce above already rejects short ones.)
@@ -342,6 +340,19 @@ class LapEngine:
         # Record completed lap
         await self._record_completed_lap(bib, name, peak_time, lap_duration, peak_rssi, manual_entry=force)
         return "lap"
+
+    async def _notify_resumed(self, bib: int, name: str, break_duration: float, crossing_time: float):
+        if self.on_runner_resumed:
+            resumed_data = {
+                "bib_number": bib,
+                "name": name,
+                "break_duration_seconds": round(break_duration, 2),
+                "crossing_time": crossing_time,
+            }
+            if asyncio.iscoroutinefunction(self.on_runner_resumed):
+                await self.on_runner_resumed(resumed_data)
+            else:
+                self.on_runner_resumed(resumed_data)
 
     async def _record_completed_lap(
         self,

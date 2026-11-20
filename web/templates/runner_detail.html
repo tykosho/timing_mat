@@ -112,14 +112,18 @@
                 document.write(new Date({{ b.start_time }} * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
               </script> 
               → 
+              {% if b.end_time %}
               <script>
                 document.write(new Date({{ b.end_time }} * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
               </script>
+              {% else %}
+              In progress
+              {% endif %}
             </div>
           </div>
           <div class="text-right">
             <div class="text-base font-black font-mono text-amber-400">
-              {{ (b.duration_seconds // 60) | int }}m {{ (b.duration_seconds % 60) | int }}s
+              {% if b.end_time %}{{ (b.duration_seconds // 60) | int }}m {{ (b.duration_seconds % 60) | int }}s{% else %}--{% endif %}
             </div>
             <div class="text-[10px] text-slate-500">Rest duration</div>
           </div>
