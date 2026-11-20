@@ -199,7 +199,8 @@ lap_engine = LapEngine(
     on_runner_resumed=on_runner_resumed,
     on_tag_detected=on_tag_detected,
     on_unassigned_tag=on_unassigned_tag,
-    on_crossing_too_soon=on_crossing_too_soon
+    on_crossing_too_soon=on_crossing_too_soon,
+    auto_register_unassigned=True,
 )
 # A Pi without an RTC can boot with an older time than what's already stored (issue #2)
 clock.clock.ensure_not_before(db.latest_timestamp())
@@ -715,13 +716,37 @@ class SelfRegisterRequest(BaseModel):
     name: str
     epc: str
     bib_number: Optional[int] = Field(default=None, gt=0)
+    crossing_time: Optional[float] = None
+    peak_rssi: Optional[float] = None
 
 @app.post("/api/self-register")
 async def self_register_participant(req: SelfRegisterRequest):
-    """Registers a runner for a previously unrecognized tag EPC, auto-assigning a bib if omitted."""
+    """Registers a runner for a previously unrecognized tag EPC, auto-assigning a bib if omitted.
+
+    When the event is actively running, also records their chip start from the mat crossing (#122)
+    so their first completed lap isn't mistaken for Lap 0 (start).
+    """
     epc = (req.epc or "").strip()
     if not epc:
         raise RegistrationError("Tag EPC is required")
+
+    existing = db.get_participant_by_epc(epc)
+    if existing and (existing.get("notes") or "") == "Auto-registered walk-up tag":
+        updated = db.rename_participant(existing["bib_number"], req.name)
+        await broadcast_ws({
+            "type": "participant_renamed",
+            "bib_number": updated["bib_number"],
+            "name": updated["name"],
+        })
+        await push_leaderboard()
+        return {
+            "status": "created",
+            "started": bool(updated.get("start_time")),
+            "start_time": updated.get("start_time"),
+            "bib_number": updated["bib_number"],
+            "participant": updated,
+        }
+
     bib = req.bib_number
     if bib is None:
         used_bibs = {p["bib_number"] for p in db.get_all_participants()}
@@ -729,8 +754,34 @@ async def self_register_participant(req: SelfRegisterRequest):
         while bib in used_bibs:
             bib += 1
     db.add_participant(bib, req.name, epc)
+    participant = db.get_participant_by_bib(bib)
+
+    event_state = db.get_event_state()
+    if event_state.get("status") == "running" and event_state.get("start_time"):
+        now = clock.now()
+        race_start = event_state["start_time"]
+        start_t = now if req.crossing_time is None else min(now, max(race_start, req.crossing_time))
+        db.set_participant_start(bib, start_t, flag_reason=None)
+        lap_engine.mark_tag_started_on_mat(epc, now)
+        participant = db.get_participant_by_bib(bib)
+        await on_runner_started({
+            "bib_number": bib,
+            "name": participant["name"],
+            "start_time": start_t,
+            "event_offset_seconds": round(start_t - race_start, 1),
+            "peak_rssi": round(req.peak_rssi, 1) if req.peak_rssi is not None else -45.0,
+            "start_flag_reason": None,
+        })
+        return {
+            "status": "created",
+            "started": True,
+            "start_time": start_t,
+            "bib_number": bib,
+            "participant": participant,
+        }
+
     await push_leaderboard()
-    return {"status": "created", "bib_number": bib, "participant": db.get_participant_by_bib(bib)}
+    return {"status": "created", "started": False, "bib_number": bib, "participant": participant}
 
 class ImportRequest(BaseModel):
     csv_text: str
@@ -749,6 +800,21 @@ async def edit_participant(bib: int, p: ParticipantRequest):
     db.update_participant(bib, p.name, p.epc, p.notes or "", p.email)
     await push_leaderboard()
     return {"status": "updated"}
+
+class RenameParticipantRequest(BaseModel):
+    name: str
+
+@app.patch("/api/participants/{bib}/name")
+async def rename_participant_endpoint(bib: int, req: RenameParticipantRequest):
+    """Inline rename from the trackside crossings feed / unclaimed tags list."""
+    updated = db.rename_participant(bib, req.name)
+    await broadcast_ws({
+        "type": "participant_renamed",
+        "bib_number": bib,
+        "name": updated["name"],
+    })
+    await push_leaderboard()
+    return {"status": "renamed", "bib_number": bib, "participant": updated}
 
 class TagRequest(BaseModel):
     epc: str

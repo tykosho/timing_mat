@@ -328,6 +328,96 @@ class TestApi(unittest.TestCase):
         })
         self.assertEqual(dup.status_code, 409)
 
+    def test_self_register_mid_race_starts_runner_and_counts_lap_1(self):
+        import asyncio
+        from unittest import mock
+        from core.models import TagRead
+        from web import app as web_app
+
+        self.client.post("/api/simulator/speed", json={"speed": 1.0})
+        t0 = 2_000_000.0
+        epc = "E28099990000000000000122"
+        at = lambda t: mock.patch("core.clock.now", return_value=t)  # noqa: E731
+
+        with at(t0):
+            self.client.post("/api/event/start")
+
+        # Runner steps onto mat at t0 + 120s and stands typing until t0 + 135s
+        web_app.lap_engine.process_tag_read(TagRead(epc=epc, rssi=-44.0, timestamp=t0 + 130.0))
+        with at(t0 + 135.0):
+            reg = self.client.post("/api/self-register", json={
+                "name": "Late Walkup",
+                "epc": epc,
+                "crossing_time": t0 + 120.0,
+                "peak_rssi": -43.0,
+            })
+        self.assertEqual(reg.status_code, 200, reg.text)
+        body = reg.json()
+        self.assertTrue(body["started"])
+        self.assertEqual(body["start_time"], t0 + 120.0)
+        bib = body["bib_number"]
+
+        # Walk-up start is intentional, never flagged as a missed gun start
+        self.assertEqual(self.client.get("/api/starts/flagged").json(), [])
+
+        # Stepping off the mat 1s later does NOT trigger a too-soon lap or prompt
+        web_app.lap_engine.process_tag_read(TagRead(epc=epc, rssi=-45.0, timestamp=t0 + 136.0))
+        asyncio.run(web_app.lap_engine.flush_once(t0 + 140.0))
+        self.assertEqual(web_app.db.get_laps_for_runner(bib), [])
+
+        # Completing their first loop at t0 + 210s records Lap 1 (90s), not Lap 0!
+        web_app.lap_engine.process_tag_read(TagRead(epc=epc, rssi=-42.0, timestamp=t0 + 210.0))
+        asyncio.run(web_app.lap_engine.flush_once(t0 + 215.0))
+        laps = web_app.db.get_laps_for_runner(bib)
+        self.assertEqual(len(laps), 1)
+        self.assertEqual(laps[0]["lap_number"], 1)
+        self.assertAlmostEqual(laps[0]["lap_duration_seconds"], 90.0, places=1)
+
+    def test_auto_placeholder_for_unknown_tag_and_inline_rename(self):
+        import asyncio
+        from unittest import mock
+        from core.models import TagRead
+        from web import app as web_app
+
+        self.client.post("/api/simulator/speed", json={"speed": 1.0})
+        t0 = 3_000_000.0
+        epc_a = "E28099990000000000000201"
+        epc_b = "E28099990000000000000202"
+        with mock.patch("core.clock.now", return_value=t0):
+            self.client.post("/api/event/start")
+
+        # Two unknown tags cross together without anyone typing at the prompt yet
+        web_app.lap_engine.process_tag_read(TagRead(epc=epc_a, rssi=-43.0, timestamp=t0 + 10.0))
+        web_app.lap_engine.process_tag_read(TagRead(epc=epc_b, rssi=-44.0, timestamp=t0 + 10.2))
+        asyncio.run(web_app.lap_engine.flush_once(t0 + 15.0))
+
+        pa = web_app.db.get_participant_by_epc(epc_a)
+        pb = web_app.db.get_participant_by_epc(epc_b)
+        self.assertIsNotNone(pa)
+        self.assertIsNotNone(pb)
+        self.assertEqual(pa["name"], f"Runner #{pa['bib_number']}")
+        self.assertEqual(pb["name"], f"Runner #{pb['bib_number']}")
+        self.assertEqual(pa["start_time"], t0 + 10.0)
+
+        # Runner A completes a lap BEFORE ever setting their name -> Lap 1 is timed immediately!
+        web_app.lap_engine.process_tag_read(TagRead(epc=epc_a, rssi=-42.0, timestamp=t0 + 95.0))
+        asyncio.run(web_app.lap_engine.flush_once(t0 + 100.0))
+        laps_a = web_app.db.get_laps_for_runner(pa["bib_number"])
+        self.assertEqual(len(laps_a), 1)
+        self.assertAlmostEqual(laps_a[0]["lap_duration_seconds"], 85.0, places=1)
+
+        # Runner A clicks their row in the list and renames via PATCH /api/participants/{bib}/name
+        ren = self.client.patch(f"/api/participants/{pa['bib_number']}/name", json={"name": "Jordan Lee"})
+        self.assertEqual(ren.status_code, 200, ren.text)
+        self.assertEqual(ren.json()["participant"]["name"], "Jordan Lee")
+        self.assertEqual(ren.json()["participant"]["notes"], "")
+
+        # Runner B submits via the prompt (POST /api/self-register) -> renames placeholder instead of 400 duplicate!
+        reg_b = self.client.post("/api/self-register", json={"name": "Casey Kim", "epc": epc_b})
+        self.assertEqual(reg_b.status_code, 200, reg_b.text)
+        self.assertEqual(reg_b.json()["bib_number"], pb["bib_number"])
+        self.assertEqual(reg_b.json()["participant"]["name"], "Casey Kim")
+
 
 if __name__ == "__main__":
     unittest.main()
