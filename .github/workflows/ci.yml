@@ -54,6 +54,29 @@ jobs:
       - name: Ruff
         run: ruff check --output-format=github .
 
+  # app.css is committed (the Pi builds nothing), so it must match the templates.
+  css:
+    name: css
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Rebuild app.css (Tailwind version pinned in package-lock.json)
+        run: npm ci && npm run build:css
+
+      - name: Fail if the committed app.css is stale
+        run: |
+          git diff --exit-code web/static/app.css || {
+            echo "::error file=web/static/app.css::app.css is out of date with web/templates. Run: npm ci && npm run build:css, then commit web/static/app.css."
+            exit 1
+          }
+
   browser:
     name: browser
     runs-on: ubuntu-latest
