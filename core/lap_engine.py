@@ -97,6 +97,16 @@ class LapEngine:
                 self.raw_queue.extendleft(reversed(batch))  # keep them for the next try
                 raise
 
+    def forget_tag(self, epc: Optional[str]):
+        """The runner's start was reset (issue #113): the tag's next reads are a fresh crossing,
+        even if it never left the field. Reads and failed crossings from before the reset go."""
+        if not epc:
+            return
+        epc = epc.upper().strip()
+        self.lingering.pop(epc, None)
+        self.buffers.pop(epc, None)
+        self.failed_bursts = [b for b in self.failed_bursts if b[0] != epc]
+
     def process_tag_read(self, tag_read: TagRead):
         """Called for every read from the RFID reader (mock or physical).
 

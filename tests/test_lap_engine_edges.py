@@ -203,6 +203,25 @@ class ParkedTagTest(EngineTestCase):
         self.engine.refresh_event()
         self.assertEqual(self.engine.lingering, {})
 
+    def test_reset_start_while_the_tag_is_on_the_mat_starts_it_again(self):
+        """#113: Reset used to wait for a parked tag to leave the field and come back."""
+        self.db.start_event(at=1000.0)
+        self.feed(1000.0, MAX_BURST_SECONDS + 2.0)              # parked: started, now lingering
+        self.assertIn(EPC, self.engine.lingering)
+        reset_at = 1000.0 + MAX_BURST_SECONDS + 2.0
+        self.db.reset_participant_start(101)
+        self.engine.forget_tag(EPC.lower())
+        self.assertIsNone(self.db.get_participant_by_bib(101)["start_time"])
+        self.feed(reset_at, MAX_BURST_SECONDS + 2.0)            # still parked, never left
+        start = self.db.get_participant_by_bib(101)["start_time"]
+        self.assertIsNotNone(start, "a reset runner whose tag stays on the mat starts again")
+        self.assertGreaterEqual(start, reset_at, "reads from before the reset don't count")
+        self.assertEqual(self.durations(), [])
+
+    def test_forget_tag_ignores_runners_without_a_tag(self):
+        self.engine.forget_tag(None)
+        self.engine.forget_tag("")
+
     def test_runner_waiting_on_the_mat_before_the_gun_still_starts(self):
         self.feed(990.0, 10.0)          # standing on the mat, event not started yet
         self.db.start_event(at=1000.0)
