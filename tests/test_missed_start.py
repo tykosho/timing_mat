@@ -97,6 +97,50 @@ class MissedStartTest(unittest.TestCase):
         self.assertEqual((p["start_time"], p["last_crossing_time"]), (GUN, GUN + 90))
         self.assertEqual(len(self.db.get_laps_for_runner(7)), 1)
 
+    def pause(self, at, seconds):
+        with mock.patch("core.clock.now", return_value=at):
+            self.db.pause_event()
+        self.db.start_event(at=at + seconds)
+
+    def test_pause_before_first_sighting_is_not_part_of_lap_1(self):  # issue #112
+        # The example from the issue: a 5 min pause at +2 min, runner first seen at +9 min
+        self.pause(GUN + 120, 300)
+        self.cross(GUN + 540)
+        self.assertIn("4:00", self.flag())
+        self.assertEqual(self.db.get_flagged_starts()[0]["seconds_after_gun"], 240.0)
+        self.assertEqual(self.db.start_from_gun(7)["lap_seconds"], 240.0)
+        self.assertEqual([lap["lap_duration_seconds"] for lap in self.db.get_laps_for_runner(7)], [240.0])
+
+    def test_pause_makes_a_late_sighting_fall_inside_the_window(self):
+        # 14 min after the gun on the wall clock, but 9 min of race time: still worth a review
+        self.pause(GUN + 60, 300)
+        self.cross(GUN + 840)
+        self.assertIn("9:00", self.flag())
+
+    def test_pause_shorter_than_a_lap_ago_is_no_missed_lap(self):
+        self.pause(GUN + 10, 100)
+        self.cross(GUN + 120)          # 120 s on the wall clock, 20 s of racing
+        self.assertIsNone(self.flag())
+        with self.assertRaises(LapEditError):
+            self.db.start_from_gun(7)
+
+    def test_pause_after_first_sighting_changes_nothing(self):
+        self.cross(GUN + 90)
+        self.pause(GUN + 100, 300)
+        self.assertEqual(self.db.start_from_gun(7)["lap_seconds"], 90.0)
+
+    def test_clear_results_forgets_pauses(self):
+        self.pause(GUN + 120, 300)
+        self.db.reset_race_data()
+        self.assertEqual(self.db.paused_seconds_between(0, GUN * 10), 0.0)
+
+    def test_paused_seconds_between_counts_only_the_overlap(self):
+        self.pause(GUN + 100, 50)       # 1100..1150
+        self.pause(GUN + 200, 30)       # 1200..1230
+        self.assertEqual(self.db.paused_seconds_between(GUN, GUN + 1000), 80.0)
+        self.assertEqual(self.db.paused_seconds_between(GUN + 120, GUN + 210), 40.0)
+        self.assertEqual(self.db.paused_seconds_between(GUN + 160, GUN + 190), 0.0)
+
     def test_start_from_gun_refuses_nonsense(self):
         with self.assertRaises(LapEditError):
             self.db.start_from_gun(7)  # not started

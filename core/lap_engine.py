@@ -310,7 +310,9 @@ class LapEngine:
         # CASE 1: Runner has NOT started yet -> Record CHIP START (Lap 0)
         # -------------------------------------------------------------
         if runner_start is None:
-            start_flag = None if force else self._missed_start_reason(peak_time - race_start, min_lap_sec)
+            # Race time since the gun, without any pause in between (issue #112)
+            since_gun = peak_time - race_start - self.db.paused_seconds_between(race_start, peak_time)
+            start_flag = None if force else self._missed_start_reason(since_gun, min_lap_sec)
             self.db.set_participant_start(bib, peak_time, flag_reason=start_flag)
             logger.info(f"🚀 CHIP START: Bib {bib} ({name}) started running at {peak_time:.2f} (RSSI: {peak_rssi:.1f} dBm)")
             if start_flag:

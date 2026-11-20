@@ -146,6 +146,14 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_breaks_event_bib ON breaks(event_id, bib_number);
 
+            -- Race-wide holds (Pause..Resume), so time before a runner's first sighting can
+            -- leave them out too (issue #112)
+            CREATE TABLE IF NOT EXISTS pauses (
+                event_id INTEGER NOT NULL,
+                start_time REAL NOT NULL,
+                end_time REAL NOT NULL
+            );
+
             -- Every tag read as it came off the reader, so laps can be audited or re-derived later.
             CREATE TABLE IF NOT EXISTS raw_reads (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -358,6 +366,9 @@ class Database:
             with self.connect() as conn:
                 if ev["status"] == "paused" and ev.get("paused_at"):
                     self._skip_pause(conn, ev["id"], max(0.0, now - ev["paused_at"]))
+                    if now > ev["paused_at"]:
+                        conn.execute("INSERT INTO pauses (event_id, start_time, end_time) VALUES (?, ?, ?);",
+                                     (ev["id"], ev["paused_at"], now))
                 self._set_status(ev, "running", ev["start_time"] or now, None, conn=conn)
         return self.get_event()
 
@@ -373,6 +384,19 @@ class Database:
         conn.execute("""UPDATE participants SET last_crossing_time = last_crossing_time + ?
                         WHERE event_id = ? AND last_crossing_time IS NOT NULL;""",
                      (pause_seconds, event_id))
+
+    def paused_seconds_between(self, start: float, end: float, event_id: Optional[int] = None,
+                               conn: Optional[sqlite3.Connection] = None) -> float:
+        """Seconds of finished race-wide pauses that fall between `start` and `end` (issue #112)."""
+        if end <= start:
+            return 0.0
+        if conn is None:
+            with self.connect() as conn:
+                return self.paused_seconds_between(start, end, event_id, conn)
+        row = conn.execute("""SELECT SUM(MIN(end_time, ?) - MAX(start_time, ?)) FROM pauses
+                              WHERE event_id = ? AND end_time > ? AND start_time < ?;""",
+                           (end, start, self._eid(event_id), start, end)).fetchone()
+        return float(row[0] or 0.0)
 
     def pause_event(self) -> Dict[str, Any]:
         ev = self.get_event()
@@ -519,7 +543,8 @@ class Database:
             rows = conn.execute("""SELECT bib_number, name, start_time, start_flag_reason FROM participants
                                    WHERE event_id = ? AND start_flag_reason IS NOT NULL AND start_time IS NOT NULL
                                    ORDER BY start_time DESC;""", (eid,)).fetchall()
-        return [dict(r, seconds_after_gun=round(r["start_time"] - gun, 1) if gun else None) for r in rows]
+            return [dict(r, seconds_after_gun=round(r["start_time"] - gun - self.paused_seconds_between(
+                gun, r["start_time"], eid, conn), 1) if gun else None) for r in rows]
 
     def typical_lap_seconds(self, min_laps: int = 5, event_id: Optional[int] = None) -> Optional[float]:
         """Median lap time of everyone so far, or None before there are min_laps laps."""
@@ -545,20 +570,22 @@ class Database:
                              (eid, bib_number)).fetchone()
             if not p or p["start_time"] is None:
                 raise LapEditError(f"Bib {bib_number} hasn't started.")
-            if not gun or p["start_time"] - gun < min_lap:
+            first_seen = p["start_time"]
+            # A pause between the gun and their first sighting isn't part of lap 1 (issue #112)
+            lap_seconds = round(first_seen - gun - self.paused_seconds_between(gun, first_seen, eid, conn), 2) if gun else 0.0
+            if not gun or lap_seconds < min_lap:
                 raise LapEditError(f"Bib {bib_number} started less than a lap after the gun: "
                                    "there's no missed lap to add.")
-            first_seen = p["start_time"]
             conn.execute("""INSERT INTO laps (event_id, bib_number, lap_number, crossing_time,
                                               lap_duration_seconds, peak_rssi, manual_entry, flag_reason)
                             VALUES (?, ?, 0, ?, ?, 0.0, 1, NULL);""",
-                         (eid, bib_number, first_seen, round(first_seen - gun, 2)))
+                         (eid, bib_number, first_seen, lap_seconds))
             conn.execute("""UPDATE participants SET start_time = ?, start_flag_reason = NULL,
                             last_crossing_time = MAX(COALESCE(last_crossing_time, ?), ?)
                             WHERE event_id = ? AND bib_number = ?;""",
                          (gun, first_seen, first_seen, eid, bib_number))
             self._renumber_laps(conn, eid, bib_number)
-        return {"bib_number": bib_number, "start_time": gun, "lap_seconds": round(first_seen - gun, 2)}
+        return {"bib_number": bib_number, "start_time": gun, "lap_seconds": lap_seconds}
 
     def get_participant_by_bib(self, bib_number: int, event_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         with self.connect() as conn:
@@ -1024,7 +1051,7 @@ class Database:
         """Clears laps, breaks and raw reads and returns the event to 'setup'. Registrations are kept."""
         eid = self._eid(event_id)
         with self.connect() as conn:
-            for table in ("laps", "breaks", "raw_reads"):
+            for table in ("laps", "breaks", "raw_reads", "pauses"):
                 conn.execute(f"DELETE FROM {table} WHERE event_id = ?;", (eid,))
             conn.execute("""UPDATE participants SET start_time = NULL, last_crossing_time = NULL, start_flag_reason = NULL
                             WHERE event_id = ?;""", (eid,))
@@ -1034,7 +1061,7 @@ class Database:
         """Completely clears laps, breaks, raw reads, and registered participants for the event, returning it to 'setup'."""
         eid = self._eid(event_id)
         with self.connect() as conn:
-            for table in ("laps", "breaks", "raw_reads", "participants"):
+            for table in ("laps", "breaks", "raw_reads", "pauses", "participants"):
                 conn.execute(f"DELETE FROM {table} WHERE event_id = ?;", (eid,))
             conn.execute("UPDATE events SET status = 'setup', start_time = NULL, end_time = NULL WHERE id = ?;", (eid,))
 
