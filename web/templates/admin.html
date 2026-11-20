@@ -415,29 +415,29 @@
                 </td>
                 <td class="py-3 px-4 text-right space-x-1.5">
                   {% if not p.start_time %}
-                  <button onclick="startRunner({{ p.bib_number }})" title="Manually start runner now" class="text-xs bg-emerald-950/50 hover:bg-emerald-900 border border-emerald-700/50 text-emerald-300 px-2 py-1 rounded">
+                  <button onclick="startRunner({{ p.bib_number }})" title="Manually start runner now" class="ended-lock disabled:opacity-40 disabled:cursor-not-allowed text-xs bg-emerald-950/50 hover:bg-emerald-900 border border-emerald-700/50 text-emerald-300 px-2 py-1 rounded">
                     Start
                   </button>
                   {% endif %}
-                  <button onclick="promptManualLap({{ p.bib_number }})" title="Add manual lap" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-2 py-1 rounded">
+                  <button onclick="promptManualLap({{ p.bib_number }})" title="Add manual lap" class="ended-lock disabled:opacity-40 disabled:cursor-not-allowed text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-2 py-1 rounded">
                     + Lap
                   </button>
                   {% if p.start_time %}
-                  <button onclick="resetRunnerStart({{ p.bib_number }})" title="Reset runner start & laps" class="text-xs bg-amber-950/40 hover:bg-amber-900 border border-amber-800/40 text-amber-300 px-2 py-1 rounded">
+                  <button onclick="resetRunnerStart({{ p.bib_number }})" title="Reset runner start & laps" class="ended-lock disabled:opacity-40 disabled:cursor-not-allowed text-xs bg-amber-950/40 hover:bg-amber-900 border border-amber-800/40 text-amber-300 px-2 py-1 rounded">
                     Reset
                   </button>
                   {% endif %}
                   {%- set rstatus = lb_by_bib.get(p.bib_number, {}).get('status', 'not_started') %}
                   {% if rstatus == 'on_break' %}
-                  <button onclick="endBreak({{ p.bib_number }})" title="Resume runner from break" class="text-xs bg-emerald-950/50 hover:bg-emerald-900 border border-emerald-700/50 text-emerald-300 px-2 py-1 rounded">
+                  <button onclick="endBreak({{ p.bib_number }})" title="Resume runner from break" class="ended-lock disabled:opacity-40 disabled:cursor-not-allowed text-xs bg-emerald-950/50 hover:bg-emerald-900 border border-emerald-700/50 text-emerald-300 px-2 py-1 rounded">
                     ☕ Resume
                   </button>
                   {% elif rstatus == 'active' %}
-                  <button onclick="startBreak({{ p.bib_number }})" title="Put runner on break" class="text-xs bg-amber-950/50 hover:bg-amber-900 border border-amber-700/50 text-amber-300 px-2 py-1 rounded">
+                  <button onclick="startBreak({{ p.bib_number }})" title="Put runner on break" class="ended-lock disabled:opacity-40 disabled:cursor-not-allowed text-xs bg-amber-950/50 hover:bg-amber-900 border border-amber-700/50 text-amber-300 px-2 py-1 rounded">
                     ☕ Break
                   </button>
                   {% endif %}
-                  <button onclick="deleteParticipant({{ p.bib_number }})" title="Remove runner" class="text-xs bg-rose-950/40 hover:bg-rose-900 text-rose-300 border border-rose-800/40 px-2 py-1 rounded">
+                  <button onclick="deleteParticipant({{ p.bib_number }})" title="Remove runner" class="ended-lock disabled:opacity-40 disabled:cursor-not-allowed text-xs bg-rose-950/40 hover:bg-rose-900 text-rose-300 border border-rose-800/40 px-2 py-1 rounded">
                     <i class="fa-solid fa-trash"></i>
                   </button>
                 </td>
@@ -548,6 +548,15 @@
       document.getElementById("btnReset").disabled = status === "running";
       document.getElementById("btnReopen").classList.toggle("hidden", !ended);
       document.getElementById("endedNote").classList.toggle("hidden", !ended);
+      lockEndedControls();
+    }
+
+    // End freezes the results: lap and runner edits wait for Reopen (issue #93)
+    function lockEndedControls() {
+      const ended = eventState && eventState.status === "ended";
+      document.querySelectorAll(".ended-lock").forEach(b => {
+        b.disabled = ended;
+      });
     }
 
     setInterval(updateTimerDisplay, 500);
@@ -641,10 +650,17 @@
       }
     }
 
+    async function alertFailure(res, fallback) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.detail || fallback);
+    }
+
     async function startRunner(bib) {
       const res = await fetch(`/api/participants/${bib}/start`, { method: "POST" });
       if (res.ok) {
         window.location.reload();
+      } else {
+        await alertFailure(res, "Could not start the runner");
       }
     }
 
@@ -653,6 +669,8 @@
         const res = await fetch(`/api/participants/${bib}/reset`, { method: "POST" });
         if (res.ok) {
           window.location.reload();
+        } else {
+          await alertFailure(res, "Could not reset the runner");
         }
       }
     }
@@ -662,7 +680,7 @@
       if (res.ok) {
         window.location.reload();
       } else {
-        alert("Failed to put runner on break");
+        await alertFailure(res, "Failed to put runner on break");
       }
     }
 
@@ -671,7 +689,7 @@
       if (res.ok) {
         window.location.reload();
       } else {
-        alert("Failed to resume runner from break");
+        await alertFailure(res, "Failed to resume runner from break");
       }
     }
 
@@ -699,7 +717,8 @@
 
     async function deleteParticipant(bib) {
       if (confirm(`Remove Runner #${bib} and their laps?`)) {
-        await fetch(`/api/participants/${bib}`, { method: "DELETE" });
+        const res = await fetch(`/api/participants/${bib}`, { method: "DELETE" });
+        if (!res.ok) return alertFailure(res, "Could not remove the runner");
         window.location.reload();
       }
     }
@@ -812,10 +831,10 @@
               <div class="text-[11px] text-slate-400 mt-0.5">${esc(p.start_flag_reason || 'Late first crossing')}</div>
             </div>
             <div class="flex items-center gap-1.5 flex-shrink-0">
-              <button onclick="startFromGun(${p.bib_number})" title="Their tag was missed at the start: start them at the gun and add the missing first lap" class="start-from-gun bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
+              <button onclick="startFromGun(${p.bib_number})" title="Their tag was missed at the start: start them at the gun and add the missing first lap" class="start-from-gun ended-lock disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
                 Started at gun
               </button>
-              <button onclick="keepStart(${p.bib_number})" title="They joined late: keep their start" class="keep-start bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
+              <button onclick="keepStart(${p.bib_number})" title="They joined late: keep their start" class="keep-start ended-lock disabled:opacity-40 disabled:cursor-not-allowed bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
                 Joined late
               </button>
             </div>
@@ -833,16 +852,17 @@
               <div class="text-[11px] text-slate-400 font-mono mt-0.5">${esc(l.lap_duration_seconds)}s &bull; ${esc(l.flag_reason || 'Anomaly')}</div>
             </div>
             <div class="flex items-center gap-1.5 flex-shrink-0">
-              <button onclick="splitLap(${l.id})" title="Split into 2 equal laps" class="bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
+              <button onclick="splitLap(${l.id})" title="Split into 2 equal laps" class="ended-lock disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
                 Split
               </button>
-              <button onclick="acceptLap(${l.id})" title="Accept split as-is" class="bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
+              <button onclick="acceptLap(${l.id})" title="Accept split as-is" class="ended-lock disabled:opacity-40 disabled:cursor-not-allowed bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
                 Accept
               </button>
             </div>
           `;
           container.appendChild(row);
         });
+        lockEndedControls();
       } catch (e) {
         console.error("Flagged laps fetch error:", e);
       }
@@ -859,17 +879,20 @@
 
     async function keepStart(bib) {
       const res = await fetch(`/api/participants/${bib}/keep-start`, { method: "POST" });
-      if (res.ok) fetchFlaggedLaps();
+      if (!res.ok) await alertFailure(res, "Could not keep the start");
+      fetchFlaggedLaps();
     }
 
     async function splitLap(id) {
       const res = await fetch(`/api/laps/${id}/split`, { method: "POST" });
-      if (res.ok) fetchFlaggedLaps();
+      if (!res.ok) await alertFailure(res, "Could not split the lap");
+      fetchFlaggedLaps();
     }
 
     async function acceptLap(id) {
       const res = await fetch(`/api/laps/${id}/accept`, { method: "POST" });
-      if (res.ok) fetchFlaggedLaps();
+      if (!res.ok) await alertFailure(res, "Could not accept the lap");
+      fetchFlaggedLaps();
     }
 
     // WebSocket listener for live tag sniffing and status
@@ -905,6 +928,10 @@
               return;
             }
             knownBootId = msg.boot_id;
+          }
+          if (msg.event) {  // the event may have ended while this tab was disconnected
+            eventState = msg.event;
+            updateTimerDisplay();
           }
         } else if (msg.type === "event_status") {
           eventState = msg.event;

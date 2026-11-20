@@ -309,9 +309,18 @@ async def event_state_error_handler(request: Request, exc: EventStateError):
 async def lap_edit_error_handler(request: Request, exc: LapEditError):
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
-def _require_not_ended():
-    if db.get_event_state()["status"] == "ended":
+def _require_not_ended(event_id: Optional[int] = None):
+    """End freezes the results. Pass a lap's event_id: a stale tab may point at an older event."""
+    event = db.get_event(event_id)
+    if event and event["status"] == "ended":
         raise EventStateError("This event has ended. Reopen it to edit laps.")
+
+def _lap_for_edit(lap_id: int) -> Dict[str, Any]:
+    lap = db.get_lap(lap_id)
+    if not lap:
+        raise HTTPException(status_code=404, detail="Lap not found")
+    _require_not_ended(lap["event_id"])
+    return lap
 
 async def _broadcast_manual_lap(lap: Dict[str, Any]):
     lap_data = {k: lap[k] for k in ("id", "bib_number", "name", "lap_number", "lap_duration_seconds", "crossing_time")}
@@ -753,12 +762,14 @@ async def clear_tag(bib: int):
 
 @app.delete("/api/participants/{bib}")
 async def remove_participant(bib: int):
+    _require_not_ended()
     db.delete_participant(bib)
     await push_leaderboard()
     return {"status": "deleted"}
 
 @app.post("/api/participants/{bib}/start")
 async def manual_start_runner(bib: int):
+    _require_not_ended()
     participant = db.get_participant_by_bib(bib)
     if not participant:
         raise HTTPException(status_code=404, detail="Runner not found")
@@ -774,6 +785,7 @@ async def manual_start_runner(bib: int):
 
 @app.post("/api/participants/{bib}/break/start")
 async def start_runner_break(bib: int):
+    _require_not_ended()
     participant = db.get_participant_by_bib(bib)
     if not participant:
         raise HTTPException(status_code=404, detail="Runner not found")
@@ -788,6 +800,7 @@ async def start_runner_break(bib: int):
 
 @app.post("/api/participants/{bib}/break/end")
 async def end_runner_break(bib: int):
+    _require_not_ended()
     participant = db.get_participant_by_bib(bib)
     if not participant:
         raise HTTPException(status_code=404, detail="Runner not found")
@@ -802,6 +815,7 @@ async def end_runner_break(bib: int):
 
 @app.post("/api/participants/{bib}/reset")
 async def reset_runner_start(bib: int):
+    _require_not_ended()
     participant = db.get_participant_by_bib(bib)
     if not participant:
         raise HTTPException(status_code=404, detail="Runner not found")
@@ -825,6 +839,7 @@ async def get_flagged_laps():
 @app.post("/api/laps/{lap_id}/accept")
 async def accept_flagged_lap(lap_id: int):
     """Accepts a flagged lap, removing the warning."""
+    _lap_for_edit(lap_id)
     db.clear_lap_flag(lap_id)
     await broadcast_ws({"type": "flagged_laps_updated", "flagged": db.get_flagged_laps()})
     return {"status": "accepted"}
@@ -832,6 +847,7 @@ async def accept_flagged_lap(lap_id: int):
 @app.post("/api/laps/{lap_id}/split")
 async def split_flagged_lap(lap_id: int):
     """Splits a double-duration flagged lap into 2 equal laps."""
+    _lap_for_edit(lap_id)
     success = db.split_lap(lap_id)
     if not success:
         raise HTTPException(status_code=404, detail="Lap not found")
@@ -864,6 +880,7 @@ async def start_from_gun(bib_number: int):
 @app.post("/api/participants/{bib_number}/keep-start")
 async def keep_start(bib_number: int):
     """They really did join late: keep their start as recorded."""
+    _require_not_ended()
     db.keep_start(bib_number)
     await _flagged_changed()
     return {"status": "kept"}
@@ -942,6 +959,7 @@ async def add_manual_lap(req: ManualLapRequest):
 @app.delete("/api/laps/{lap_id}")
 async def delete_lap(lap_id: int):
     """Deletes a lap; its time goes to the next lap (or break, or the lap in progress)."""
+    _lap_for_edit(lap_id)
     if not db.delete_lap(lap_id):
         raise HTTPException(status_code=404, detail="Lap not found")
     await push_leaderboard()

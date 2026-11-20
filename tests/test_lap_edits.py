@@ -131,6 +131,21 @@ class SplitLapTest(LapEditTestCase):
         # Previously the old lap 3 kept number 3 next to the split's new 3 (two lap 3s / 4s)
         self.assertEqual(self.laps(), [(1, 60.0), (2, 60.0), (3, 60.0), (4, 60.0), (5, 60.0)])
 
+    def test_split_stays_in_the_laps_own_event(self):  # issue #93
+        for t in (1060.0, 1180.0):                        # lap 2 is a double (120 s)
+            self.cross(t)
+        first = self.db.current_event_id
+        double = self.lap_id(2)
+        self.db.end_event(at=1200.0)
+        second = self.db.create_event("Second")
+        self.db.set_current_event(second)
+        self.db.add_participant(101, "Someone else", "E28011700000020101010009")
+        self.db.split_lap(double)                         # e.g. from a stale admin tab
+        self.assertEqual([(lap["lap_number"], lap["lap_duration_seconds"])
+                          for lap in self.db.get_laps_for_runner(101, event_id=first)],
+                         [(1, 60.0), (2, 60.0), (3, 60.0)])
+        self.assertEqual(self.db.get_laps_for_runner(101, event_id=second), [])
+
 
 class ManualLapApiTest(unittest.TestCase):
     @classmethod
@@ -172,6 +187,77 @@ class ManualLapApiTest(unittest.TestCase):
         self.assertEqual(self.client.delete("/api/laps/987654").status_code, 404)
         self.db.end_event()
         self.assertEqual(self.client.post("/api/laps/manual", json={"bib_number": 101}).status_code, 409)
+
+
+class EndedEventApiTest(unittest.TestCase):
+    """End freezes the results: lap and runner edits wait for Reopen (issue #93)."""
+
+    def setUp(self):
+        try:
+            from fastapi.testclient import TestClient
+        except ImportError as e:
+            raise unittest.SkipTest(str(e))
+        os.environ.setdefault("DB_PATH", os.path.join(tempfile.mkdtemp(), "lap_edits_import.db"))
+        os.environ.setdefault("MOCK_HARDWARE", "true")
+        from web import app as web_app
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.db = db = Database(os.path.join(tmp.name, "ended_api.db"))
+        for p in (mock.patch.object(web_app, "db", db), mock.patch.object(web_app.lap_engine, "db", db)):
+            p.start()
+            self.addCleanup(p.stop)
+        self.client = TestClient(web_app.app)
+        db.add_participant(101, "Alex", EPC)
+        db.add_participant(102, "Sam", "E28011700000020101010002")
+        db.add_participant(103, "Kim", "E28011700000020101010003")
+        db.start_event(at=1000.0)
+        db.set_participant_start(101, 1000.0)
+        db.set_participant_start(103, 1000.0)
+        db.record_lap(101, 1, 1060.0, 60.0)
+        self.double = db.record_lap(101, 2, 1180.0, 120.0, flag_reason="Possible missed lap")
+        db.update_participant_last_crossing(101, 1180.0)
+        with mock.patch("core.clock.now", return_value=1190.0):
+            db.start_manual_break(103)
+        db.end_event(at=1200.0)
+        self.event_id = db.current_event_id
+
+    def snapshot(self):
+        return ([(lap["id"], lap["lap_duration_seconds"], lap["flag_reason"]) for lap in self.db.get_all_laps(self.event_id)],
+                [(p["bib_number"], p["start_time"]) for p in self.db.get_all_participants(self.event_id)],
+                [(b["bib_number"], b["end_time"]) for bib in (101, 102, 103)
+                 for b in self.db.get_breaks_for_runner(bib, event_id=self.event_id)])
+
+    def assert_frozen(self):
+        before = self.snapshot()
+        for method, path in [("DELETE", f"/api/laps/{self.double}"), ("POST", f"/api/laps/{self.double}/split"),
+                             ("POST", f"/api/laps/{self.double}/accept"), ("DELETE", "/api/participants/101"),
+                             ("POST", "/api/participants/102/start"), ("POST", "/api/participants/101/reset"),
+                             ("POST", "/api/participants/101/break/start"), ("POST", "/api/participants/103/break/end"),
+                             ("POST", "/api/participants/101/keep-start")]:
+            with self.subTest(path=path):
+                res = self.client.request(method, path)
+                self.assertEqual(res.status_code, 409, res.text)
+                self.assertIn("ended", res.json()["detail"])
+        self.assertEqual(self.snapshot(), before)
+
+    def test_ended_event_refuses_edits(self):
+        self.assert_frozen()
+        self.assertEqual(self.client.get(f"/api/events/{self.event_id}/results.csv").status_code, 200)
+        self.assertEqual(self.client.delete("/api/laps/987654").status_code, 404)
+
+    def test_checked_against_the_laps_own_event(self):
+        """A stale tab can still point at an ended event's laps after a switch to a new event."""
+        self.db.set_current_event(self.db.create_event("Second"))
+        self.assertEqual(self.client.delete(f"/api/laps/{self.double}").status_code, 409)
+        self.assertEqual(self.client.post(f"/api/laps/{self.double}/split").status_code, 409)
+        self.assertEqual(self.client.post(f"/api/laps/{self.double}/accept").status_code, 409)
+        self.assertEqual(len(self.db.get_all_laps(self.event_id)), 2)
+
+    def test_reopen_allows_edits_again(self):
+        self.client.post("/api/event/reopen")
+        self.assertEqual(self.client.post(f"/api/laps/{self.double}/split").status_code, 200)
+        self.assertEqual([lap["lap_duration_seconds"] for lap in self.db.get_laps_for_runner(101)], [60.0, 60.0, 60.0])
+        self.assertEqual(self.client.delete("/api/participants/102").status_code, 200)
 
 
 if __name__ == "__main__":

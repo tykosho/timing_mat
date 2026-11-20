@@ -190,7 +190,7 @@
               </td>
               {% if is_admin %}
               <td class="py-3 px-6 text-right">
-                <button onclick="deleteLap({{ lap.id }})" title="Delete Lap" class="text-xs text-rose-400 hover:text-rose-300">
+                <button onclick="deleteLap({{ lap.id }})" {% if event.status == 'ended' %}disabled title="Event ended: Reopen it to edit laps"{% else %}title="Delete Lap"{% endif %} class="text-xs text-rose-400 hover:text-rose-300 disabled:opacity-40 disabled:cursor-not-allowed">
                   <i class="fa-solid fa-trash"></i>
                 </button>
               </td>
@@ -209,7 +209,8 @@
       if (confirm("Delete this lap entry?")) {
         const res = await fetch(`/api/laps/${lapId}`, { method: "DELETE" });
         if (!res.ok) {
-          alert(res.status === 401 ? "Log in as admin to delete laps." : "Could not delete the lap.");
+          const data = await res.json().catch(() => ({}));
+          alert(res.status === 401 ? "Log in as admin to delete laps." : (data.detail || "Could not delete the lap."));
           return;
         }
         window.location.reload();
