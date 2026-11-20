@@ -242,10 +242,12 @@ class LapEngine:
         name = participant["name"]
 
         # Only time crossings while the event is running. A crossing that finished just before
-        # End was pressed can still be resolved here (bursts are flushed ~2s after the last read).
+        # End or Pause was pressed can still be resolved here (bursts are flushed ~2s after the
+        # last read; issue #91 for Pause).
         status = event_state.get("status")
         ended_in_time = status == "ended" and event_state.get("end_time") and peak_time <= event_state["end_time"]
-        if status != "running" and not ended_in_time:
+        paused_in_time = status == "paused" and event_state.get("paused_at") and peak_time <= event_state["paused_at"]
+        if status != "running" and not ended_in_time and not paused_in_time:
             logger.info(f"Event {status}: {name} (Bib {bib}) crossed mat; not timed.")
             return None
 

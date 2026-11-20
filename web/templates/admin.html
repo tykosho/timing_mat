@@ -533,6 +533,8 @@
         clockEl.innerText = formatClock(raceNowSec() - eventState.start_time);
       } else if (status === "ended" && eventState.start_time && eventState.end_time) {
         clockEl.innerText = formatClock(eventState.end_time - eventState.start_time);
+      } else if (status === "paused" && eventState.start_time && eventState.paused_at) {
+        clockEl.innerText = formatClock(eventState.paused_at - eventState.start_time);  // held (#91)
       } else if (!eventState.start_time) {
         clockEl.innerText = "00:00:00";
       }

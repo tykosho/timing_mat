@@ -377,5 +377,27 @@ class LiveUpdatesTest(BrowserTestCase):
         public_ctx.close()
 
 
+
+class PausedClockTest(BrowserTestCase):
+    def test_paused_race_clock_holds_its_time(self):
+        """#91: a page opened during a hold showed 00:00:00 instead of the held race time."""
+        ctx = self.admin_context()
+        while _get_json("/api/event")["elapsed_seconds"] < 3:
+            time.sleep(0.2)
+        ctx.request.post(BASE + "/api/event/pause")
+        try:
+            ev = _get_json("/api/event")
+            held = int(ev["paused_at"] - ev["start_time"])
+            for path, timer in (("/leaderboard", "#raceTimer"), ("/crossings", "#raceTimer"),
+                                ("/admin", "#adminRaceClock")):
+                with self.subTest(path=path):
+                    page, errors = self.open(ctx, path)
+                    page.wait_for_timeout(1200)
+                    self.assertAlmostEqual(_clock_seconds(page.inner_text(timer)), held, delta=1)
+                    self.assertEqual(errors, [])
+        finally:
+            ctx.request.post(BASE + "/api/event/start")
+            ctx.close()
+
 if __name__ == "__main__":
     unittest.main()
