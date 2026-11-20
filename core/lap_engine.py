@@ -52,6 +52,7 @@ class LapEngine:
         self.lingering: Dict[str, float] = {}
         # Bursts whose resolution raised, retried first on the next tick: (epc, reads, quiet)
         self.failed_bursts: List[Tuple[str, List[Tuple[float, float]], bool]] = []
+        self.failed_event_id: Optional[int] = None
 
         # Raw read log. The reader thread appends (deque.append is thread-safe) and flush_loop
         # writes batches to the DB. Only reads while an event is running/paused are kept.
@@ -73,7 +74,11 @@ class LapEngine:
         if log_event_id is None or log_event_id != self.log_event_id:
             # Reset, or another event: a tag parked by the mat starts afresh in it
             self.lingering.clear()
+        event_id = event["id"] if event else None
+        if event_id != self.failed_event_id or (event and event["status"] == "setup"):
+            # Reset, or another event. (Not End: a crossing from before End still counts.)
             self.failed_bursts.clear()
+        self.failed_event_id = event_id
         self.log_event_id = log_event_id
 
     def maintain_clock(self):
@@ -196,6 +201,10 @@ class LapEngine:
                 # An earlier crossing of this tag is still failing: keep this one behind it
                 self.failed_bursts.append((epc, reads, quiet))
                 continue
+            if epc in self.lingering and (reads[0][0] - self.lingering[epc]) >= effective_window:
+                # A later visit queued behind a retried burst of the same tag (the tag left
+                # in between): a crossing of its own
+                del self.lingering[epc]
             if epc in self.lingering:
                 # Same visit to the mat as a crossing already resolved: no lap, no too-soon prompt
                 if quiet:
@@ -317,9 +326,13 @@ class LapEngine:
         # -------------------------------------------------------------
         last_crossing = participant.get("last_crossing_time") or runner_start
         time_since_last = peak_time - last_crossing
-        if time_since_last == 0:
+        if not force and time_since_last <= 0:
             # This very crossing was already written (a retry after a failure that came later,
-            # e.g. in a broadcast): it isn't a second crossing too soon after itself
+            # e.g. in a broadcast), or a retried one was overtaken by a later crossing or edit:
+            # it isn't a crossing too soon after itself
+            if time_since_last < 0:
+                logger.warning(f"Retried crossing of Bib {bib} ({name}) at {peak_time:.1f} is older than "
+                               f"their last crossing at {last_crossing:.1f}; not counted.")
             return "duplicate"
 
         # Debounce check (runner lingering near antenna). This applies to forced crossings too:

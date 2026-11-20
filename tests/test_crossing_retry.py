@@ -38,6 +38,7 @@ class CrossingRetryTest(unittest.TestCase):
         self.too_soon = []
         self.engine.on_crossing_too_soon = self.too_soon.append
         self.db.start_event(at=1000.0)
+        self.engine.refresh_event()                  # as flush_loop does every tick
         asyncio.run(self.engine._resolve_crossing(EPC, [(1000.0, -50.0)]))
         asyncio.run(self.engine._resolve_crossing(EPC_B, [(1000.0, -50.0)]))
 
@@ -98,6 +99,36 @@ class CrossingRetryTest(unittest.TestCase):
         self.flush(1123.0)
         self.assertEqual(self.laps(), [60.0, 60.0], "both laps, in order, neither merged")
 
+
+    def test_next_visit_queued_behind_a_retried_parked_burst_still_counts(self):
+        for i in range(17):                          # parked 1050-1058: force-resolved burst
+            self.read(1050.0 + i * 0.5)
+        with mock.patch.object(self.db, "record_lap", side_effect=sqlite3.OperationalError("disk I/O error")):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.flush(1058.0)
+        self.read(1118.0)                            # left, ran a lap, back while it retries
+        self.flush(1120.0)
+        self.assertEqual(self.laps(), [50.0, 68.0])
+
+    def test_failed_crossing_from_before_end_survives_end(self):
+        self.read(1060.0)
+        with mock.patch.object(self.db, "record_lap", side_effect=failing_once(self.db.record_lap)):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.flush(1062.0)
+            self.db.end_event(at=1062.5)
+            self.engine.refresh_event()
+            self.flush(1063.0)
+        self.assertEqual(self.laps(), [60.0])
+
+    def test_retry_overtaken_by_a_manual_lap_is_dropped_quietly(self):
+        self.read(1060.0)
+        with mock.patch.object(self.db, "record_lap", side_effect=failing_once(self.db.record_lap)):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.flush(1062.0)
+            self.db.update_participant_last_crossing(101, 1065.0)   # e.g. an operator's +1 lap
+            self.flush(1066.0)
+        self.assertEqual(self.too_soon, [])
+        self.assertEqual(self.engine.failed_bursts, [])
 
 if __name__ == "__main__":
     unittest.main()
