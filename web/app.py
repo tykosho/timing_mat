@@ -880,6 +880,7 @@ async def start_from_gun(bib_number: int):
 @app.post("/api/participants/{bib_number}/keep-start")
 async def keep_start(bib_number: int):
     """They really did join late: keep their start as recorded."""
+    _require_not_ended()
     db.keep_start(bib_number)
     await _flagged_changed()
     return {"status": "kept"}

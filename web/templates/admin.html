@@ -650,10 +650,17 @@
       }
     }
 
+    async function alertFailure(res, fallback) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.detail || fallback);
+    }
+
     async function startRunner(bib) {
       const res = await fetch(`/api/participants/${bib}/start`, { method: "POST" });
       if (res.ok) {
         window.location.reload();
+      } else {
+        await alertFailure(res, "Could not start the runner");
       }
     }
 
@@ -662,6 +669,8 @@
         const res = await fetch(`/api/participants/${bib}/reset`, { method: "POST" });
         if (res.ok) {
           window.location.reload();
+        } else {
+          await alertFailure(res, "Could not reset the runner");
         }
       }
     }
@@ -671,7 +680,7 @@
       if (res.ok) {
         window.location.reload();
       } else {
-        alert("Failed to put runner on break");
+        await alertFailure(res, "Failed to put runner on break");
       }
     }
 
@@ -680,7 +689,7 @@
       if (res.ok) {
         window.location.reload();
       } else {
-        alert("Failed to resume runner from break");
+        await alertFailure(res, "Failed to resume runner from break");
       }
     }
 
@@ -708,7 +717,8 @@
 
     async function deleteParticipant(bib) {
       if (confirm(`Remove Runner #${bib} and their laps?`)) {
-        await fetch(`/api/participants/${bib}`, { method: "DELETE" });
+        const res = await fetch(`/api/participants/${bib}`, { method: "DELETE" });
+        if (!res.ok) return alertFailure(res, "Could not remove the runner");
         window.location.reload();
       }
     }
@@ -824,7 +834,7 @@
               <button onclick="startFromGun(${p.bib_number})" title="Their tag was missed at the start: start them at the gun and add the missing first lap" class="start-from-gun ended-lock disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
                 Started at gun
               </button>
-              <button onclick="keepStart(${p.bib_number})" title="They joined late: keep their start" class="keep-start bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
+              <button onclick="keepStart(${p.bib_number})" title="They joined late: keep their start" class="keep-start ended-lock disabled:opacity-40 disabled:cursor-not-allowed bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/40 px-2 py-1 rounded text-[11px] font-bold transition">
                 Joined late
               </button>
             </div>
@@ -869,17 +879,20 @@
 
     async function keepStart(bib) {
       const res = await fetch(`/api/participants/${bib}/keep-start`, { method: "POST" });
-      if (res.ok) fetchFlaggedLaps();
+      if (!res.ok) await alertFailure(res, "Could not keep the start");
+      fetchFlaggedLaps();
     }
 
     async function splitLap(id) {
       const res = await fetch(`/api/laps/${id}/split`, { method: "POST" });
-      if (res.ok) fetchFlaggedLaps();
+      if (!res.ok) await alertFailure(res, "Could not split the lap");
+      fetchFlaggedLaps();
     }
 
     async function acceptLap(id) {
       const res = await fetch(`/api/laps/${id}/accept`, { method: "POST" });
-      if (res.ok) fetchFlaggedLaps();
+      if (!res.ok) await alertFailure(res, "Could not accept the lap");
+      fetchFlaggedLaps();
     }
 
     // WebSocket listener for live tag sniffing and status
@@ -915,6 +928,10 @@
               return;
             }
             knownBootId = msg.boot_id;
+          }
+          if (msg.event) {  // the event may have ended while this tab was disconnected
+            eventState = msg.event;
+            updateTimerDisplay();
           }
         } else if (msg.type === "event_status") {
           eventState = msg.event;

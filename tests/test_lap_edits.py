@@ -232,7 +232,8 @@ class EndedEventApiTest(unittest.TestCase):
         for method, path in [("DELETE", f"/api/laps/{self.double}"), ("POST", f"/api/laps/{self.double}/split"),
                              ("POST", f"/api/laps/{self.double}/accept"), ("DELETE", "/api/participants/101"),
                              ("POST", "/api/participants/102/start"), ("POST", "/api/participants/101/reset"),
-                             ("POST", "/api/participants/101/break/start"), ("POST", "/api/participants/103/break/end")]:
+                             ("POST", "/api/participants/101/break/start"), ("POST", "/api/participants/103/break/end"),
+                             ("POST", "/api/participants/101/keep-start")]:
             with self.subTest(path=path):
                 res = self.client.request(method, path)
                 self.assertEqual(res.status_code, 409, res.text)
