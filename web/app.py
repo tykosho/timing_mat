@@ -557,6 +557,8 @@ def _elapsed(state: Dict[str, Any]) -> float:
         return 0.0
     if state["status"] == "ended" and state["end_time"]:
         return state["end_time"] - state["start_time"]
+    if state["status"] == "paused" and state.get("paused_at"):
+        return state["paused_at"] - state["start_time"]   # held, like the pages show it (#91)
     return clock.now() - state["start_time"]
 
 @app.get("/api/event")
