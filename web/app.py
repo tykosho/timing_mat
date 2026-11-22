@@ -202,8 +202,9 @@ lap_engine = LapEngine(
     on_crossing_too_soon=on_crossing_too_soon,
     auto_register_unassigned=True,
 )
-# A Pi without an RTC can boot with an older time than what's already stored (issue #2)
-clock.clock.ensure_not_before(db.latest_timestamp())
+# A Pi without an RTC boots with the wrong time. Mid-race, carry on the race's own timeline
+# (issue #128); otherwise just never start before what's stored (issue #2).
+lap_engine.resume_clock()
 
 lap_engine.refresh_event()
 
@@ -278,6 +279,7 @@ async def lifespan(app: FastAPI):
     if sim_task:
         sim_task.cancel()
     lap_engine.flush_raw_reads()
+    lap_engine.save_clock(force=True)
 
 app = FastAPI(title="Race Timing System", lifespan=lifespan)
 # Looked up per request so tests can swap admin_auth.
@@ -574,7 +576,9 @@ async def get_event():
 
 @app.post("/api/event/start")
 async def start_event():
+    lap_engine.prepare_start()
     state = db.start_event()
+    lap_engine.save_clock(force=True)
     await push_event_status()
     return {"status": "started", "start_time": state["start_time"], "event": state}
 
@@ -596,6 +600,7 @@ async def end_event():
 @app.post("/api/event/reopen")
 async def reopen_event():
     state = db.reopen_event()
+    lap_engine.save_clock(force=True)
     await push_event_status()
     return {"status": "paused", "event": state}
 
