@@ -53,6 +53,7 @@ class ConfigPayload(BaseModel):
     debug_overlay: Optional[bool] = None
     mirror: Optional[bool] = None
     simulated_mode: Optional[bool] = None
+    camera_index: Optional[int] = Field(default=None, ge=0, le=16)
 
 
 class SimulateScanPayload(BaseModel):
@@ -97,21 +98,25 @@ def create_app(
     data_dir: Optional[Path] = None,
     force_simulated_camera: Optional[bool] = None,
     start_vision: bool = True,
+    camera_lister: Optional[Any] = None,
 ) -> FastAPI:
     sim_env = os.environ.get("SIMULATED_CAMERA", "").strip().lower() in ("1", "true", "yes")
     use_sim_cam = sim_env if force_simulated_camera is None else force_simulated_camera
-    cam_idx = int(os.environ.get("CAMERA_INDEX", "0"))
+    cam_env = os.environ.get("CAMERA_INDEX")
 
     tracker = SessionTracker(data_dir=data_dir)
     if use_sim_cam:
         tracker.simulated_mode = True
+    if cam_env is not None and cam_env.strip() != "":
+        tracker.camera_index = max(0, min(16, int(cam_env)))
 
     hub = WebSocketHub()
     vision = VisionEngine(
         tracker=tracker,
         on_event=hub.emit_from_thread,
-        camera_index=cam_idx,
+        camera_index=tracker.camera_index,
         force_simulated_camera=use_sim_cam,
+        camera_lister=camera_lister,
     )
 
     @asynccontextmanager
@@ -183,11 +188,22 @@ def create_app(
     async def printable_tags(per_page: int = Query(default=6)) -> HTMLResponse:
         return HTMLResponse(render_printable_bibs_html(per_page=per_page))
 
+    @app.get("/api/cameras")
+    async def list_cameras() -> Dict[str, Any]:
+        cameras = await asyncio.to_thread(vision.list_cameras)
+        return {
+            "cameras": cameras,
+            "active_index": tracker.camera_index,
+            "source": vision.camera_source,
+            "simulated_mode": tracker.simulated_mode,
+        }
+
     @app.get("/api/state")
     async def get_state() -> Dict[str, Any]:
         return {
             **tracker.get_state(),
             "camera": {
+                "index": tracker.camera_index,
                 "source": vision.camera_source,
                 "fps": vision.fps,
             },

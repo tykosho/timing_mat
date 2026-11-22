@@ -250,6 +250,7 @@ class SessionTracker:
         self.debug_overlay: bool = True
         self.mirror: bool = False
         self.simulated_mode: bool = False
+        self.camera_index: int = 0
 
         self.runners: Dict[int, RunnerRecord] = {}
         self.ignored_tags: set[int] = set()
@@ -281,6 +282,7 @@ class SessionTracker:
             self.debug_overlay = bool(cfg.get("debug_overlay", True))
             self.mirror = bool(cfg.get("mirror", False))
             self.simulated_mode = bool(cfg.get("simulated_mode", False))
+            self.camera_index = max(0, min(16, int(cfg.get("camera_index", 0))))
 
             self.ignored_tags = {int(t) for t in payload.get("ignored_tags", [])}
             self.runners = {}
@@ -302,6 +304,7 @@ class SessionTracker:
                     "debug_overlay": self.debug_overlay,
                     "mirror": self.mirror,
                     "simulated_mode": self.simulated_mode,
+                    "camera_index": self.camera_index,
                 },
                 "ignored_tags": sorted(self.ignored_tags),
                 "runners": [
@@ -405,6 +408,8 @@ class SessionTracker:
                 self.mirror = bool(kwargs["mirror"])
             if "simulated_mode" in kwargs and kwargs["simulated_mode"] is not None:
                 self.simulated_mode = bool(kwargs["simulated_mode"])
+            if "camera_index" in kwargs and kwargs["camera_index"] is not None:
+                self.camera_index = max(0, min(16, int(kwargs["camera_index"])))
             self.save()
             return self.get_state()
 
@@ -797,6 +802,7 @@ class SessionTracker:
                     "debug_overlay": self.debug_overlay,
                     "mirror": self.mirror,
                     "simulated_mode": self.simulated_mode,
+                    "camera_index": self.camera_index,
                 },
                 "leaderboard": self.leaderboard(ts),
                 "ignored_tags": sorted(self.ignored_tags),

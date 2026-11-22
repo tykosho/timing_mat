@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import base64
+import ctypes
+import ctypes.util
 import os
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -462,6 +465,89 @@ def draw_debug_overlays(
     return out
 
 
+def _list_macos_avfoundation_cameras() -> Optional[List[Dict[str, Any]]]:
+    """Enumerate macOS video capture devices in OpenCV AVFoundation index order (sorted by uniqueID)."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        objc_path = ctypes.util.find_library("objc")
+        if not objc_path:
+            return None
+        objc = ctypes.cdll.LoadLibrary(objc_path)
+        ctypes.cdll.LoadLibrary("/System/Library/Frameworks/AVFoundation.framework/AVFoundation")
+        ctypes.cdll.LoadLibrary("/System/Library/Frameworks/Foundation.framework/Foundation")
+
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.objc_getClass.argtypes = [ctypes.c_char_p]
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+
+        def msg(
+            obj: Any,
+            sel_name: bytes,
+            *args: Any,
+            restype: Any = ctypes.c_void_p,
+            argtypes: Tuple[Any, ...] = (),
+        ) -> Any:
+            fn = ctypes.CFUNCTYPE(restype, ctypes.c_void_p, ctypes.c_void_p, *argtypes)(
+                ("objc_msgSend", objc)
+            )
+            return fn(obj, objc.sel_registerName(sel_name), *args)
+
+        ns_string = objc.objc_getClass(b"NSString")
+        media_video = msg(ns_string, b"stringWithUTF8String:", b"vide", argtypes=(ctypes.c_char_p,))
+        av_capture_device = objc.objc_getClass(b"AVCaptureDevice")
+        devices = msg(
+            av_capture_device, b"devicesWithMediaType:", media_video, argtypes=(ctypes.c_void_p,)
+        )
+        if not devices:
+            return []
+        count = int(msg(devices, b"count", restype=ctypes.c_ulong))
+        raw_devices: List[Dict[str, str]] = []
+        for i in range(count):
+            dev = msg(devices, b"objectAtIndex:", i, argtypes=(ctypes.c_ulong,))
+            name_ns = msg(dev, b"localizedName")
+            uid_ns = msg(dev, b"uniqueID")
+            name_bytes = msg(name_ns, b"UTF8String", restype=ctypes.c_char_p) if name_ns else None
+            uid_bytes = msg(uid_ns, b"UTF8String", restype=ctypes.c_char_p) if uid_ns else None
+            name = name_bytes.decode("utf-8", errors="replace") if name_bytes else f"Camera #{i}"
+            uid = uid_bytes.decode("utf-8", errors="replace") if uid_bytes else ""
+            raw_devices.append({"name": name, "unique_id": uid})
+
+        # OpenCV's cap_avfoundation_mac.mm sorts capture devices ascending by uniqueID
+        raw_devices.sort(key=lambda item: item["unique_id"])
+        return [
+            {"index": idx, "name": item["name"], "unique_id": item["unique_id"]}
+            for idx, item in enumerate(raw_devices)
+        ]
+    except Exception:
+        return None
+
+
+def list_available_cameras(max_probe: int = 6) -> List[Dict[str, Any]]:
+    """Return available camera devices with OpenCV-aligned indices and human-readable names."""
+    mac_cams = _list_macos_avfoundation_cameras()
+    if mac_cams is not None:
+        return mac_cams
+
+    found: List[Dict[str, Any]] = []
+    backend = cv2.CAP_AVFOUNDATION if hasattr(cv2, "CAP_AVFOUNDATION") else cv2.CAP_ANY
+    consecutive_misses = 0
+    for idx in range(max(1, max_probe)):
+        cap = cv2.VideoCapture(idx, backend)
+        if cap and cap.isOpened():
+            found.append({"index": idx, "name": f"Camera #{idx}"})
+            cap.release()
+            consecutive_misses = 0
+        else:
+            if cap:
+                cap.release()
+            consecutive_misses += 1
+            if found and consecutive_misses >= 2:
+                break
+    return found
+
+
 class VisionEngine:
     """Background webcam + AprilTag CV engine streaming MJPEG frames and emitting events."""
 
@@ -471,11 +557,16 @@ class VisionEngine:
         on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
         camera_index: int = 0,
         force_simulated_camera: bool = False,
+        camera_lister: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     ) -> None:
         self.tracker = tracker
         self.on_event = on_event
-        self.camera_index = camera_index
+        self.camera_index = int(camera_index)
         self.force_simulated_camera = force_simulated_camera
+        self._camera_lister = camera_lister
+        self._camera_names: Dict[int, str] = {}
+        self._active_camera_index: Optional[int] = None
+        self._last_attempted_camera_index: Optional[int] = None
 
         self.face_cropper = FaceCropper()
         self.synth_scene = SyntheticTrackScene(1280, 720)
@@ -497,6 +588,23 @@ class VisionEngine:
         self.fps: float = 0.0
         self.exposure: float = 0.0
         self.camera_source: str = "INIT"
+
+    def list_cameras(self) -> List[Dict[str, Any]]:
+        """Discover available cameras and cache their human-readable names."""
+        if self._camera_lister is not None:
+            cams = list(self._camera_lister())
+        elif self.force_simulated_camera:
+            cams = []
+        else:
+            cams = list_available_cameras()
+        self._camera_names = {int(c["index"]): str(c["name"]) for c in cams if "index" in c}
+        return cams
+
+    def _format_camera_source(self, index: int) -> str:
+        name = self._camera_names.get(index)
+        if name:
+            return f"CAM #{index}: {name}"
+        return f"WEBCAM #{index}"
 
     @staticmethod
     def _encode_jpeg(bgr: np.ndarray, quality: int = 88) -> bytes:
@@ -531,11 +639,13 @@ class VisionEngine:
                 pass
             self._cap = None
 
-    def _open_webcam(self) -> Optional[cv2.VideoCapture]:
+    def _open_webcam(self, index: Optional[int] = None) -> Optional[cv2.VideoCapture]:
         if self.force_simulated_camera or self.tracker.simulated_mode:
             return None
+        cam_idx = self.camera_index if index is None else int(index)
+        self._last_attempted_camera_index = cam_idx
         backend = cv2.CAP_AVFOUNDATION if hasattr(cv2, "CAP_AVFOUNDATION") else cv2.CAP_ANY
-        cap = cv2.VideoCapture(self.camera_index, backend)
+        cap = cv2.VideoCapture(cam_idx, backend)
         if not cap or not cap.isOpened():
             if cap:
                 cap.release()
@@ -548,6 +658,10 @@ class VisionEngine:
         for _ in range(3):
             cap.read()
         self.exposure = float(cap.get(cv2.CAP_PROP_EXPOSURE) or 0.0)
+        self.camera_index = cam_idx
+        self._active_camera_index = cam_idx
+        if cam_idx not in self._camera_names:
+            self.list_cameras()
         return cap
 
     def snap_face_base64(self, tag_id: Optional[int] = None) -> str:
@@ -603,14 +717,26 @@ class VisionEngine:
             now_wall = time.time()
             frame_counter += 1
             want_sim = self.force_simulated_camera or self.tracker.simulated_mode
+            target_idx = int(self.tracker.camera_index)
+            self.camera_index = target_idx
 
             if want_sim and self._cap is not None:
                 self._cap.release()
                 self._cap = None
-            elif not want_sim and self._cap is None and now_wall >= webcam_retry_after:
-                self._cap = self._open_webcam()
-                if self._cap is None:
-                    webcam_retry_after = now_wall + 4.0
+                self._active_camera_index = None
+            elif not want_sim:
+                if self._cap is not None and self._active_camera_index != target_idx:
+                    self._cap.release()
+                    self._cap = None
+                    self._active_camera_index = None
+                    webcam_retry_after = 0.0
+                if self._cap is None and (
+                    now_wall >= webcam_retry_after
+                    or self._last_attempted_camera_index != target_idx
+                ):
+                    self._cap = self._open_webcam(target_idx)
+                    if self._cap is None:
+                        webcam_retry_after = now_wall + 4.0
 
             raw_bgr: Optional[np.ndarray] = None
             if self._cap is not None:
@@ -619,12 +745,13 @@ class VisionEngine:
                     if grabbed.shape[2] == 4:
                         grabbed = cv2.cvtColor(grabbed, cv2.COLOR_BGRA2BGR)
                     raw_bgr = np.ascontiguousarray(grabbed, dtype=np.uint8)
-                    self.camera_source = f"WEBCAM #{self.camera_index}"
+                    self.camera_source = self._format_camera_source(self.camera_index)
                     if frame_counter % 60 == 0:
                         self.exposure = float(self._cap.get(cv2.CAP_PROP_EXPOSURE) or 0.0)
                 else:
                     self._cap.release()
                     self._cap = None
+                    self._active_camera_index = None
                     webcam_retry_after = now_wall + 3.0
 
             if raw_bgr is None:

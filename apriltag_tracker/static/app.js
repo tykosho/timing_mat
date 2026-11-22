@@ -357,6 +357,8 @@ const rateVal = document.getElementById("rate-val");
 const voiceSelect = document.getElementById("voice-select");
 const btnMute = document.getElementById("btn-mute");
 const debugToggle = document.getElementById("debug-toggle");
+const cameraSelect = document.getElementById("camera-select");
+const btnRefreshCameras = document.getElementById("btn-refresh-cameras");
 const mirrorToggle = document.getElementById("mirror-toggle");
 const simCamToggle = document.getElementById("sim-cam-toggle");
 const finishLineSlider = document.getElementById("finish-line-slider");
@@ -745,6 +747,16 @@ function applyServerState(state) {
     debugToggle.checked = Boolean(cfg.debug_overlay);
     mirrorToggle.checked = Boolean(cfg.mirror);
     simCamToggle.checked = Boolean(cfg.simulated_mode);
+    if (cfg.camera_index !== undefined && document.activeElement !== cameraSelect) {
+      const idxStr = String(cfg.camera_index);
+      if (![...cameraSelect.options].some((o) => o.value === idxStr)) {
+        const opt = document.createElement("option");
+        opt.value = idxStr;
+        opt.textContent = `Camera #${idxStr}`;
+        cameraSelect.appendChild(opt);
+      }
+      cameraSelect.value = idxStr;
+    }
   }
 
   if (Array.isArray(state.leaderboard)) {
@@ -892,6 +904,54 @@ mirrorToggle.addEventListener("change", () => {
 });
 simCamToggle.addEventListener("change", () => {
   apiPost("/api/config", { simulated_mode: simCamToggle.checked });
+});
+
+async function loadCameras() {
+  btnRefreshCameras.disabled = true;
+  try {
+    const res = await fetch("/api/cameras");
+    if (!res.ok) return;
+    const data = await res.json();
+    const cams = Array.isArray(data.cameras) ? data.cameras : [];
+    const activeIdx = Number(data.active_index ?? 0);
+
+    cameraSelect.innerHTML = "";
+    if (cams.length === 0) {
+      const opt = document.createElement("option");
+      opt.value = String(activeIdx);
+      opt.textContent = `Camera #${activeIdx} (None detected)`;
+      cameraSelect.appendChild(opt);
+    } else {
+      for (const cam of cams) {
+        const opt = document.createElement("option");
+        opt.value = String(cam.index);
+        opt.textContent = `#${cam.index} — ${cam.name}`;
+        cameraSelect.appendChild(opt);
+      }
+      if (!cams.some((c) => Number(c.index) === activeIdx)) {
+        const opt = document.createElement("option");
+        opt.value = String(activeIdx);
+        opt.textContent = `Camera #${activeIdx}`;
+        cameraSelect.appendChild(opt);
+      }
+    }
+    cameraSelect.value = String(activeIdx);
+  } catch {
+    // ignore transient network errors
+  } finally {
+    btnRefreshCameras.disabled = false;
+  }
+}
+
+cameraSelect.addEventListener("change", () => {
+  const idx = Number(cameraSelect.value);
+  if (Number.isNaN(idx)) return;
+  simCamToggle.checked = false;
+  apiPost("/api/config", { camera_index: idx, simulated_mode: false });
+});
+
+btnRefreshCameras.addEventListener("click", () => {
+  loadCameras();
 });
 
 btnStart.addEventListener("click", () => apiPost("/api/session/start"));
@@ -1138,4 +1198,5 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+loadCameras();
 connectWebSocket();
