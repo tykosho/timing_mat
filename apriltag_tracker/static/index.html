@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
+  <title>Trackside AprilTag Lap Counter &amp; Live Tracker</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-brand">
+      <div class="brand-row">
+        <h1>Trackside AprilTag Tracker</h1>
+        <span id="ws-status" class="status-pill status-connecting" role="status" aria-live="polite">Connecting&hellip;</span>
+      </div>
+      <p class="brand-subtitle">tag16h5 Vision Engine &bull; Local Face-Crop Leaderboard &bull; Live Track Announcer</p>
+    </div>
+
+    <div class="session-cluster" aria-label="Session Clock and Controls">
+      <div class="clock-readout">
+        <span class="clock-label" id="session-state-badge">IDLE</span>
+        <span class="clock-digits" id="session-timer">00:00.0</span>
+      </div>
+      <div class="session-buttons">
+        <button type="button" id="btn-start" class="btn btn-emerald">Start</button>
+        <button type="button" id="btn-pause" class="btn btn-amber" hidden>Pause</button>
+        <button type="button" id="btn-reset" class="btn btn-ghost">Reset</button>
+        <a href="/api/tags/printable?per_page=6" target="_blank" rel="noopener" class="btn btn-outline">Print Bibs (0–29)</a>
+      </div>
+    </div>
+
+    <form id="controls-bar-form" class="controls-cluster" aria-label="Tracker and Audio Settings">
+      <div class="slider-field">
+        <label for="cooldown-slider">Cooldown: <strong id="cooldown-val">25s</strong></label>
+        <input type="range" id="cooldown-slider" name="cooldown_seconds" min="5" max="120" step="1" value="25">
+      </div>
+
+      <div class="slider-field">
+        <label for="burn-slider">Burn Freq: <strong id="burn-val">25%</strong></label>
+        <input type="range" id="burn-slider" name="burn_frequency" min="0" max="100" step="5" value="25">
+      </div>
+
+      <div class="slider-field">
+        <label for="rate-slider">Speech Rate: <strong id="rate-val">1.05&times;</strong></label>
+        <input type="range" id="rate-slider" name="speech_rate" min="0.7" max="1.5" step="0.05" value="1.05">
+      </div>
+
+      <div class="select-field">
+        <label for="voice-select">Announcer Voice</label>
+        <select id="voice-select" name="voice">
+          <option value="">System Default</option>
+        </select>
+      </div>
+
+      <div class="toggle-group">
+        <button type="button" id="btn-mute" class="btn btn-toggle" aria-pressed="false">Audio: ON</button>
+        <label class="checkbox-pill" for="debug-toggle">
+          <input type="checkbox" id="debug-toggle" name="debug_overlay" class="visually-hidden-fallback" checked>
+          <span>Debug Overlay</span>
+        </label>
+      </div>
+    </form>
+  </header>
+
+  <main class="dashboard-grid">
+    <!-- Left Panel (~45% width): Live Camera Viewport -->
+    <section class="panel camera-panel" aria-labelledby="camera-heading">
+      <div class="panel-header">
+        <h2 id="camera-heading">Live Camera Viewport</h2>
+        <div class="camera-toggles">
+          <label class="checkbox-inline" for="mirror-toggle">
+            <input type="checkbox" id="mirror-toggle" name="mirror" class="visually-hidden-fallback">
+            <span>Mirror View</span>
+          </label>
+          <label class="checkbox-inline" for="sim-cam-toggle">
+            <input type="checkbox" id="sim-cam-toggle" name="simulated_mode" class="visually-hidden-fallback">
+            <span>Sim Camera</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="video-stage">
+        <img
+          id="video-stream"
+          src="/video_feed"
+          alt="Live trackside camera stream with AprilTag detection overlays"
+          width="1280"
+          height="720"
+          fetchpriority="high"
+        >
+      </div>
+
+      <div class="camera-controls-bar">
+        <div class="line-slider-wrap">
+          <label for="finish-line-slider">Virtual Finish Line X: <strong id="finish-line-val">50%</strong></label>
+          <input type="range" id="finish-line-slider" name="finish_line_x" min="10" max="90" step="2" value="50">
+        </div>
+
+        <div class="sim-toolbar" role="group" aria-label="Test and Simulation Controls">
+          <button type="button" id="btn-sim-unknown" class="btn btn-cyan">Simulate Unknown Tag <kbd>U</kbd></button>
+          <button type="button" id="btn-sim-lap" class="btn btn-emerald-subtle">Simulate Lap <kbd>L</kbd></button>
+          <button type="button" id="btn-sim-pack" class="btn btn-emerald-subtle">Simulate Pack (2+) <kbd>P</kbd></button>
+          <button type="button" id="btn-test-tts" class="btn btn-ghost">Test Roast <kbd>T</kbd></button>
+        </div>
+      </div>
+
+      <div class="announcer-ticker" role="status" aria-live="polite">
+        <span id="announcer-badge" class="speech-badge badge-neutral">ANNOUNCER</span>
+        <p id="announcer-text">Ready at the line. Wave a tag16h5 bib or press [U] to test runner registration.</p>
+      </div>
+    </section>
+
+    <!-- Right Panel (~55% width): Live Runner Leaderboard -->
+    <section class="panel leaderboard-panel" aria-labelledby="leaderboard-heading">
+      <div class="panel-header">
+        <div>
+          <h2 id="leaderboard-heading">Live Runner Leaderboard</h2>
+          <p class="panel-subtext" id="runner-summary">0 registered runners &bull; 0 total laps</p>
+        </div>
+        <div id="ignored-tags-bar" class="ignored-bar" hidden>
+          <span id="ignored-tags-label">Ignored tags:</span>
+          <div id="ignored-tags-list" class="ignored-chips"></div>
+        </div>
+      </div>
+
+      <div tabindex="0" role="region" aria-labelledby="leaderboard-heading" class="table-wrapper">
+        <table id="leaderboard-table">
+          <caption class="sr-only">Live runner standings sorted by total laps descending and total time ascending</caption>
+          <thead>
+            <tr>
+              <th scope="col">Rank</th>
+              <th scope="col">Runner</th>
+              <th scope="col">Laps</th>
+              <th scope="col">Last Lap</th>
+              <th scope="col">Best Lap</th>
+              <th scope="col">Avg / Total</th>
+              <th scope="col">Controls</th>
+            </tr>
+          </thead>
+          <tbody id="leaderboard-body">
+            <tr class="empty-row">
+              <td colspan="7">
+                No runners registered yet. Hold a <code>tag16h5</code> bib in front of the camera or click
+                <strong>Simulate Unknown Tag [U]</strong> to register your first runner.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- Non-blocking Unknown Tag Registration Overlay (<dialog popover="manual"> keeps background page interactive) -->
+  <dialog id="register-dialog" popover="manual" class="reg-popover-dialog" aria-labelledby="register-dialog-title">
+    <div class="dialog-card">
+      <div class="dialog-header">
+        <div>
+          <span class="tag-pill" id="reg-tag-badge">TAG #00</span>
+          <span class="queue-pill" id="reg-queue-badge" hidden>1 of 2</span>
+          <h2 id="register-dialog-title">New AprilTag Detected!</h2>
+        </div>
+        <button type="button" id="btn-reg-dismiss" class="icon-close-btn" aria-label="Dismiss registration prompt">&times;</button>
+      </div>
+
+      <p class="dialog-note">Background lap counting remains active while you register this runner.</p>
+
+      <div class="portrait-row">
+        <img
+          id="reg-portrait-preview"
+          src="data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA="
+          alt="Captured runner face portrait preview"
+          width="128"
+          height="128"
+          class="portrait-preview"
+        >
+        <div class="portrait-actions">
+          <div class="portrait-btn-row">
+            <button type="button" id="btn-snap-photo" class="btn btn-outline">Snap New Photo</button>
+            <button type="button" id="btn-rescan-tag" class="btn btn-outline">Re-scan Tag</button>
+          </div>
+          <span class="hint-text">Verify bib number below or click Re-scan if tag was angled.</span>
+        </div>
+      </div>
+
+      <form id="register-form" action="/api/register" method="POST">
+        <input type="hidden" id="reg-source-tag-id" name="source_tag_id" value="0">
+        <div class="field-group">
+          <label for="reg-tag-select">Bib / AprilTag ID (0–29)</label>
+          <select id="reg-tag-select" name="tag_id" class="dialog-select"></select>
+        </div>
+
+        <div class="field-group">
+          <label for="reg-runner-name">Runner Name <span aria-hidden="true">*</span></label>
+          <input
+            type="text"
+            id="reg-runner-name"
+            name="name"
+            required
+            maxlength="80"
+            autocomplete="name"
+            enterkeyhint="done"
+            aria-describedby="reg-name-help"
+            autofocus
+          >
+          <span id="reg-name-help" class="hint-text">Press Enter or Save Runner to lock in bib and announce.</span>
+        </div>
+
+        <div class="dialog-actions">
+          <button type="button" id="btn-ignore-tag" class="btn btn-danger-ghost">Ignore Stray Tag</button>
+          <button type="submit" id="btn-save-runner" class="btn btn-emerald">Save Runner</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal Dialog: Edit Runner Name / Reassign Tag / Retake Photo -->
+  <dialog id="edit-runner-dialog" closedby="any" class="modal-dialog" aria-labelledby="edit-dialog-title">
+    <div class="dialog-card">
+      <div class="dialog-header">
+        <div>
+          <span class="tag-pill" id="edit-tag-badge">TAG #00</span>
+          <h2 id="edit-dialog-title">Edit Runner, Bib Tag &amp; Photo</h2>
+        </div>
+        <button type="button" id="btn-edit-close" class="icon-close-btn" aria-label="Close edit runner dialog">&times;</button>
+      </div>
+
+      <div class="portrait-row">
+        <img
+          id="edit-portrait-preview"
+          src="data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA="
+          alt="Runner avatar preview"
+          width="112"
+          height="112"
+          class="portrait-preview"
+        >
+        <div class="portrait-actions">
+          <button type="button" id="btn-edit-snap" class="btn btn-outline">Retake Live Photo</button>
+          <span class="hint-text">Captures a fresh portrait from the active camera stream.</span>
+        </div>
+      </div>
+
+      <form id="edit-runner-form" method="POST">
+        <input type="hidden" id="edit-tag-id" name="old_tag_id" value="0">
+        <div class="field-group">
+          <label for="edit-tag-select">Assigned Bib / Tag ID (Move or Swap)</label>
+          <select id="edit-tag-select" name="new_tag_id" class="dialog-select"></select>
+          <span class="hint-text">Change this if a tag was misread or two runners swapped bibs. All laps stay intact.</span>
+        </div>
+        <div class="field-group">
+          <label for="edit-runner-name">Runner Name <span aria-hidden="true">*</span></label>
+          <input
+            type="text"
+            id="edit-runner-name"
+            name="name"
+            required
+            maxlength="80"
+            autocomplete="name"
+            enterkeyhint="done"
+            autofocus
+          >
+        </div>
+        <div class="dialog-actions dialog-actions-split">
+          <button type="button" id="btn-delete-runner" class="btn btn-danger-ghost">Delete Runner</button>
+          <div class="dialog-actions-right">
+            <button type="button" id="btn-edit-cancel" class="btn btn-ghost">Cancel</button>
+            <button type="submit" id="btn-edit-save" class="btn btn-emerald">Save Changes</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal Dialog: Session Reset Confirmation -->
+  <dialog id="reset-dialog" closedby="any" class="modal-dialog" aria-labelledby="reset-dialog-title">
+    <div class="dialog-card">
+      <div class="dialog-header">
+        <h2 id="reset-dialog-title">Reset Track Session?</h2>
+        <button type="button" id="btn-reset-close" class="icon-close-btn" aria-label="Close reset dialog">&times;</button>
+      </div>
+      <p class="dialog-note">Choose whether to zero out lap counters for a new heat or wipe registered runners and face photos too.</p>
+      <form method="dialog" class="dialog-actions">
+        <button type="submit" value="cancel" class="btn btn-ghost" autofocus>Cancel</button>
+        <button type="submit" value="laps_only" class="btn btn-amber">Reset Laps &amp; Clock</button>
+        <button type="submit" value="full_wipe" class="btn btn-danger">Wipe Runners &amp; Laps</button>
+      </form>
+    </div>
+  </dialog>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

@@ -9,3 +9,6 @@ data/*.db*
 data/backups/
 .env
 node_modules/
+.venv/
+apriltag_tracker/.venv/
+apriltag_tracker/data/
