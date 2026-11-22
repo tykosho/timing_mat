@@ -5,6 +5,8 @@
 
 An end-to-end race timing mat and bib tracking system built for track & running club events. Designed to run on a Raspberry Pi powered by a portable USB battery, or locally on your computer inside Docker.
 
+> **Looking for a zero-hardware camera alternative?** This repository also includes **[`apriltag_tracker/`](apriltag_tracker/README.md)** — a standalone macOS computer-vision lap counter & voice announcer that uses a MacBook webcam + printed paper `tag16h5` bibs instead of UHF RFID hardware. See [Trackside AprilTag Camera Tracker](#-trackside-apriltag-camera-tracker-apriltag_tracker) below.
+
 ---
 
 ## 🚀 Quick Start (Docker)
@@ -219,8 +221,49 @@ Runners' phones are on the same Wi-Fi as the timer, so race control is behind a 
 ├── tools/
 │   └── soak.py                  # Fast (simulated clock) & live multi-hour race soak harness
 │
+├── apriltag_tracker/            # Parallel camera-based AprilTag (tag16h5) lap tracker & voice announcer
+│   ├── run.sh                   # One-command macOS launcher (venv + FastAPI + opens Google Chrome)
+│   ├── app.py                   # FastAPI server (/video_feed MJPEG, /ws, registration & printable bibs)
+│   ├── vision.py                # OpenCV + pupil-apriltags detector, face cropper & debug HUD
+│   ├── tracker.py               # Session state, JSON/PNG persistence, cooldown & pack lap math
+│   ├── generate_tags.py         # Printable tag16h5 race bib generator (1/2/6/15/30 per page)
+│   └── static/                  # Dark-mode Chrome dashboard & offline Web Speech announcer
+│
 └── tests/                       # 26+ unit, integration, FakeR200, soak & offline Playwright suites
 ```
+
+---
+
+## 📷 Trackside AprilTag Camera Tracker (`apriltag_tracker/`)
+
+Don't have an RFID mat yet? [`apriltag_tracker/`](apriltag_tracker/README.md) is a parallel, self-contained implementation that turns a **MacBook Pro** (built-in FaceTime camera or external USB webcam) and **Google Chrome** into a local-first optical lap counter and live track announcer—no internet or RFID hardware required.
+
+### 1. Launch on macOS
+```bash
+cd apriltag_tracker
+./run.sh
+```
+- Creates `apriltag_tracker/.venv`, installs OpenCV + `pupil-apriltags`, starts FastAPI on `http://localhost:8000`, and opens Google Chrome.
+- **Approve Camera access** when macOS prompts your terminal/IDE on first launch.
+- Running alongside the RFID server on port `8000` or using an external USB webcam? Pass environment variables:
+  ```bash
+  PORT=8001 CAMERA_INDEX=1 ./run.sh
+  ```
+
+### 2. Print `tag16h5` Paper Bibs (IDs `0–29`)
+1. Click **Print Bibs (0–29)** in the top bar (`http://localhost:8000/api/tags/printable?per_page=6`), or generate offline:
+   ```bash
+   apriltag_tracker/.venv/bin/python apriltag_tracker/generate_tags.py --per-page 6
+   ```
+2. Choose a sheet density (**`1`**, **`2`**, **`6`** = 5 sheets, **`15`** = 2 sheets, or **`30`** = 1 single test sheet), print at **100% scale** on matte paper, cut along the dashed lines, and pin flat on each runner's chest without covering the white quiet-zone border.
+
+### 3. Register Runners & Run Laps
+- **Walk-up registration:** Hold an unassigned bib up to the camera (~1 second). A non-blocking prompt pops up with an automatic **face portrait crop** while background lap counting continues uninterrupted. Type the runner's name and press `Enter`.
+- **Easy mistake recovery:** If a tag was angled during walk-up, click **Re-scan Tag** or pick the exact bib number from the **Bib / AprilTag ID** dropdown. Mid-race, click **Edit / Tag** on any leaderboard row to rename, retake a photo, **move** a runner to another bib ID, **swap bibs** between two runners (keeping all laps intact), or delete a stray entry.
+- **Pack crossings & voice announcer:** Multiple runners crossing together are all counted simultaneously and called out together by Chrome's offline macOS voices (*Samantha*, *Daniel*, *Karen*), with adjustable **Cooldown (`5s–120s`)**, **Virtual Finish Line X**, and **Burn Frequency (`0%–100%`)**.
+- **Test before printing:** Toggle **Sim Camera** or use keyboard shortcuts **`U`** (unknown tag), **`L`** (single lap), **`P`** (2+ runner pack crossing), **`T`** (test roast), and **`D`** (debug overlay).
+
+See **[`apriltag_tracker/README.md`](apriltag_tracker/README.md)** for full camera placement, lighting, and testing instructions.
 
 ---
 
