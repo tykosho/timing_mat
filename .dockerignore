@@ -13,3 +13,4 @@ venv/
 data/*.db*
 node_modules
 docs/
+apriltag_tracker/
