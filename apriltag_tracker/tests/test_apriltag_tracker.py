@@ -225,6 +225,37 @@ class TestFastApiEndpointsAndWebSocket(unittest.TestCase):
                     self.assertEqual(lap_msg["lap_number"], 1)
                     self.assertEqual(lap_msg["lap_mmss"], "01:12.4")
 
+    def test_camera_list_and_index_switching(self) -> None:
+        mock_cameras = [
+            {"index": 0, "name": "OBS Virtual Camera"},
+            {"index": 1, "name": "Continuity Camera"},
+            {"index": 2, "name": "FaceTime HD Camera"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(
+                data_dir=Path(tmp),
+                force_simulated_camera=True,
+                start_vision=False,
+                camera_lister=lambda: mock_cameras,
+            )
+            with TestClient(app) as client:
+                res = client.get("/api/cameras")
+                self.assertEqual(res.status_code, 200)
+                body = res.json()
+                self.assertEqual(body["cameras"], mock_cameras)
+                self.assertEqual(body["active_index"], 0)
+
+                cfg_res = client.post("/api/config", json={"camera_index": 2})
+                self.assertEqual(cfg_res.status_code, 200)
+                self.assertEqual(cfg_res.json()["config"]["camera_index"], 2)
+
+                res_after = client.get("/api/cameras")
+                self.assertEqual(res_after.json()["active_index"], 2)
+
+            # Verify camera_index persisted to session.json
+            reloaded = SessionTracker(data_dir=Path(tmp))
+            self.assertEqual(reloaded.camera_index, 2)
+
     def test_live_vision_loop_detects_synthetic_runner_and_counts_lap(self) -> None:
         import time
 

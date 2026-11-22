@@ -69,6 +69,13 @@
       <div class="panel-header">
         <h2 id="camera-heading">Live Camera Viewport</h2>
         <div class="camera-toggles">
+          <div class="camera-select-wrap">
+            <label for="camera-select" class="sr-only">Camera Source</label>
+            <select id="camera-select" name="camera_index" class="camera-select" aria-label="Select camera">
+              <option value="0">Camera #0</option>
+            </select>
+            <button type="button" id="btn-refresh-cameras" class="btn-icon-mini" title="Rescan connected cameras" aria-label="Rescan connected cameras">&#8635;</button>
+          </div>
           <label class="checkbox-inline" for="mirror-toggle">
             <input type="checkbox" id="mirror-toggle" name="mirror" class="visually-hidden-fallback">
             <span>Mirror View</span>
