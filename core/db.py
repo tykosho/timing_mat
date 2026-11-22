@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -12,6 +13,7 @@ from core import clock
 logger = logging.getLogger("Database")
 
 EVENT_STATUSES = ("setup", "running", "paused", "ended")
+RESTART_FLAG_REASON = "Timer restart during this lap: time off is estimated, check the lap time"
 DEFAULT_EVENT_NAME = "Take Back the Track!"
 _HEX_RE = re.compile(r"^[0-9A-F]+$")
 
@@ -152,6 +154,12 @@ class Database:
                 event_id INTEGER NOT NULL,
                 start_time REAL NOT NULL,
                 end_time REAL NOT NULL
+            );
+
+            -- Race times where the app came back not knowing how long it was down, so laps
+            -- that span one are flagged (issue #128)
+            CREATE TABLE IF NOT EXISTS clock_restarts (
+                race_time REAL NOT NULL
             );
 
             -- Every tag read as it came off the reader, so laps can be audited or re-derived later.
@@ -890,6 +898,7 @@ class Database:
             previous = p["last_crossing_time"] or p["start_time"]
             if previous is None:
                 raise LapEditError(f"Runner #{bib_number} hasn't started yet, so there's no lap to time.")
+            flag_reason = None
             if duration is not None:
                 if duration <= 0:
                     raise LapEditError("Lap duration must be positive.")
@@ -899,12 +908,15 @@ class Database:
                                        f"so a {duration:.0f}s lap would end in the future.")
             else:
                 crossing, duration = now, now - previous
+                if self._spans_restart(conn, eid, bib_number, now):
+                    flag_reason = RESTART_FLAG_REASON  # timed across a restart (issue #128)
                 if duration < min_gap:
                     raise LapEditError(f"Only {duration:.0f}s since runner #{bib_number}'s last crossing "
                                        f"(minimum lap is {min_gap:.0f}s); no lap added.")
             cursor = conn.execute("""
-                INSERT INTO laps (event_id, bib_number, lap_number, crossing_time, lap_duration_seconds, peak_rssi, manual_entry)
-                VALUES (?, ?, 0, ?, ?, 0.0, 1);""", (eid, bib_number, crossing, round(duration, 2)))
+                INSERT INTO laps (event_id, bib_number, lap_number, crossing_time, lap_duration_seconds, peak_rssi,
+                                  manual_entry, flag_reason)
+                VALUES (?, ?, 0, ?, ?, 0.0, 1, ?);""", (eid, bib_number, crossing, round(duration, 2), flag_reason))
             conn.execute("UPDATE participants SET last_crossing_time = ? WHERE event_id = ? AND bib_number = ?;",
                          (crossing, eid, bib_number))
             self._renumber_laps(conn, eid, bib_number)
@@ -940,10 +952,11 @@ class Database:
         with self.connect() as conn:
             row = conn.execute("""
                 SELECT MAX(t) AS t FROM (
-                    SELECT MAX(MAX(COALESCE(start_time, 0), COALESCE(end_time, 0), created_at)) AS t FROM events
+                    SELECT MAX(MAX(COALESCE(start_time, 0), COALESCE(end_time, 0), COALESCE(paused_at, 0),
+                                   created_at)) AS t FROM events
                     UNION ALL SELECT MAX(MAX(COALESCE(start_time, 0), COALESCE(last_crossing_time, 0), created_at)) FROM participants
                     UNION ALL SELECT MAX(crossing_time) FROM laps
-                    UNION ALL SELECT MAX(end_time) FROM breaks
+                    UNION ALL SELECT MAX(MAX(start_time, end_time)) FROM breaks
                     UNION ALL SELECT MAX(timestamp) FROM raw_reads
                 );""").fetchone()
             return row["t"] if row and row["t"] else None
@@ -953,6 +966,56 @@ class Database:
         with self.connect() as conn:
             row = conn.execute("SELECT 1 FROM events WHERE status IN ('running', 'paused') LIMIT 1;").fetchone()
             return row is not None
+
+    # ------------------------------------------------------------------ race clock (issue #128)
+    def get_clock_state(self) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'race_clock';").fetchone()
+        try:
+            return json.loads(row["value"]) if row else None
+        except (TypeError, ValueError):
+            logger.warning("The saved race clock is unreadable; ignoring it.")
+            return None
+
+    def save_clock_state(self, state: Dict[str, Any], durable: bool = False,
+                         restarted_at: Optional[float] = None):
+        """Stores the race clock and, in the same transaction, an estimated restart.
+
+        `durable` is for changes a power cut mustn't lose: NORMAL only syncs at checkpoints.
+        """
+        with self.connect() as conn:
+            if durable:
+                conn.execute("PRAGMA synchronous = FULL;")
+            conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('race_clock', ?);",
+                         (json.dumps(state),))
+            if restarted_at is not None:
+                conn.execute("INSERT INTO clock_restarts (race_time) VALUES (?);", (restarted_at,))
+
+    def lap_spans_restart(self, bib_number: int, end: float, event_id: Optional[int] = None) -> bool:
+        with self.connect() as conn:
+            return self._spans_restart(conn, self._eid(event_id), bib_number, end)
+
+    @staticmethod
+    def _spans_restart(conn: sqlite3.Connection, event_id: int, bib_number: int, end: float) -> bool:
+        """Did an estimated restart fall in the timed part of the lap ending at `end`?
+
+        The lap's real beginning is looked up, because Resume shifts last_crossing_time past
+        anything that happened before the pause. A restart during a pause doesn't matter: that
+        time isn't in the lap.
+        """
+        return conn.execute("""
+            SELECT 1 FROM clock_restarts r
+            WHERE r.race_time <= :end
+              AND r.race_time > MAX(
+                    COALESCE((SELECT start_time FROM participants
+                              WHERE event_id = :event AND bib_number = :bib), :end),
+                    COALESCE((SELECT MAX(crossing_time) FROM laps
+                              WHERE event_id = :event AND bib_number = :bib), 0),
+                    COALESCE((SELECT MAX(end_time) FROM breaks
+                              WHERE event_id = :event AND bib_number = :bib), 0))
+              AND NOT EXISTS (SELECT 1 FROM pauses p WHERE p.event_id = :event
+                              AND r.race_time > p.start_time AND r.race_time <= p.end_time)
+            LIMIT 1;""", {"event": event_id, "bib": bib_number, "end": end}).fetchone() is not None
 
     # ------------------------------------------------------------------ breaks
     def record_break(self, bib_number: int, start_time: float, end_time: float, duration_seconds: float,

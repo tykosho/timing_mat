@@ -3,7 +3,7 @@ import logging
 import time
 from collections import deque
 from typing import Deque, Dict, List, Tuple, Callable, Optional, Any
-from core.db import Database
+from core.db import RESTART_FLAG_REASON, Database
 from core import clock
 from core.models import TagRead
 
@@ -24,6 +24,12 @@ FLUSH_INTERVAL = 0.2
 # long before it is given up on, loudly.
 CROSSING_RETRY_SECONDS = 300.0
 FLUSH_RETRY_DELAY = 1.0  # after a failed tick: don't hammer a failing disk 5 times a second
+
+# Race clock persistence (issue #128)
+CLOCK_SAVE_INTERVAL = 10.0   # seconds between saves during a race
+CLOCK_JUMP_SECONDS = 0.5     # a change in drift that's saved straight away
+END_SETTLE_SECONDS = 15.0    # no re-sync this soon after End
+
 
 class LapEngine:
     def __init__(self, db: Database, 
@@ -74,6 +80,12 @@ class LapEngine:
         self.flush_errors = 0
         self.last_flush_error: Optional[str] = None
 
+        # Race clock persistence (issue #128): when it was last saved and its drift then
+        self._clock_saved_at: Optional[float] = None
+        self._clock_saved_drift = 0.0
+        # Reads stamped before the clock last moved forward between races are from the old timeline
+        self._reads_not_before: Optional[float] = None
+
     def refresh_event(self):
         """Re-reads the current event so raw reads are tagged with the right event (or dropped)."""
         event = self.db.get_event()
@@ -92,7 +104,62 @@ class LapEngine:
 
     def maintain_clock(self):
         """Keeps the race clock honest about system clock changes (see core/clock.py)."""
-        clock.clock.maintain(self.db.race_in_progress(), self.db.latest_timestamp())
+        if self.db.race_in_progress():
+            clock.clock.maintain(True)
+            return
+        event = self.db.get_event()
+        if event and event["status"] == "ended" and event["end_time"] is not None:
+            if 0 <= clock.now() - event["end_time"] < END_SETTLE_SECONDS:
+                return  # a crossing from just before End may still be waiting to be resolved
+        self._resync_clock()
+
+    def _resync_clock(self):
+        before = clock.now()
+        if clock.clock.maintain(False, self.db.latest_timestamp()) != "resynced":
+            return
+        after = clock.now()
+        # Everything remembered about tags is on the old timeline. Left in place, a tag waiting
+        # at the start would chip-start at the old time, possibly a week before the gun.
+        self.buffers.clear()
+        self.lingering.clear()
+        self.last_read_at.clear()
+        self.debounced_near_mat.clear()
+        self.failed_bursts.clear()
+        self._reads_not_before = after if after > before else None
+
+    def prepare_start(self):
+        """Before Start: take the system time now, not up to 30 s later, when it would be too
+        late because the race has begun (issue #128)."""
+        event = self.db.get_event()
+        # Not on Resume, and not when Start is about to be refused because the event ended
+        if event and event["status"] == "setup" and not self.db.race_in_progress():
+            self._resync_clock()
+
+    def resume_clock(self):
+        """At app startup, before anything is timed (issue #128)."""
+        latest = self.db.latest_timestamp()
+        if not self.db.race_in_progress():
+            clock.clock.ensure_not_before(latest)
+            return
+        exact = clock.clock.resume(self.db.get_clock_state(), latest)
+        self.save_clock(force=True, restarted_at=None if exact else clock.now())
+
+    def save_clock(self, force: bool = False, restarted_at: Optional[float] = None):
+        """Keeps what a restart needs. Called every tick: writes every CLOCK_SAVE_INTERVAL
+        during a race, and straight away (synced to disk) when the system clock jumps."""
+        mono, drift = clock.clock.monotonic(), clock.clock.drift()
+        first = self._clock_saved_at is None
+        changed = first or abs(drift - self._clock_saved_drift) > CLOCK_JUMP_SECONDS
+        if not (force or changed or mono - self._clock_saved_at >= CLOCK_SAVE_INTERVAL):
+            return
+        self._clock_saved_at, self._clock_saved_drift = mono, drift
+        try:
+            if self.db.race_in_progress():
+                self.db.save_clock_state(clock.clock.snapshot(), durable=force or changed,
+                                         restarted_at=restarted_at)
+        except Exception:
+            # Never stops lap timing; tried again at the next interval
+            logger.exception("Couldn't save the race clock")
 
     def flush_raw_reads(self):
         """Writes queued raw reads to the database."""
@@ -138,6 +205,8 @@ class LapEngine:
         """
         epc = tag_read.epc.upper().strip()
         now = tag_read.timestamp
+        if self._reads_not_before is not None and now < self._reads_not_before:
+            return  # was on its way from the reader thread when the clock re-synced
 
         # Notify any listeners that an RFID tag was detected (useful for Admin registration)
         if self.on_tag_detected:
@@ -174,6 +243,7 @@ class LapEngine:
                     ticks += 1
                     if ticks % 150 == 0:  # every ~30 s
                         self.maintain_clock()
+                    self.save_clock()
                     await self.flush_once(clock.now())
                 except Exception as e:
                     failures += 1
@@ -507,6 +577,11 @@ class LapEngine:
                 if lap_duration >= (1.75 * median_dur) and median_dur >= 20.0:
                     flag_reason = f"Missed reading suspected ({round(lap_duration, 1)}s vs median {round(median_dur, 1)}s)"
                     logger.warning(f"⚠️ SUSPICIOUS LAP: Bib {bib} ({name}) Lap {lap_number} flagged: {flag_reason}")
+
+        # A better explanation than a missed read, and true of confirmed crossings too (#128)
+        if self.db.lap_spans_restart(bib, peak_time):
+            flag_reason = RESTART_FLAG_REASON
+            logger.warning(f"⚠️ LAP ACROSS A RESTART: Bib {bib} ({name}) Lap {lap_number} flagged: {flag_reason}")
 
         lap_id = self.db.record_lap(
             bib_number=bib,
