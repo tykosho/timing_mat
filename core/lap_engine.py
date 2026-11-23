@@ -126,6 +126,11 @@ class LapEngine:
         self.debounced_near_mat.clear()
         self.failed_bursts.clear()
         self._reads_not_before = after if after > before else None
+        try:
+            # An ended event stays on the old timeline until it's reopened (issue #129)
+            self.db.record_clock_shift(after - before)
+        except Exception:
+            logger.exception("Couldn't record the clock re-sync; Reopen may show a wrong race timer")
 
     def prepare_start(self):
         """Before Start: take the system time now, not up to 30 s later, when it would be too
