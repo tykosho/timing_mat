@@ -181,6 +181,7 @@ class Database:
                 ("events", "paused_at", "REAL DEFAULT NULL"),      # issue #11
                 ("laps", "flag_reason", "TEXT DEFAULT NULL"),      # suspicious-lap review (#10)
                 ("participants", "start_flag_reason", "TEXT DEFAULT NULL"),  # missed start (#72)
+                ("events", "clock_shift_seconds", "REAL DEFAULT 0.0"),  # re-syncs since End (#129)
             ]:
                 cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table});")]
                 if column not in cols:
@@ -433,9 +434,44 @@ class Database:
         """ended -> paused, for an End pressed by mistake."""
         ev = self.get_event()
         if ev["status"] == "ended":
-            # Timing stopped at end_time, so the "pause" runs from then until Start
-            self._set_status(ev, "paused", ev["start_time"], None, paused_at=ev["end_time"])
+            with self.connect() as conn:
+                # The race clock may have re-synced since End. Move the event onto the clock's
+                # new timeline, or the race timer would include the correction (issue #129).
+                shift = ev.get("clock_shift_seconds") or 0.0
+                if shift:
+                    self._shift_event_times(conn, ev, shift)
+                    ev = self._event_dict(conn.execute("SELECT * FROM events WHERE id = ?;", (ev["id"],)).fetchone())
+                # Timing stopped at end_time, so the "pause" runs from then until Start
+                self._set_status(ev, "paused", ev["start_time"], None, paused_at=ev["end_time"], conn=conn)
         return self.get_event()
+
+    def record_clock_shift(self, seconds: float):
+        """The race clock re-synced by `seconds`: ended events are now that far behind it (#129)."""
+        if not seconds:
+            return
+        with self.connect() as conn:
+            conn.execute("""UPDATE events SET clock_shift_seconds = COALESCE(clock_shift_seconds, 0) + ?
+                            WHERE status = 'ended';""", (seconds,))
+
+    @staticmethod
+    def _shift_event_times(conn: sqlite3.Connection, ev: Dict[str, Any], shift: float):
+        """Moves every stored time of one event by `shift` seconds. Durations don't change."""
+        eid = ev["id"]
+        if ev["start_time"] is not None and ev["end_time"] is not None:
+            # Restarts aren't stored per event; this event's are the ones during it
+            conn.execute("UPDATE clock_restarts SET race_time = race_time + ? WHERE race_time BETWEEN ? AND ?;",
+                         (shift, ev["start_time"], ev["end_time"]))
+        conn.execute("""UPDATE events SET start_time = start_time + ?, end_time = end_time + ?,
+                        clock_shift_seconds = 0.0 WHERE id = ?;""", (shift, shift, eid))
+        conn.execute("""UPDATE participants SET start_time = start_time + ?,
+                        last_crossing_time = last_crossing_time + ? WHERE event_id = ?;""", (shift, shift, eid))
+        conn.execute("UPDATE laps SET crossing_time = crossing_time + ? WHERE event_id = ?;", (shift, eid))
+        conn.execute("""UPDATE breaks SET start_time = start_time + ?,
+                        end_time = CASE WHEN end_time = 0.0 THEN 0.0 ELSE end_time + ? END
+                        WHERE event_id = ?;""", (shift, shift, eid))   # 0.0: still open
+        conn.execute("UPDATE pauses SET start_time = start_time + ?, end_time = end_time + ? WHERE event_id = ?;",
+                     (shift, shift, eid))
+        conn.execute("UPDATE raw_reads SET timestamp = timestamp + ? WHERE event_id = ?;", (shift, eid))
 
     # ------------------------------------------------------------------ participants
     def _find_tag_owner(self, conn: sqlite3.Connection, event_id: int, epc: str,

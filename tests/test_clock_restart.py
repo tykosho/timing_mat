@@ -338,5 +338,101 @@ class StartTest(RestartTestCase):
         self.assertAlmostEqual(clock_module.now(), self.pi.wall_t, delta=1)
 
 
+class ReopenAfterResyncTest(RestartTestCase):
+    """End, the clock re-syncs, Reopen: the race timer mustn't include the correction (#129)."""
+
+    def end_and_resync(self, correction=WEEK):
+        self.db.end_event()
+        self.ntp(correction)
+        self.pi.advance(END_SETTLE_SECONDS + 1)
+        self.engine.maintain_clock()
+
+    def race_timer(self):
+        return clock_module.now() - self.db.get_event()["start_time"]
+
+    def test_timer_and_laps_after_reopen(self):
+        self.start()
+        self.cross()
+        self.run_on(80)
+        self.cross()
+        self.run_on(30)
+        self.end_and_resync()
+        self.assertAlmostEqual(clock_module.now(), self.pi.wall_t, delta=1)   # re-synced
+        self.pi.advance(10)
+        self.db.reopen_event()
+        self.start()
+        self.run_on(40)
+        self.cross()
+        self.assertEqual(self.last_lap(), (70.0, None))
+        held = END_SETTLE_SECONDS + 1 + 10
+        self.assertAlmostEqual(self.race_timer(), 80 + 30 + held + 40, delta=0.5)
+        # And the event is on the corrected clock, so times of day are right too
+        self.assertAlmostEqual(self.db.get_event()["start_time"], NOW, delta=1)
+
+    def test_every_stored_time_moves_with_it(self):
+        self.start()
+        self.cross()
+        self.run_on(80)
+        self.cross()
+        read_at = clock_module.now()
+        self.db.insert_raw_reads([(self.db.get_event()["id"], EPC, read_at, -50.0)])
+        restart_at = clock_module.now()
+        with self.db.connect() as conn:
+            conn.execute("INSERT INTO clock_restarts (race_time) VALUES (?);", (restart_at,))
+        self.run_on(5)
+        self.end_and_resync()
+        before = {"lap": self.db.get_laps_for_runner(1)[-1]["crossing_time"],
+                  "runner": self.db.get_participant_by_bib(1)["last_crossing_time"]}
+        self.db.reopen_event()
+        with self.db.connect() as conn:
+            raw = conn.execute("SELECT MAX(timestamp) FROM raw_reads;").fetchone()[0]
+            restart = conn.execute("SELECT MAX(race_time) FROM clock_restarts;").fetchone()[0]
+        self.assertAlmostEqual(self.db.get_laps_for_runner(1)[-1]["crossing_time"], before["lap"] + WEEK, delta=0.01)
+        self.assertAlmostEqual(self.db.get_participant_by_bib(1)["last_crossing_time"], before["runner"] + WEEK, delta=0.01)
+        self.assertAlmostEqual(restart, restart_at + WEEK, delta=0.01)
+        self.assertAlmostEqual(raw, read_at + WEEK, delta=0.01)
+        self.assertEqual(self.db.get_laps_for_runner(1)[-1]["lap_duration_seconds"], 80.0)
+        self.assertEqual(self.db.get_event()["clock_shift_seconds"], 0.0)
+
+    def test_corrections_add_up(self):
+        self.start()
+        self.run_on(60)
+        self.end_and_resync(WEEK / 2)
+        self.end_and_resync(WEEK / 2)
+        self.assertAlmostEqual(self.db.get_event()["clock_shift_seconds"], WEEK, delta=0.5)
+        self.db.reopen_event()
+        self.start()
+        self.assertAlmostEqual(self.race_timer(), 60 + 2 * (END_SETTLE_SECONDS + 1), delta=0.5)
+
+    def test_clock_set_back_while_ended(self):
+        self.pi.wall_t += WEEK          # this time the clock started out right
+        self.start()
+        self.run_on(60)
+        self.end_and_resync(-3600)      # and was set back an hour; re-sync can't go before End
+        self.db.reopen_event()
+        self.start()
+        self.assertAlmostEqual(self.race_timer(), 60 + END_SETTLE_SECONDS + 1, delta=0.5)
+
+    def test_reopen_without_a_resync_moves_nothing(self):
+        self.start()
+        self.run_on(60)
+        self.db.end_event()
+        start_time = self.db.get_event()["start_time"]
+        self.db.reopen_event()
+        self.assertEqual(self.db.get_event()["start_time"], start_time)
+
+    def test_events_not_ended_are_not_shifted(self):
+        self.start()
+        self.run_on(60)
+        self.db.end_event()
+        other = self.db.create_event("Next")
+        self.db.set_current_event(other)
+        self.pi.advance(END_SETTLE_SECONDS + 1)
+        self.ntp()
+        self.engine.maintain_clock()
+        self.assertEqual(self.db.get_event(other)["clock_shift_seconds"], 0.0)
+        self.assertAlmostEqual(self.db.get_event(1)["clock_shift_seconds"], WEEK, delta=0.5)
+
+
 if __name__ == "__main__":
     unittest.main()
