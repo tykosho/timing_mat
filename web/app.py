@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from core import exports
 from core import clock
-from core.db import Database, RegistrationError, EventStateError, LapEditError
+from core.db import Database, RegistrationError, EventStateError, LapEditError, is_unclaimed
 from core.registration_import import parse_registration_csv
 from core.lap_engine import LapEngine
 from hardware.mock_reader import MockReader
@@ -117,12 +117,6 @@ async def on_unassigned_tag(tag_data: Dict[str, Any]):
         "data": tag_data,
     }, admin_only=True)
 
-async def on_crossing_too_soon(too_soon_data: Dict[str, Any]):
-    await broadcast_ws({
-        "type": "crossing_too_soon",
-        "data": too_soon_data,
-    }, admin_only=True)
-
 # Callback when any tag is detected (used for Admin auto-fill / registration)
 # Raw tag reads arrive 5-20 per crossing per runner. Only the admin and Prepare Bibs pages use
 # them, so they go only to admin connections, combined per tag: one message per tag every
@@ -199,7 +193,6 @@ lap_engine = LapEngine(
     on_runner_resumed=on_runner_resumed,
     on_tag_detected=on_tag_detected,
     on_unassigned_tag=on_unassigned_tag,
-    on_crossing_too_soon=on_crossing_too_soon,
     auto_register_unassigned=True,
 )
 # A Pi without an RTC boots with the wrong time. Mid-race, carry on the race's own timeline
@@ -468,8 +461,8 @@ async def get_replay_data():
     event_state = db.get_event_state()
     start_time = event_state.get("start_time")
     laps = db.get_all_laps()
-    participants = {p["bib_number"]: p["name"] for p in db.get_all_participants()}
-    
+    participants = {p["bib_number"]: p["name"] for p in db.get_all_participants() if not is_unclaimed(p)}
+
     runners_data = {}
     for bib, name in participants.items():
         runners_data[bib] = {
@@ -717,6 +710,34 @@ async def add_participant(p: ParticipantRequest):
     await push_leaderboard()
     return {"status": "created"}
 
+async def _claim_placeholder(bib: int, name: str) -> Dict[str, Any]:
+    """Names a runner from the trackside page. A walk-up placeholder isn't timed until it has a
+    name, so if the race is on, its clock starts now: they are standing at the mat."""
+    before = db.get_participant_by_bib(bib)
+    updated = db.rename_participant(bib, name)
+    await broadcast_ws({
+        "type": "participant_renamed",
+        "bib_number": bib,
+        "name": updated["name"],
+    })
+    event_state = db.get_event_state()
+    if (is_unclaimed(before) and not updated.get("start_time")
+            and event_state.get("status") == "running" and event_state.get("start_time")):
+        now = clock.now()
+        db.set_participant_start(bib, now, flag_reason=None)
+        lap_engine.mark_tag_started_on_mat(updated.get("epc"), now)
+        updated = db.get_participant_by_bib(bib)
+        await on_runner_started({
+            "bib_number": bib,
+            "name": updated["name"],
+            "start_time": now,
+            "event_offset_seconds": round(now - event_state["start_time"], 1),
+            "peak_rssi": -45.0,
+            "start_flag_reason": None,
+        })
+    await push_leaderboard()
+    return updated
+
 class SelfRegisterRequest(BaseModel):
     name: str
     epc: str
@@ -736,14 +757,8 @@ async def self_register_participant(req: SelfRegisterRequest):
         raise RegistrationError("Tag EPC is required")
 
     existing = db.get_participant_by_epc(epc)
-    if existing and (existing.get("notes") or "") == "Auto-registered walk-up tag":
-        updated = db.rename_participant(existing["bib_number"], req.name)
-        await broadcast_ws({
-            "type": "participant_renamed",
-            "bib_number": updated["bib_number"],
-            "name": updated["name"],
-        })
-        await push_leaderboard()
+    if is_unclaimed(existing):
+        updated = await _claim_placeholder(existing["bib_number"], req.name)
         return {
             "status": "created",
             "started": bool(updated.get("start_time")),
@@ -812,13 +827,7 @@ class RenameParticipantRequest(BaseModel):
 @app.patch("/api/participants/{bib}/name")
 async def rename_participant_endpoint(bib: int, req: RenameParticipantRequest):
     """Inline rename from the trackside crossings feed / unclaimed tags list."""
-    updated = db.rename_participant(bib, req.name)
-    await broadcast_ws({
-        "type": "participant_renamed",
-        "bib_number": bib,
-        "name": updated["name"],
-    })
-    await push_leaderboard()
+    updated = await _claim_placeholder(bib, req.name)
     return {"status": "renamed", "bib_number": bib, "participant": updated}
 
 class TagRequest(BaseModel):
@@ -962,22 +971,6 @@ async def keep_start(bib_number: int):
     db.keep_start(bib_number)
     await _flagged_changed()
     return {"status": "kept"}
-
-class AcceptTooSoonRequest(BaseModel):
-    bib_number: int
-    crossing_time: float
-    peak_rssi: float = -45.0
-
-@app.post("/api/crossings/accept-too-soon")
-async def accept_too_soon_crossing(req: AcceptTooSoonRequest):
-    """Records a debounced (too-soon) crossing after operator confirmation."""
-    lap = await lap_engine.accept_too_soon_crossing(req.bib_number, req.crossing_time, req.peak_rssi)
-    if lap is None:
-        raise HTTPException(
-            status_code=409,
-            detail="Crossing could not be accepted (event not running or superseded).",
-        )
-    return {"status": "accepted", "lap": lap}
 
 @app.post("/api/participants/{bib}/quick-add-lap")
 async def quick_add_lap(bib: int, req: Optional[QuickLapAdjustRequest] = None):

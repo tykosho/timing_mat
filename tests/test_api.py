@@ -304,30 +304,6 @@ class TestApi(unittest.TestCase):
         self.assertEqual(res.status_code, 200, res.text)
         self.assertEqual(res.json()["event"]["max_lap_rest_seconds"], 0.0)
 
-    def test_accept_too_soon_crossing_endpoint(self):
-        self.client.post("/api/participants", json={"bib_number": 77, "name": "Sprinter", "epc": "E28000000000000000000077"})
-        self.client.post("/api/event/start")
-        start_res = self.client.post("/api/participants/77/quick-add-lap")
-        t0 = start_res.json()["start_time"]
-
-        res = self.client.post("/api/crossings/accept-too-soon", json={
-            "bib_number": 77,
-            "crossing_time": t0 + 15.0,
-            "peak_rssi": -43.5,
-        })
-        self.assertEqual(res.status_code, 200, res.text)
-        body = res.json()
-        self.assertEqual(body["status"], "accepted")
-        self.assertEqual(body["lap"]["lap_number"], 1)
-        self.assertGreater(body["lap"]["lap_duration_seconds"], 0)
-
-        # Duplicate accept at same timestamp is rejected (409)
-        dup = self.client.post("/api/crossings/accept-too-soon", json={
-            "bib_number": 77,
-            "crossing_time": t0 + 15.0,
-        })
-        self.assertEqual(dup.status_code, 409)
-
     def test_self_register_mid_race_starts_runner_and_counts_lap_1(self):
         import asyncio
         from unittest import mock
@@ -397,27 +373,55 @@ class TestApi(unittest.TestCase):
         self.assertIsNotNone(pb)
         self.assertEqual(pa["name"], f"Runner #{pa['bib_number']}")
         self.assertEqual(pb["name"], f"Runner #{pb['bib_number']}")
-        self.assertEqual(pa["start_time"], t0 + 10.0)
+        # Placeholders are not timed until they have a name
+        self.assertIsNone(pa["start_time"])
+        board = {r["bib_number"]: r for r in self.client.get("/api/leaderboard").json()}
+        self.assertTrue(board[pa["bib_number"]]["unclaimed"])
 
-        # Runner A completes a lap BEFORE ever setting their name -> Lap 1 is timed immediately!
+        # Runner A crosses again a lap later, still unnamed: no lap, still not started
         web_app.lap_engine.process_tag_read(TagRead(epc=epc_a, rssi=-42.0, timestamp=t0 + 95.0))
         asyncio.run(web_app.lap_engine.flush_once(t0 + 100.0))
-        laps_a = web_app.db.get_laps_for_runner(pa["bib_number"])
-        self.assertEqual(len(laps_a), 1)
-        self.assertAlmostEqual(laps_a[0]["lap_duration_seconds"], 85.0, places=1)
+        self.assertEqual(web_app.db.get_laps_for_runner(pa["bib_number"]), [])
+        self.assertIsNone(web_app.db.get_participant_by_bib(pa["bib_number"])["start_time"])
+        replay_bibs = {r["bib"] for r in self.client.get("/api/replay").json()["runners"]}
+        self.assertNotIn(pa["bib_number"], replay_bibs)
 
-        # Runner A clicks their row in the list and renames via PATCH /api/participants/{bib}/name
-        ren = self.client.patch(f"/api/participants/{pa['bib_number']}/name", json={"name": "Jordan Lee"})
+        # Runner A names themself from the pill (PATCH): their clock starts now
+        with mock.patch("core.clock.now", return_value=t0 + 100.0):
+            ren = self.client.patch(f"/api/participants/{pa['bib_number']}/name", json={"name": "Jordan Lee"})
         self.assertEqual(ren.status_code, 200, ren.text)
         self.assertEqual(ren.json()["participant"]["name"], "Jordan Lee")
         self.assertEqual(ren.json()["participant"]["notes"], "")
+        self.assertEqual(ren.json()["participant"]["start_time"], t0 + 100.0)
+        board = {r["bib_number"]: r for r in self.client.get("/api/leaderboard").json()}
+        self.assertFalse(board[pa["bib_number"]]["unclaimed"])
 
-        # Runner B submits via the prompt (POST /api/self-register) -> renames placeholder instead of 400 duplicate!
-        reg_b = self.client.post("/api/self-register", json={"name": "Casey Kim", "epc": epc_b})
+        # Their next crossing is Lap 1, timed from when they were named
+        web_app.lap_engine.process_tag_read(TagRead(epc=epc_a, rssi=-42.0, timestamp=t0 + 190.0))
+        asyncio.run(web_app.lap_engine.flush_once(t0 + 195.0))
+        laps_a = web_app.db.get_laps_for_runner(pa["bib_number"])
+        self.assertEqual(len(laps_a), 1)
+        self.assertAlmostEqual(laps_a[0]["lap_duration_seconds"], 90.0, places=1)
+
+        # Runner B submits via the prompt (POST /api/self-register) -> renames placeholder and starts
+        with mock.patch("core.clock.now", return_value=t0 + 200.0):
+            reg_b = self.client.post("/api/self-register", json={"name": "Casey Kim", "epc": epc_b})
         self.assertEqual(reg_b.status_code, 200, reg_b.text)
         self.assertEqual(reg_b.json()["bib_number"], pb["bib_number"])
         self.assertEqual(reg_b.json()["participant"]["name"], "Casey Kim")
+        self.assertTrue(reg_b.json()["started"])
+        self.assertEqual(reg_b.json()["start_time"], t0 + 200.0)
 
+    def test_naming_a_placeholder_from_admin_clears_the_walk_up_note(self):
+        from core.db import WALKUP_NOTE
+        from web import app as web_app
+
+        p = web_app.db.add_placeholder_participant("E28099990000000000000203")
+        res = self.client.put(f"/api/participants/{p['bib_number']}", json={
+            "bib_number": p["bib_number"], "name": "Sam Park", "epc": p["epc"], "notes": WALKUP_NOTE,
+        })
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(web_app.db.get_participant_by_bib(p["bib_number"])["notes"], "")
 
 if __name__ == "__main__":
     unittest.main()

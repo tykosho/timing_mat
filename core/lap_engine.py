@@ -3,7 +3,7 @@ import logging
 import time
 from collections import deque
 from typing import Deque, Dict, List, Tuple, Callable, Optional, Any
-from core.db import RESTART_FLAG_REASON, Database
+from core.db import RESTART_FLAG_REASON, Database, is_unclaimed
 from core import clock
 from core.models import TagRead
 
@@ -39,7 +39,6 @@ class LapEngine:
                  on_runner_resumed: Optional[Callable[[Dict[str, Any]], None]] = None,
                  on_tag_detected: Optional[Callable[[Dict[str, Any]], None]] = None,
                  on_unassigned_tag: Optional[Callable[[Dict[str, Any]], None]] = None,
-                 on_crossing_too_soon: Optional[Callable[[Dict[str, Any]], None]] = None,
                  auto_register_unassigned: bool = False):
         self.db = db
         self.crossing_window = crossing_window
@@ -48,7 +47,6 @@ class LapEngine:
         self.on_runner_resumed = on_runner_resumed
         self.on_tag_detected = on_tag_detected
         self.on_unassigned_tag = on_unassigned_tag
-        self.on_crossing_too_soon = on_crossing_too_soon
         self.auto_register_unassigned = auto_register_unassigned
         self.speed_multiplier: float = 1.0
 
@@ -62,7 +60,6 @@ class LapEngine:
         # range for min_lap_seconds before a new burst can count as a lap (prevents intermittent
         # fringe reads every 5-10 s near the mat from accumulating into phantom laps).
         self.last_read_at: Dict[str, float] = {}
-        self.debounced_near_mat: set = set()
         # Bursts whose resolution raised, retried first on the next tick: (epc, reads, quiet)
         self.failed_bursts: List[Tuple[str, List[Tuple[float, float]], bool]] = []
         self.failed_event_id: Optional[int] = None
@@ -94,7 +91,6 @@ class LapEngine:
             # Reset, or another event: a tag parked by the mat starts afresh in it
             self.lingering.clear()
             self.last_read_at.clear()
-            self.debounced_near_mat.clear()
         event_id = event["id"] if event else None
         if event_id != self.failed_event_id or (event and event["status"] == "setup"):
             # Reset, or another event. (Not End: a crossing from before End still counts.)
@@ -123,7 +119,6 @@ class LapEngine:
         self.buffers.clear()
         self.lingering.clear()
         self.last_read_at.clear()
-        self.debounced_near_mat.clear()
         self.failed_bursts.clear()
         self._reads_not_before = after if after > before else None
         try:
@@ -186,7 +181,6 @@ class LapEngine:
         epc = epc.upper().strip()
         self.lingering.pop(epc, None)
         self.last_read_at.pop(epc, None)
-        self.debounced_near_mat.discard(epc)
         self.buffers.pop(epc, None)
         self.failed_bursts = [b for b in self.failed_bursts if b[0] != epc]
 
@@ -200,7 +194,6 @@ class LapEngine:
         self.failed_bursts = [b for b in self.failed_bursts if b[0] != epc]
         self.lingering[epc] = now
         self.last_read_at[epc] = now
-        self.debounced_near_mat.discard(epc)
 
     def process_tag_read(self, tag_read: TagRead):
         """Called for every read from the RFID reader (mock or physical).
@@ -314,7 +307,7 @@ class LapEngine:
                 # in between): a crossing of its own
                 del self.lingering[epc]
             if epc in self.lingering:
-                # Same visit to the mat as a crossing already resolved: no lap, no too-soon prompt
+                # Same visit to the mat as a crossing already resolved: no lap
                 self.last_read_at[epc] = max(self.last_read_at.get(epc, 0.0), reads[-1][0])
                 if quiet:
                     del self.lingering[epc]
@@ -376,15 +369,19 @@ class LapEngine:
         race_start = event_state.get("start_time")
         is_timed_crossing = (status == "running" or ended_in_time or paused_in_time) and bool(race_start)
 
-        auto_registered = False
         participant = self.db.get_participant_by_epc(epc)
-        if not participant:
+        if not participant or (is_unclaimed(participant) and not force):
+            # Unknown tags are never timed (only registered runners count). During a race a
+            # walk-up tag gets a placeholder bib so the trackside page can ask for a name;
+            # timing starts once a name is entered (see web/app.py _claim_placeholder).
             if self.auto_register_unassigned and is_timed_crossing:
-                participant = self.db.add_placeholder_participant(epc)
-                auto_registered = True
-                logger.info(
-                    f"Auto-registered walk-up tag {epc} as Bib {participant['bib_number']} ({participant['name']})"
-                )
+                if not participant:
+                    participant = self.db.add_placeholder_participant(epc)
+                    logger.info(
+                        f"Walk-up tag {epc} got placeholder Bib {participant['bib_number']}; "
+                        f"not timed until a name is entered"
+                    )
+                self.last_read_at[epc] = max(self.last_read_at.get(epc, 0.0), reads[-1][0])
                 if self.on_unassigned_tag:
                     tag_data = {
                         "epc": epc,
@@ -397,6 +394,7 @@ class LapEngine:
                         await self.on_unassigned_tag(tag_data)
                     else:
                         self.on_unassigned_tag(tag_data)
+                return None
             else:
                 logger.info(f"Tag read for unassigned EPC: {epc} (Peak RSSI: {peak_rssi:.1f} dBm)")
                 if self.on_unassigned_tag:
@@ -432,9 +430,8 @@ class LapEngine:
         # -------------------------------------------------------------
         if runner_start is None:
             # Race time since the gun, without any pause in between (issue #112).
-            # Auto-registered walk-up tags joined intentionally mid-race, so don't flag them.
             since_gun = peak_time - race_start - self.db.paused_seconds_between(race_start, peak_time)
-            start_flag = None if (force or auto_registered) else self._missed_start_reason(since_gun, min_lap_sec)
+            start_flag = None if force else self._missed_start_reason(since_gun, min_lap_sec)
             self.db.set_participant_start(bib, peak_time, flag_reason=start_flag)
             logger.info(f"🚀 CHIP START: Bib {bib} ({name}) started running at {peak_time:.2f} (RSSI: {peak_rssi:.1f} dBm)")
             if start_flag:
@@ -454,7 +451,6 @@ class LapEngine:
                 else:
                     self.on_runner_started(start_data)
             self.last_read_at[epc] = max(self.last_read_at.get(epc, 0.0), reads[-1][0])
-            self.debounced_near_mat.discard(epc)
             return "started"
 
         # -------------------------------------------------------------
@@ -470,7 +466,6 @@ class LapEngine:
                 logger.warning(f"Retried crossing of Bib {bib} ({name}) at {peak_time:.1f} is older than "
                                f"their last crossing at {last_crossing:.1f}; not counted.")
             self.last_read_at[epc] = max(self.last_read_at.get(epc, 0.0), reads[-1][0])
-            self.debounced_near_mat.discard(epc)
             return "duplicate"
 
         # Require effective_min_lap both since the last accepted crossing AND of silence since
@@ -488,23 +483,8 @@ class LapEngine:
                 f"Debounce: Bib {bib} ({name}) {'forced crossing rejected' if force else 'read ignored'}. "
                 f"Only {gap_reported:.1f}s since last read/crossing (min {effective_min_lap:.1f}s)."
             )
-            already_debounced = epc in self.debounced_near_mat
             if not force:
                 self.last_read_at[epc] = max(self.last_read_at.get(epc, 0.0), reads[-1][0])
-                self.debounced_near_mat.add(epc)
-            if not force and not already_debounced and self.on_crossing_too_soon:
-                too_soon_data = {
-                    "bib_number": bib,
-                    "name": name,
-                    "elapsed_seconds": round(time_since_last * self.speed_multiplier, 2),
-                    "min_lap_seconds": round(min_lap_sec, 1),
-                    "crossing_time": peak_time,
-                    "peak_rssi": round(peak_rssi, 1),
-                }
-                if asyncio.iscoroutinefunction(self.on_crossing_too_soon):
-                    await self.on_crossing_too_soon(too_soon_data)
-                else:
-                    self.on_crossing_too_soon(too_soon_data)
             return "debounced"
 
         # A runner on a manual break crossing the mat is back from it (issue #86): end the break
@@ -514,7 +494,6 @@ class LapEngine:
             logger.info(f"☕ MANUAL BREAK ENDED: Bib {bib} ({name}) crossed the mat after {closed['duration_seconds']/60:.1f}m break.")
             await self._notify_resumed(bib, name, closed["duration_seconds"], peak_time)
             self.last_read_at[epc] = max(self.last_read_at.get(epc, 0.0), reads[-1][0])
-            self.debounced_near_mat.discard(epc)
             return "resumed"
 
         if not force:
@@ -531,7 +510,6 @@ class LapEngine:
 
                 await self._notify_resumed(bib, name, break_duration, peak_time)
                 self.last_read_at[epc] = max(self.last_read_at.get(epc, 0.0), reads[-1][0])
-                self.debounced_near_mat.discard(epc)
                 return "resumed"
 
             # Normal lap duration. (No floor: the min-lap debounce above already rejects short ones.)
@@ -543,7 +521,6 @@ class LapEngine:
         # Record completed lap
         await self._record_completed_lap(bib, name, peak_time, lap_duration, peak_rssi, manual_entry=force)
         self.last_read_at[epc] = max(self.last_read_at.get(epc, 0.0), reads[-1][0])
-        self.debounced_near_mat.discard(epc)
         return "lap"
 
     async def _notify_resumed(self, bib: int, name: str, break_duration: float, crossing_time: float):
@@ -567,23 +544,12 @@ class LapEngine:
         lap_duration: float,
         peak_rssi: float,
         manual_entry: bool = False,
-        check_suspicious: bool = True,
     ) -> Dict[str, Any]:
         last_lap = self.db.get_last_lap(bib)
         lap_number = (last_lap["lap_number"] + 1) if last_lap else 1
 
-        # Check for suspicious long lap (possible missed reading: >= 1.75x previous lap if >= 2 laps exist)
         flag_reason = None
-        if check_suspicious and not manual_entry:
-            prior_laps = self.db.get_laps_for_runner(bib)
-            if len(prior_laps) >= 2:
-                durations = sorted([l["lap_duration_seconds"] for l in prior_laps])
-                median_dur = durations[len(durations) // 2]
-                if lap_duration >= (1.75 * median_dur) and median_dur >= 20.0:
-                    flag_reason = f"Missed reading suspected ({round(lap_duration, 1)}s vs median {round(median_dur, 1)}s)"
-                    logger.warning(f"⚠️ SUSPICIOUS LAP: Bib {bib} ({name}) Lap {lap_number} flagged: {flag_reason}")
-
-        # A better explanation than a missed read, and true of confirmed crossings too (#128)
+        # A lap across an app restart can't be trusted (#128): flag it for review
         if self.db.lap_spans_restart(bib, peak_time):
             flag_reason = RESTART_FLAG_REASON
             logger.warning(f"⚠️ LAP ACROSS A RESTART: Bib {bib} ({name}) Lap {lap_number} flagged: {flag_reason}")
@@ -614,45 +580,6 @@ class LapEngine:
                 await self.on_lap_completed(lap_data)
             else:
                 self.on_lap_completed(lap_data)
-        return lap_data
-
-    async def accept_too_soon_crossing(
-        self, bib_number: int, crossing_time: float, peak_rssi: float = -45.0
-    ) -> Optional[Dict[str, Any]]:
-        """Records a previously debounced (too-soon) crossing after operator confirmation."""
-        event_state = self.db.get_event_state()
-        if event_state.get("status") != "running":
-            return None
-        participant = self.db.get_participant_by_bib(bib_number)
-        if not participant or participant.get("start_time") is None:
-            return None
-        last_crossing = participant.get("last_crossing_time") or participant["start_time"]
-        if crossing_time <= last_crossing:
-            return None
-        # Back from a manual break sooner than a lap (issue #86): the confirmed crossing ends
-        # the break instead of being a lap that includes it
-        closed = self.db.close_open_break(bib_number, crossing_time, self.speed_multiplier)
-        epc_norm = (participant.get("epc") or "").upper().strip()
-        if closed:
-            await self._notify_resumed(bib_number, participant["name"], closed["duration_seconds"], crossing_time)
-            if epc_norm:
-                self.last_read_at[epc_norm] = max(self.last_read_at.get(epc_norm, 0.0), crossing_time)
-                self.debounced_near_mat.discard(epc_norm)
-            return {"bib_number": bib_number, "resumed": True,
-                    "break_duration_seconds": closed["duration_seconds"], "crossing_time": crossing_time}
-        lap_duration = (crossing_time - last_crossing) * self.speed_multiplier
-        lap_data = await self._record_completed_lap(
-            bib_number,
-            participant["name"],
-            crossing_time,
-            lap_duration,
-            peak_rssi,
-            manual_entry=True,
-            check_suspicious=False,
-        )
-        if epc_norm:
-            self.last_read_at[epc_norm] = max(self.last_read_at.get(epc_norm, 0.0), crossing_time)
-            self.debounced_near_mat.discard(epc_norm)
         return lap_data
 
     async def trigger_manual_crossing(self, bib_number: int, force: bool = True) -> Optional[Dict[str, Any]]:
