@@ -5,7 +5,7 @@ from collections import deque
 from typing import Deque, Dict, List, Tuple, Callable, Optional, Any
 from core.db import RESTART_FLAG_REASON, Database
 from core import clock
-from core.models import TagRead
+from core.models import TagRead, epc_to_apriltag
 
 logger = logging.getLogger("LapEngine")
 
@@ -52,8 +52,10 @@ class LapEngine:
         self.auto_register_unassigned = auto_register_unassigned
         self.speed_multiplier: float = 1.0
 
-        # Buffer to aggregate bursts of reads: epc -> list of (timestamp, rssi)
+        # Buffer to aggregate bursts of reads: canonical_epc -> list of (timestamp, rssi)
         self.buffers: Dict[str, List[Tuple[float, float]]] = {}
+        # Sensor sources contributing to each active burst: canonical_epc -> {"rfid", "apriltag"}
+        self.burst_sources: Dict[str, set] = {}
         # Tags still in the field after a burst was resolved for running too long (issue #85):
         # epc -> time of its last read. Their later reads are the same visit to the mat, so they
         # are dropped until the tag has been quiet for the crossing window.
@@ -63,8 +65,8 @@ class LapEngine:
         # fringe reads every 5-10 s near the mat from accumulating into phantom laps).
         self.last_read_at: Dict[str, float] = {}
         self.debounced_near_mat: set = set()
-        # Bursts whose resolution raised, retried first on the next tick: (epc, reads, quiet)
-        self.failed_bursts: List[Tuple[str, List[Tuple[float, float]], bool]] = []
+        # Bursts whose resolution raised, retried first on the next tick: (epc, reads, quiet, source)
+        self.failed_bursts: List[Tuple[str, List[Tuple[float, float]], bool, str]] = []
         self.failed_event_id: Optional[int] = None
 
         # Raw read log. The reader thread appends (deque.append is thread-safe) and flush_loop
@@ -121,6 +123,7 @@ class LapEngine:
         # Everything remembered about tags is on the old timeline. Left in place, a tag waiting
         # at the start would chip-start at the old time, possibly a week before the gun.
         self.buffers.clear()
+        self.burst_sources.clear()
         self.lingering.clear()
         self.last_read_at.clear()
         self.debounced_near_mat.clear()
@@ -188,6 +191,7 @@ class LapEngine:
         self.last_read_at.pop(epc, None)
         self.debounced_near_mat.discard(epc)
         self.buffers.pop(epc, None)
+        self.burst_sources.pop(epc, None)
         self.failed_bursts = [b for b in self.failed_bursts if b[0] != epc]
 
     def mark_tag_started_on_mat(self, epc: Optional[str], now: float):
@@ -197,28 +201,43 @@ class LapEngine:
             return
         epc = epc.upper().strip()
         self.buffers.pop(epc, None)
+        self.burst_sources.pop(epc, None)
         self.failed_bursts = [b for b in self.failed_bursts if b[0] != epc]
         self.lingering[epc] = now
         self.last_read_at[epc] = now
         self.debounced_near_mat.discard(epc)
 
     def process_tag_read(self, tag_read: TagRead):
-        """Called for every read from the RFID reader (mock or physical).
+        """Called for every read from any sensor (RFID mock/serial OR AprilTag camera).
 
-        Must run on the event loop, like flush_once: web/app.py hands reads over from the
-        reader thread with call_soon_threadsafe, so the buffers have a single owner (issue #13).
+        Sensor Fusion: when an AprilTag read belongs to a runner who also has an RFID EPC,
+        both sensors route into the SAME canonical buffer & debounce timeline so simultaneous
+        RFID + camera detections fuse into a single crossing instead of double-counting.
         """
         epc = tag_read.epc.upper().strip()
+        source = getattr(tag_read, "source", "rfid") or "rfid"
+        apriltag_id = getattr(tag_read, "apriltag_id", None)
+        if apriltag_id is None:
+            apriltag_id = epc_to_apriltag(epc)
+
+        # Canonical fusion: map AprilTag ID onto the runner's primary RFID EPC if paired
+        if apriltag_id is not None:
+            owner = self.db.get_participant_by_apriltag(apriltag_id)
+            if owner and owner.get("epc"):
+                epc = owner["epc"].upper().strip()
+
         now = tag_read.timestamp
         if self._reads_not_before is not None and now < self._reads_not_before:
             return  # was on its way from the reader thread when the clock re-synced
 
-        # Notify any listeners that an RFID tag was detected (useful for Admin registration)
+        # Notify any listeners that a tag was detected (useful for Admin registration)
         if self.on_tag_detected:
             self.on_tag_detected({
                 "epc": epc,
                 "timestamp": now,
-                "rssi": tag_read.rssi
+                "rssi": tag_read.rssi,
+                "source": source,
+                "apriltag_id": apriltag_id,
             })
 
         event_id = self.log_event_id
@@ -228,6 +247,7 @@ class LapEngine:
         if epc not in self.buffers:
             self.buffers[epc] = []
         self.buffers[epc].append((now, tag_read.rssi))
+        self.burst_sources.setdefault(epc, set()).add(source)
 
     async def flush_loop(self):
         """Background coroutine that checks buffers and triggers crossings when a burst finishes.
@@ -301,13 +321,22 @@ class LapEngine:
         # a new burst instead of being swept into (or dropped with) one already finished.
         # Bursts that failed last tick go first, so a runner's crossings resolve in order.
         bursts, self.failed_bursts = self.failed_bursts, []
-        bursts += [(epc, self.buffers.pop(epc), quiet) for epc, quiet in epcs_to_process]
+        for epc, quiet in epcs_to_process:
+            reads = self.buffers.pop(epc)
+            sources = self.burst_sources.pop(epc, {"rfid"})
+            if "rfid" in sources and "apriltag" in sources:
+                source_label = "fused"
+            elif "apriltag" in sources:
+                source_label = "apriltag"
+            else:
+                source_label = "rfid"
+            bursts.append((epc, reads, quiet, source_label))
         error: Optional[Exception] = None
         failed_epcs = set()
-        for epc, reads, quiet in bursts:
+        for epc, reads, quiet, source_label in bursts:
             if epc in failed_epcs:
                 # An earlier crossing of this tag is still failing: keep this one behind it
-                self.failed_bursts.append((epc, reads, quiet))
+                self.failed_bursts.append((epc, reads, quiet, source_label))
                 continue
             if epc in self.lingering and (reads[0][0] - self.lingering[epc]) >= effective_window:
                 # A later visit queued behind a retried burst of the same tag (the tag left
@@ -322,7 +351,7 @@ class LapEngine:
                     self.lingering[epc] = reads[-1][0]
                 continue
             try:
-                outcome = await self._resolve_crossing(epc, reads)
+                outcome = await self._resolve_crossing(epc, reads, source=source_label)
             except Exception as e:
                 # Keep the burst for the next tick instead of losing the crossing. A retry of
                 # one that was already written is recognised and not counted twice.
@@ -331,7 +360,7 @@ class LapEngine:
                     logger.error(f"Giving up on a crossing of {epc} at {reads[-1][0]:.1f} after "
                                  f"{CROSSING_RETRY_SECONDS:.0f}s of failures: {type(e).__name__}: {e}")
                 else:
-                    self.failed_bursts.append((epc, reads, quiet))
+                    self.failed_bursts.append((epc, reads, quiet, source_label))
                     failed_epcs.add(epc)
                 continue
             if not quiet and outcome is not None:
@@ -352,7 +381,9 @@ class LapEngine:
         m, sec = divmod(int(round(race_seconds)), 60)
         return f"First seen {m}:{sec:02d} after the gun: start missed in the crowd, or joined late?"
 
-    async def _resolve_crossing(self, epc: str, reads: List[Tuple[float, float]], force: bool = False) -> Optional[str]:
+    async def _resolve_crossing(
+        self, epc: str, reads: List[Tuple[float, float]], force: bool = False, source: str = "rfid"
+    ) -> Optional[str]:
         """Determines peak timestamp and updates participant state (start, lap, or break resume).
 
         Returns what happened: "started", "lap", "resumed", "debounced", "duplicate" (this
@@ -377,10 +408,13 @@ class LapEngine:
         is_timed_crossing = (status == "running" or ended_in_time or paused_in_time) and bool(race_start)
 
         auto_registered = False
+        atid = epc_to_apriltag(epc)
         participant = self.db.get_participant_by_epc(epc)
+        if not participant and atid is not None:
+            participant = self.db.get_participant_by_apriltag(atid)
         if not participant:
             if self.auto_register_unassigned and is_timed_crossing:
-                participant = self.db.add_placeholder_participant(epc)
+                participant = self.db.add_placeholder_participant(epc, apriltag_id=atid)
                 auto_registered = True
                 logger.info(
                     f"Auto-registered walk-up tag {epc} as Bib {participant['bib_number']} ({participant['name']})"
@@ -392,6 +426,8 @@ class LapEngine:
                         "name": participant["name"],
                         "peak_rssi": round(peak_rssi, 1),
                         "timestamp": peak_time,
+                        "source": source,
+                        "apriltag_id": atid,
                     }
                     if asyncio.iscoroutinefunction(self.on_unassigned_tag):
                         await self.on_unassigned_tag(tag_data)
@@ -404,6 +440,8 @@ class LapEngine:
                         "epc": epc,
                         "peak_rssi": round(peak_rssi, 1),
                         "timestamp": peak_time,
+                        "source": source,
+                        "apriltag_id": atid,
                     }
                     if asyncio.iscoroutinefunction(self.on_unassigned_tag):
                         await self.on_unassigned_tag(tag_data)
@@ -448,6 +486,7 @@ class LapEngine:
                     "event_offset_seconds": round(peak_time - race_start, 1),
                     "peak_rssi": round(peak_rssi, 1),
                     "start_flag_reason": start_flag,
+                    "source": source,
                 }
                 if asyncio.iscoroutinefunction(self.on_runner_started):
                     await self.on_runner_started(start_data)
@@ -512,7 +551,7 @@ class LapEngine:
         closed = participant.get("maybe_on_break") and self.db.close_open_break(bib, peak_time, self.speed_multiplier)
         if closed:
             logger.info(f"☕ MANUAL BREAK ENDED: Bib {bib} ({name}) crossed the mat after {closed['duration_seconds']/60:.1f}m break.")
-            await self._notify_resumed(bib, name, closed["duration_seconds"], peak_time)
+            await self._notify_resumed(bib, name, closed["duration_seconds"], peak_time, source=source)
             self.last_read_at[epc] = max(self.last_read_at.get(epc, 0.0), reads[-1][0])
             self.debounced_near_mat.discard(epc)
             return "resumed"
@@ -529,7 +568,7 @@ class LapEngine:
                 )  # also moves the last crossing to peak_time
                 logger.info(f"☕ BREAK DETECTED & RESUMED: Bib {bib} ({name}) resumed after {break_duration/60:.1f}m break!")
 
-                await self._notify_resumed(bib, name, break_duration, peak_time)
+                await self._notify_resumed(bib, name, break_duration, peak_time, source=source)
                 self.last_read_at[epc] = max(self.last_read_at.get(epc, 0.0), reads[-1][0])
                 self.debounced_near_mat.discard(epc)
                 return "resumed"
@@ -541,18 +580,23 @@ class LapEngine:
             lap_duration = time_since_last * self.speed_multiplier
 
         # Record completed lap
-        await self._record_completed_lap(bib, name, peak_time, lap_duration, peak_rssi, manual_entry=force)
+        await self._record_completed_lap(
+            bib, name, peak_time, lap_duration, peak_rssi, manual_entry=force, source=source
+        )
         self.last_read_at[epc] = max(self.last_read_at.get(epc, 0.0), reads[-1][0])
         self.debounced_near_mat.discard(epc)
         return "lap"
 
-    async def _notify_resumed(self, bib: int, name: str, break_duration: float, crossing_time: float):
+    async def _notify_resumed(
+        self, bib: int, name: str, break_duration: float, crossing_time: float, source: str = "rfid"
+    ):
         if self.on_runner_resumed:
             resumed_data = {
                 "bib_number": bib,
                 "name": name,
                 "break_duration_seconds": round(break_duration, 2),
                 "crossing_time": crossing_time,
+                "source": source,
             }
             if asyncio.iscoroutinefunction(self.on_runner_resumed):
                 await self.on_runner_resumed(resumed_data)
@@ -568,6 +612,7 @@ class LapEngine:
         peak_rssi: float,
         manual_entry: bool = False,
         check_suspicious: bool = True,
+        source: str = "rfid",
     ) -> Dict[str, Any]:
         last_lap = self.db.get_last_lap(bib)
         lap_number = (last_lap["lap_number"] + 1) if last_lap else 1
@@ -608,6 +653,7 @@ class LapEngine:
             "lap_duration_seconds": round(lap_duration, 2),
             "crossing_time": peak_time,
             "peak_rssi": round(peak_rssi, 1),
+            "source": source,
         }
         if self.on_lap_completed:
             if asyncio.iscoroutinefunction(self.on_lap_completed):

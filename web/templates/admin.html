@@ -355,6 +355,14 @@
           </div>
 
           <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="block text-xs font-medium text-slate-300">AprilTag # (0–29, Optional)</label>
+              <span class="text-[10px] text-sky-400">Pair with RFID for sensor fusion</span>
+            </div>
+            <input type="number" id="regApriltag" min="0" max="29" placeholder="e.g. 5" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-sky-500">
+          </div>
+
+          <div>
             <label class="block text-xs font-medium text-slate-300 mb-1">Notes / Target (Optional)</label>
             <input type="text" id="regNotes" placeholder="e.g. 10k pace group" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
           </div>
@@ -396,8 +404,15 @@
                 <td class="py-3 px-4 font-mono font-bold text-emerald-400">#{{ p.bib_number }}</td>
                 <td class="py-3 px-4 font-medium text-white">{{ p.name }}</td>
                 <td class="py-3 px-4 text-center text-xs">
-                  {% if p.epc %}<span class="text-emerald-400" title="{{ p.epc }}"><i class="fa-solid fa-check"></i></span>
-                  {% else %}<span class="text-amber-400" title="No tag assigned yet">none</span>{% endif %}
+                  <div class="inline-flex items-center gap-1.5">
+                    {% if p.epc %}<span class="text-emerald-400" title="RFID: {{ p.epc }}"><i class="fa-solid fa-check"></i></span>
+                    {% elif p.apriltag_id is none %}<span class="text-amber-400" title="No tag assigned yet">none</span>{% endif %}
+                    <button type="button" onclick="assignApriltag({{ p.bib_number }}, {{ p.apriltag_id if p.apriltag_id is not none else 'null' }})"
+                            title="Assign or edit AprilTag 16h5 ID (0-29)"
+                            class="font-mono text-[10px] px-1.5 py-0.5 rounded border {% if p.apriltag_id is not none %}bg-sky-950/60 border-sky-500/40 text-sky-300{% else %}bg-slate-800/70 border-slate-700 text-slate-400 hover:text-sky-300{% endif %}">
+                      {% if p.apriltag_id is not none %}AT #{{ '%02d' % p.apriltag_id }}{% else %}+AT{% endif %}
+                    </button>
+                  </div>
                 </td>
                 <td class="py-3 px-4 text-xs font-mono">
                   {% if p.start_time %}
@@ -701,13 +716,15 @@
       const bib_number = parseInt(document.getElementById("regBib").value);
       const name = document.getElementById("regName").value;
       const epc = document.getElementById("regEpc").value;
+      const atRaw = document.getElementById("regApriltag").value.trim();
+      const apriltag_id = atRaw === "" ? null : parseInt(atRaw, 10);
       const notes = document.getElementById("regNotes").value;
       const email = document.getElementById("regEmail").value;
 
       const res = await fetch("/api/participants", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bib_number, name, epc, notes, email })
+        body: JSON.stringify({ bib_number, name, epc, apriltag_id, notes, email })
       });
 
       if (res.ok) {
@@ -716,6 +733,30 @@
         const err = await res.json();
         alert("Error: " + err.detail);
       }
+    }
+
+    async function assignApriltag(bib, currentId) {
+      const val = prompt(
+        `AprilTag 16h5 ID (0–29) for Bib #${bib} (leave blank to clear):`,
+        currentId === null || currentId === undefined ? "" : String(currentId)
+      );
+      if (val === null) return;
+      const trimmed = val.trim();
+      let apriltag_id = null;
+      if (trimmed !== "") {
+        apriltag_id = parseInt(trimmed, 10);
+        if (isNaN(apriltag_id) || apriltag_id < 0 || apriltag_id > 29) {
+          alert("AprilTag ID must be an integer between 0 and 29.");
+          return;
+        }
+      }
+      const res = await fetch(`/api/participants/${bib}/apriltag`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apriltag_id })
+      });
+      if (res.ok) window.location.reload();
+      else await alertFailure(res, "Could not update AprilTag ID");
     }
 
     async function deleteParticipant(bib) {
