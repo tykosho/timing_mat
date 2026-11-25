@@ -11,7 +11,10 @@ admin:
                                  # Unset: mock mode runs unprotected; real-hardware mode makes up a PIN and logs it.
 
 hardware:
-  mock: true                     # Set to false on Raspberry Pi with real R200 antenna
+  mock: true                     # Set to false for real timing (RFID and/or AprilTag camera)
+  rfid_enabled: true             # Set to false (or ENABLE_RFID=false) for camera-only mode without an RFID reader
+  apriltag_enabled: false        # Set to true (or ENABLE_APRILTAG=true) to auto-start the AprilTag webcam on boot
+  camera_index: 0                # Webcam index (0 = default camera; switchable live in /crossings)
   serial_port: "/dev/ttyUSB0"    # Default Linux/Pi serial port
   baud_rate: 115200
   rearm_interval_seconds: 300    # Restart the reader's inventory this often (it stops after 65,535 polls); 0 = off

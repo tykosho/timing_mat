@@ -182,10 +182,16 @@ class Database:
                 ("laps", "flag_reason", "TEXT DEFAULT NULL"),      # suspicious-lap review (#10)
                 ("participants", "start_flag_reason", "TEXT DEFAULT NULL"),  # missed start (#72)
                 ("events", "clock_shift_seconds", "REAL DEFAULT 0.0"),  # re-syncs since End (#129)
+                ("participants", "apriltag_id", "INTEGER DEFAULT NULL"),     # RFID + AprilTag fusion
             ]:
                 cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table});")]
                 if column not in cols:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl};")
+
+            conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_apriltag
+                    ON participants(event_id, apriltag_id) WHERE apriltag_id IS NOT NULL;
+            """)
 
             if not conn.execute("SELECT 1 FROM events LIMIT 1;").fetchone():
                 self._insert_event(conn, self.default_event_name)
@@ -481,13 +487,26 @@ class Database:
             return row
         return None
 
+    def _find_apriltag_owner(self, conn: sqlite3.Connection, event_id: int, apriltag_id: int,
+                             exclude_bib: Optional[int] = None) -> Optional[sqlite3.Row]:
+        row = conn.execute(
+            "SELECT bib_number, name FROM participants WHERE event_id = ? AND apriltag_id = ?;",
+            (event_id, int(apriltag_id)),
+        ).fetchone()
+        if row and row["bib_number"] != exclude_bib:
+            return row
+        return None
+
     def add_participant(self, bib_number: int, name: str, epc: Optional[str] = None, notes: str = "",
-                        email: str = "", event_id: Optional[int] = None) -> bool:
+                        email: str = "", event_id: Optional[int] = None,
+                        apriltag_id: Optional[int] = None) -> bool:
         eid = self._eid(event_id)
         epc = normalize_epc(epc)
         name = (name or "").strip()
         if not name:
             raise RegistrationError("Name is required")
+        if apriltag_id is not None and not (0 <= int(apriltag_id) < 30):
+            raise RegistrationError("AprilTag 16h5 ID must be between 0 and 29")
         with self.connect() as conn:
             if conn.execute("SELECT 1 FROM participants WHERE event_id = ? AND bib_number = ?;", (eid, bib_number)).fetchone():
                 raise RegistrationError(f"Bib #{bib_number} is already registered")
@@ -495,14 +514,22 @@ class Database:
                 owner = self._find_tag_owner(conn, eid, epc)
                 if owner:
                     raise RegistrationError(f"Tag {epc} is already assigned to #{owner['bib_number']} {owner['name']}")
+            if apriltag_id is not None:
+                at_owner = self._find_apriltag_owner(conn, eid, int(apriltag_id))
+                if at_owner:
+                    raise RegistrationError(
+                        f"AprilTag #{int(apriltag_id)} is already assigned to #{at_owner['bib_number']} {at_owner['name']}"
+                    )
             conn.execute("""
-                INSERT INTO participants (event_id, bib_number, name, email, epc, notes, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?);""",
-                (eid, bib_number, name, (email or "").strip(), epc, (notes or "").strip(), clock.now()))
+                INSERT INTO participants (event_id, bib_number, name, email, epc, notes, created_at, apriltag_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?);""",
+                (eid, bib_number, name, (email or "").strip(), epc, (notes or "").strip(), clock.now(),
+                 int(apriltag_id) if apriltag_id is not None else None))
         return True
 
     def update_participant(self, bib_number: int, name: str, epc: Optional[str] = None, notes: str = "",
-                           email: Optional[str] = None, event_id: Optional[int] = None) -> bool:
+                           email: Optional[str] = None, event_id: Optional[int] = None,
+                           apriltag_id: Any = ...) -> bool:
         eid = self._eid(event_id)
         epc = normalize_epc(epc)
         with self.connect() as conn:
@@ -513,20 +540,39 @@ class Database:
                 owner = self._find_tag_owner(conn, eid, epc, exclude_bib=bib_number)
                 if owner:
                     raise RegistrationError(f"Tag {epc} is already assigned to #{owner['bib_number']} {owner['name']}")
+            next_at = current["apriltag_id"] if apriltag_id is ... else (
+                int(apriltag_id) if apriltag_id is not None else None
+            )
+            if next_at is not None:
+                if not (0 <= next_at < 30):
+                    raise RegistrationError("AprilTag 16h5 ID must be between 0 and 29")
+                at_owner = self._find_apriltag_owner(conn, eid, next_at, exclude_bib=bib_number)
+                if at_owner:
+                    raise RegistrationError(
+                        f"AprilTag #{next_at} is already assigned to #{at_owner['bib_number']} {at_owner['name']}"
+                    )
             conn.execute("""
-                UPDATE participants SET name = ?, epc = ?, notes = ?, email = ?
+                UPDATE participants SET name = ?, epc = ?, notes = ?, email = ?, apriltag_id = ?
                 WHERE event_id = ? AND bib_number = ?;""",
                 ((name or "").strip() or current["name"], epc, (notes or "").strip(),
-                 current["email"] if email is None else email.strip(), eid, bib_number))
+                 current["email"] if email is None else email.strip(), next_at, eid, bib_number))
         return True
 
-    def add_placeholder_participant(self, epc: str, event_id: Optional[int] = None) -> Dict[str, Any]:
+    def add_placeholder_participant(self, epc: str, event_id: Optional[int] = None,
+                                    apriltag_id: Optional[int] = None) -> Dict[str, Any]:
         """Auto-registers an unrecognized tag on the mat as 'Runner #<bib>' so laps time immediately."""
         eid = self._eid(event_id)
         epc = normalize_epc(epc)
         if not epc:
             raise RegistrationError("Tag EPC is required")
         with self.connect() as conn:
+            if apriltag_id is not None:
+                existing_at = conn.execute(
+                    "SELECT * FROM participants WHERE event_id = ? AND apriltag_id = ?;",
+                    (eid, int(apriltag_id)),
+                ).fetchone()
+                if existing_at:
+                    return dict(existing_at)
             existing = conn.execute(
                 "SELECT * FROM participants WHERE event_id = ? AND epc = ?;", (eid, epc)
             ).fetchone()
@@ -541,9 +587,9 @@ class Database:
                 bib += 1
             name = f"Runner #{bib}"
             conn.execute(
-                """INSERT INTO participants (event_id, bib_number, name, email, epc, notes, created_at)
-                   VALUES (?, ?, ?, '', ?, 'Auto-registered walk-up tag', ?);""",
-                (eid, bib, name, epc, clock.now()),
+                """INSERT INTO participants (event_id, bib_number, name, email, epc, notes, created_at, apriltag_id)
+                   VALUES (?, ?, ?, '', ?, 'Auto-registered walk-up tag', ?, ?);""",
+                (eid, bib, name, epc, clock.now(), int(apriltag_id) if apriltag_id is not None else None),
             )
             row = conn.execute(
                 "SELECT * FROM participants WHERE event_id = ? AND bib_number = ?;", (eid, bib)
@@ -627,6 +673,61 @@ class Database:
                                   FROM participants p WHERE p.event_id = ? AND p.epc = ?;""",
                                (self._eid(event_id), (epc or "").strip().upper())).fetchone()
             return dict(row) if row else None
+
+    def get_participant_by_apriltag(self, apriltag_id: int, event_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute("""SELECT p.*, EXISTS(SELECT 1 FROM breaks b
+                                      WHERE b.event_id = p.event_id AND b.bib_number = p.bib_number
+                                      AND (b.end_time = 0.0 OR b.end_time > COALESCE(p.last_crossing_time, 0))
+                                  ) AS maybe_on_break
+                                  FROM participants p WHERE p.event_id = ? AND p.apriltag_id = ?;""",
+                               (self._eid(event_id), int(apriltag_id))).fetchone()
+            return dict(row) if row else None
+
+    def set_participant_apriltag(self, bib_number: int, apriltag_id: Optional[int],
+                                 event_id: Optional[int] = None, swap: bool = True) -> None:
+        """Assign, clear, or swap a runner's AprilTag 16h5 ID (0..29) for RFID+optical fusion."""
+        eid = self._eid(event_id)
+        if apriltag_id is not None and not (0 <= int(apriltag_id) < 30):
+            raise RegistrationError("AprilTag 16h5 ID must be between 0 and 29")
+        with self.connect() as conn:
+            current = conn.execute(
+                "SELECT bib_number, apriltag_id FROM participants WHERE event_id = ? AND bib_number = ?;",
+                (eid, bib_number),
+            ).fetchone()
+            if not current:
+                raise RegistrationError(f"Bib #{bib_number} is not registered")
+            old_at = current["apriltag_id"]
+            if apriltag_id is not None:
+                target_at = int(apriltag_id)
+                owner = self._find_apriltag_owner(conn, eid, target_at, exclude_bib=bib_number)
+                if owner:
+                    if not swap:
+                        raise RegistrationError(
+                            f"AprilTag #{target_at} is already assigned to #{owner['bib_number']} {owner['name']}"
+                        )
+                    conn.execute(
+                        "UPDATE participants SET apriltag_id = NULL WHERE event_id = ? AND bib_number = ?;",
+                        (eid, owner["bib_number"]),
+                    )
+                    conn.execute(
+                        "UPDATE participants SET apriltag_id = ? WHERE event_id = ? AND bib_number = ?;",
+                        (target_at, eid, bib_number),
+                    )
+                    conn.execute(
+                        "UPDATE participants SET apriltag_id = ? WHERE event_id = ? AND bib_number = ?;",
+                        (old_at, eid, owner["bib_number"]),
+                    )
+                    return
+                conn.execute(
+                    "UPDATE participants SET apriltag_id = ? WHERE event_id = ? AND bib_number = ?;",
+                    (target_at, eid, bib_number),
+                )
+            else:
+                conn.execute(
+                    "UPDATE participants SET apriltag_id = NULL WHERE event_id = ? AND bib_number = ?;",
+                    (eid, bib_number),
+                )
 
     # --- missed starts (issue #72) ---
     def flag_start(self, bib_number: int, reason: str, event_id: Optional[int] = None):
