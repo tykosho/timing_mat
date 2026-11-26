@@ -20,6 +20,7 @@ from core import clock
 from core.commentary import CommentaryEngine
 from core.db import Database, RegistrationError, EventStateError, LapEditError
 from core.models import epc_to_apriltag
+from core.predict5k import Predict5KManager
 from core.registration_import import parse_registration_csv
 from core.lap_engine import LapEngine
 from hardware.apriltag_reader import (
@@ -237,6 +238,19 @@ lap_engine.resume_clock()
 
 lap_engine.refresh_event()
 
+def _on_predict_finished(entry_payload: Dict[str, Any]):
+    if main_event_loop is None:
+        return
+    async def _push():
+        await broadcast_ws({
+            "type": "predict_finished",
+            "entry": entry_payload,
+            "state": predict_5k.get_state(),
+        })
+    asyncio.run_coroutine_threadsafe(_push(), main_event_loop)
+
+predict_5k = Predict5KManager(lambda: db.db_path, on_runner_finished=_on_predict_finished)
+
 def on_reader_tag(tag_read):
     """Called on the reader's thread for every read. Hands it to the event loop, so the lap
     engine's buffers are only ever touched from one thread (issue #13)."""
@@ -246,6 +260,7 @@ def on_reader_tag(tag_read):
         return  # reader started before the app; can't happen via lifespan, but never crash it
     try:
         loop.call_soon_threadsafe(lap_engine.process_tag_read, tag_read)
+        loop.call_soon_threadsafe(predict_5k.process_tag_read, tag_read)
     except RuntimeError:
         pass  # loop already closed during shutdown
 
@@ -436,6 +451,18 @@ async def crossings_page(request: Request):
             "event": event_state,
             "leaderboard": leaderboard,
             "recent_crossings": recent_crossings,
+            "is_mock": use_mock,
+            "camera_running": apriltag_reader.is_running,
+        }
+    )
+
+@app.get("/predict", response_class=HTMLResponse)
+async def predict_page(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="predict.html",
+        context={
+            "predict_state": predict_5k.get_state(),
             "is_mock": use_mock,
             "camera_running": apriltag_reader.is_running,
         }
@@ -1280,6 +1307,110 @@ async def api_test_announcer(req: AnnouncerTestRequest):
         prev_avg_seconds=88.0 if req.category == "fast" else 84.0,
         force_category=req.category,
     )
+
+# ----------------- PREDICT 5K API -----------------
+class PredictEntryRequest(BaseModel):
+    name: str
+    predicted_time: Any
+    epc: Optional[str] = None
+    apriltag_id: Optional[int] = None
+
+class PredictSettingsRequest(BaseModel):
+    name: Optional[str] = None
+    countdown_seconds: Optional[int] = Field(default=None, ge=0, le=120)
+    min_finish_seconds: Optional[int] = Field(default=None, ge=1, le=7200)
+
+class PredictStartRequest(BaseModel):
+    countdown_seconds: Optional[int] = Field(default=None, ge=0, le=120)
+
+class PredictNewRequest(BaseModel):
+    name: str = "Club Predict 5K"
+
+async def _broadcast_predict_state():
+    state = predict_5k.get_state()
+    await broadcast_ws({"type": "predict_state", "state": state})
+    return state
+
+@app.get("/api/predict/state")
+async def api_predict_state():
+    return predict_5k.get_state()
+
+@app.post("/api/predict/entries")
+async def api_predict_add_entry(req: PredictEntryRequest):
+    try:
+        entry = predict_5k.add_entry(
+            name=req.name,
+            predicted_time=req.predicted_time,
+            epc=req.epc,
+            apriltag_id=req.apriltag_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    state = await _broadcast_predict_state()
+    return {"status": "created", "entry": entry, "state": state}
+
+@app.delete("/api/predict/entries/{entry_id}")
+async def api_predict_delete_entry(entry_id: int):
+    if not predict_5k.delete_entry(entry_id):
+        raise HTTPException(status_code=404, detail="Entry not found")
+    state = await _broadcast_predict_state()
+    return {"status": "deleted", "state": state}
+
+@app.post("/api/predict/settings")
+async def api_predict_settings(req: PredictSettingsRequest):
+    predict_5k.update_settings(
+        name=req.name,
+        countdown_seconds=req.countdown_seconds,
+        min_finish_seconds=req.min_finish_seconds,
+    )
+    state = await _broadcast_predict_state()
+    return {"status": "updated", "state": state}
+
+@app.post("/api/predict/start")
+async def api_predict_start(req: Optional[PredictStartRequest] = None):
+    cd = req.countdown_seconds if req else None
+    state = predict_5k.start_race(countdown_override=cd)
+    await broadcast_ws({"type": "predict_state", "state": state})
+    return {"status": "started", "state": state}
+
+@app.post("/api/predict/reset")
+async def api_predict_reset():
+    predict_5k.reset_race()
+    state = await _broadcast_predict_state()
+    return {"status": "reset", "state": state}
+
+@app.post("/api/predict/new")
+async def api_predict_new(req: PredictNewRequest):
+    predict_5k.new_session(req.name)
+    state = await _broadcast_predict_state()
+    return {"status": "created", "state": state}
+
+@app.post("/api/predict/entries/{entry_id}/finish")
+async def api_predict_manual_finish(entry_id: int):
+    payload = predict_5k.record_finish(entry_id, source="manual")
+    if not payload:
+        raise HTTPException(status_code=409, detail="Runner already finished, race not running, or under minimum finish time.")
+    state = predict_5k.get_state()
+    await broadcast_ws({"type": "predict_finished", "entry": payload, "state": state})
+    return {"status": "finished", "entry": payload, "state": state}
+
+@app.post("/api/predict/reveal/start")
+async def api_predict_reveal_start():
+    try:
+        predict_5k.start_reveal()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    state = await _broadcast_predict_state()
+    return {"status": "revealing", "state": state}
+
+@app.post("/api/predict/reveal/next")
+async def api_predict_reveal_next():
+    try:
+        predict_5k.reveal_next()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    state = await _broadcast_predict_state()
+    return {"status": "revealed", "state": state}
 
 from web.simulator_routes import router as simulator_router  # noqa: E402
 app.include_router(simulator_router)
