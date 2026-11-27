@@ -45,9 +45,6 @@ class TestPrebuiltCss(unittest.TestCase):
         self.assertEqual(missing, [], f"{template} {marker!r}: classes missing from app.css "
                                       "(run `npm ci && npm run build:css`)")
 
-    def test_crossing_too_soon_prompt(self):
-        self.assertStyled("crossings.html", 'id="tooSoonPrompt"', "div")
-
     def test_replay_chart_container(self):
         # Chart.js uses maintainAspectRatio: false, so the box needs its own height.
         self.assertStyled("replay.html", "h-[520px]", "div")

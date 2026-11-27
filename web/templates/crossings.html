@@ -1115,16 +1115,6 @@
   </div>
   {% endif %}
 
-  <!-- Crossing Too Soon Prompt (stacked list so concurrent runners never overwrite each other) -->
-  <div id="tooSoonPrompt" role="dialog" aria-labelledby="tooSoonTitle"
-    class="hidden fixed top-20 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md z-50 bg-slate-900/95 backdrop-blur border border-amber-500/70 rounded-2xl shadow-2xl p-4 text-slate-100">
-    <div class="flex items-center gap-2 mb-2">
-      <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
-      <h2 id="tooSoonTitle" class="text-sm font-bold text-white">Crossing Too Soon</h2>
-    </div>
-    <div id="tooSoonList" class="space-y-3 max-h-80 overflow-y-auto"></div>
-  </div>
-
   <!-- Unrecognized Tag Self-Registration Prompt (stacked list) -->
   <div id="unrecognizedTagPrompt" role="dialog" aria-labelledby="unrecognizedTagTitle"
     class="hidden fixed bottom-4 left-4 right-4 sm:right-auto sm:w-96 z-50 bg-slate-900/95 backdrop-blur border border-amber-500/60 rounded-2xl shadow-2xl p-4 text-slate-100">
@@ -1754,17 +1744,13 @@
           });
           if (Array.isArray(currentLeaderboard)) {
             currentLeaderboard.forEach(r => {
-              if (r.bib_number === msg.bib_number) r.name = msg.name;
+              if (r.bib_number === msg.bib_number) { r.name = msg.name; r.unclaimed = false; }
             });
           }
           renderCrossingFeed(false);
         } else if (msg.type === "unassigned_tag_detected") {
           if (msg.data && msg.data.epc) {
             showUnrecognizedTagPrompt(msg.data);
-          }
-        } else if (msg.type === "crossing_too_soon") {
-          if (msg.data && msg.data.bib_number != null) {
-            showTooSoonPrompt(msg.data);
           }
         } else if (msg.type === "event_status") {
           const wasReset = msg.event && msg.event.status === "setup" && !msg.event.start_time;
@@ -1991,7 +1977,7 @@
       const list = document.getElementById("unclaimedRunnersList");
       if (!bar || !list) return;
       const board = Array.isArray(currentLeaderboard) ? currentLeaderboard : [];
-      const unclaimed = board.filter(r => isPlaceholderName(r.name));
+      const unclaimed = board.filter(r => r.unclaimed);
       if (unclaimed.length === 0) {
         bar.classList.add("hidden");
         list.innerHTML = "";
@@ -2003,8 +1989,7 @@
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "text-xs font-semibold bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/50 text-amber-100 px-2.5 py-1 rounded-lg transition flex items-center gap-1.5";
-        const laps = r.total_laps || 0;
-        btn.innerHTML = `<span class="font-mono font-bold">#${r.bib_number}</span><span>(${laps} lap${laps === 1 ? "" : "s"})</span><i class="fa-solid fa-pen text-[10px] text-amber-300"></i>`;
+        btn.innerHTML = `<span class="font-mono font-bold">#${r.bib_number}</span><i class="fa-solid fa-pen text-[10px] text-amber-300"></i>`;
         btn.onclick = () => openRenameModalByBib(r.bib_number);
         list.appendChild(btn);
       });
@@ -2074,116 +2059,9 @@
       });
     })();
 
-    // Stacked too-soon crossing confirmation list (each item auto-rejects after 30s)
-    const TOO_SOON_AUTO_REJECT_MS = 30000;
-    let tooSoonSeq = 0;
-    const tooSoonItems = [];
-
-    function renderTooSoonPrompt() {
-      const promptEl = document.getElementById("tooSoonPrompt");
-      const listEl = document.getElementById("tooSoonList");
-      if (!promptEl || !listEl) return;
-      if (tooSoonItems.length === 0) {
-        promptEl.classList.add("hidden");
-        listEl.innerHTML = "";
-        return;
-      }
-      promptEl.classList.remove("hidden");
-      listEl.innerHTML = "";
-      tooSoonItems.forEach(item => {
-        const secs = Math.max(0, Math.ceil((item.deadline - Date.now()) / 1000));
-        const elapsed = Number(item.elapsed_seconds || 0).toFixed(1);
-        const minLap = Number(item.min_lap_seconds || 0).toFixed(0);
-        const card = document.createElement("div");
-        card.className = "bg-slate-950/80 border border-slate-800 rounded-xl p-3";
-        card.setAttribute("data-too-soon-id", String(item.id));
-        const errHtml = item.error
-          ? `<p class="text-xs text-rose-400 font-medium mt-1.5">${esc(item.error)}</p>`
-          : "";
-        card.innerHTML = `
-          <div class="flex items-start justify-between gap-2">
-            <p class="text-xs text-slate-200">
-              <strong class="text-white">${esc(item.name || `Bib #${item.bib_number}`)}</strong> (#${item.bib_number})
-              crossed after <span class="font-mono text-amber-300">${elapsed}s</span> (min ${minLap}s).
-            </p>
-            <span class="too-soon-countdown text-[11px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full shrink-0">${secs}s</span>
-          </div>
-          ${errHtml}
-          <div class="flex items-center justify-end gap-2 mt-2.5">
-            <button type="button" onclick="rejectTooSoonItem(${item.id})"
-                    class="px-3 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors">
-              Reject
-            </button>
-            <button type="button" onclick="acceptTooSoonItem(${item.id})" ${item.busy ? "disabled" : ""}
-                    class="px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white shadow transition-colors">
-              Accept Lap
-            </button>
-          </div>
-        `;
-        listEl.appendChild(card);
-      });
-    }
-
-    function showTooSoonPrompt(data) {
-      if (tooSoonItems.some(it => it.bib_number === data.bib_number)) {
-        return;
-      }
-      tooSoonItems.push({
-        id: ++tooSoonSeq,
-        bib_number: data.bib_number,
-        name: data.name,
-        elapsed_seconds: data.elapsed_seconds,
-        min_lap_seconds: data.min_lap_seconds,
-        crossing_time: data.crossing_time,
-        peak_rssi: data.peak_rssi,
-        deadline: Date.now() + TOO_SOON_AUTO_REJECT_MS,
-        error: "",
-        busy: false,
-      });
-      renderTooSoonPrompt();
-    }
-
-    function rejectTooSoonItem(id) {
-      const idx = tooSoonItems.findIndex(it => it.id === id);
-      if (idx !== -1) {
-        tooSoonItems.splice(idx, 1);
-        renderTooSoonPrompt();
-      }
-    }
-
-    async function acceptTooSoonItem(id) {
-      const item = tooSoonItems.find(it => it.id === id);
-      if (!item || item.busy) return;
-      item.busy = true;
-      item.error = "";
-      renderTooSoonPrompt();
-      try {
-        const res = await fetch("/api/crossings/accept-too-soon", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            bib_number: item.bib_number,
-            crossing_time: item.crossing_time,
-            peak_rssi: item.peak_rssi ?? -45.0,
-          }),
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          item.error = body.detail || "Could not accept crossing.";
-          item.busy = false;
-          renderTooSoonPrompt();
-          return;
-        }
-        rejectTooSoonItem(id);
-      } catch (err) {
-        item.error = "Network error while accepting lap.";
-        item.busy = false;
-        renderTooSoonPrompt();
-      }
-    }
 
     // Stacked unknown-tag prompt list (auto-dismisses after 30s of inactivity per row;
-    // during a running race the tag is already timing as Runner #<bib>!)
+    // during a running race the tag has a placeholder Runner #<bib>, timed once it's named)
     const UNRECOGNIZED_AUTO_DISMISS_MS = 30000;
     const UNRECOGNIZED_COOLDOWN_MS = 60000;
     const dismissedEpcs = new Map();
@@ -2257,7 +2135,7 @@
         ? `<span class="font-mono text-sky-300 font-semibold">AprilTag #${String(apriltagId).padStart(2, "0")}</span>`
         : `<span class="font-mono text-amber-300 font-semibold">${esc(epc.slice(-6))}</span>`;
       const subtitle = item.bib_number != null
-        ? `Timing now as <strong class="text-amber-300 font-mono">#${item.bib_number}</strong> (${tagLabel})`
+        ? `Not timed yet. Enter a name to start timing as <strong class="text-amber-300 font-mono">#${item.bib_number}</strong> (${tagLabel})`
         : `${tagLabel} is not registered`;
       card.innerHTML = `
         <div class="flex items-start justify-between gap-2">
@@ -2341,23 +2219,9 @@
       }
     }
 
-    // Shared 1s countdown ticker for both stacked prompt lists (updates text in place without losing input focus)
+    // 1s countdown ticker for the stacked new-tag prompts (updates text in place without losing input focus)
     setInterval(() => {
       const now = Date.now();
-      let tooSoonExpired = false;
-      for (let i = tooSoonItems.length - 1; i >= 0; i--) {
-        const it = tooSoonItems[i];
-        const secs = Math.max(0, Math.ceil((it.deadline - now) / 1000));
-        if (secs <= 0 && !it.busy) {
-          tooSoonItems.splice(i, 1);
-          tooSoonExpired = true;
-        } else {
-          const badge = document.querySelector(`[data-too-soon-id="${it.id}"] .too-soon-countdown`);
-          if (badge) badge.textContent = `${secs}s`;
-        }
-      }
-      if (tooSoonExpired) renderTooSoonPrompt();
-
       for (let i = unrecognizedItems.length - 1; i >= 0; i--) {
         const it = unrecognizedItems[i];
         const secs = Math.max(0, Math.ceil((it.deadline - now) / 1000));
