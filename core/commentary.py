@@ -248,6 +248,7 @@ class CommentaryEngine:
         prev_avg_seconds: Optional[float] = None,
         burn_frequency_override: Optional[int] = None,
         force_category: Optional[str] = None,
+        goal_speech: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Return frugal spoken line + optional display quip for a completed lap."""
         with self._lock:
@@ -259,6 +260,7 @@ class CommentaryEngine:
             short_name = (name or "Runner").strip().split()[0]
             spoken_time = format_spoken_compact(lap_duration_seconds)
             mmss = format_mmss_short(lap_duration_seconds)
+            goal_part = f" {goal_speech}" if goal_speech else ""
 
             if force_category == "pr":
                 is_pr, trigger_burn, is_fast = True, False, False
@@ -278,7 +280,7 @@ class CommentaryEngine:
 
             if is_pr:
                 quip = self._prs.draw()
-                speech = f"{short_name}, lap {lap_number}, {spoken_time}. {quip}"
+                speech = f"{short_name}, lap {lap_number}, {spoken_time}.{goal_part} {quip}"
                 return {
                     "category": "pr",
                     "quip": quip,
@@ -288,7 +290,7 @@ class CommentaryEngine:
 
             if trigger_burn:
                 quip = self._burns.draw()
-                speech = f"{short_name}, lap {lap_number}. {quip}"
+                speech = f"{short_name}, lap {lap_number}.{goal_part} {quip}"
                 return {
                     "category": "burn",
                     "quip": quip,
@@ -298,7 +300,7 @@ class CommentaryEngine:
 
             if is_fast:
                 quip = self._fasts.draw()
-                speech = f"{short_name}, lap {lap_number}, {spoken_time}. {quip}"
+                speech = f"{short_name}, lap {lap_number}, {spoken_time}.{goal_part} {quip}"
                 return {
                     "category": "fast",
                     "quip": quip,
@@ -309,7 +311,7 @@ class CommentaryEngine:
             return {
                 "category": "standard",
                 "quip": None,
-                "speech": f"{short_name}, lap {lap_number}, {spoken_time}.",
+                "speech": f"{short_name}, lap {lap_number}, {spoken_time}.{goal_part}",
                 "display_time": mmss,
             }
 

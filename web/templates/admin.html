@@ -363,6 +363,22 @@
           </div>
 
           <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="block text-xs font-medium text-slate-300">Goal (Optional — pick one)</label>
+              <span class="text-[10px] text-emerald-400">Counts down laps remaining</span>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <select id="regGoalType" onchange="updateRegGoalPlaceholder()" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-500">
+                <option value="">No Goal</option>
+                <option value="laps">Lap Count</option>
+                <option value="distance">Distance (km)</option>
+                <option value="time">Time (MM:SS)</option>
+              </select>
+              <input type="text" id="regGoalValue" disabled placeholder="Select goal type" class="bg-slate-950 border border-slate-700 disabled:opacity-40 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-emerald-500">
+            </div>
+          </div>
+
+          <div>
             <label class="block text-xs font-medium text-slate-300 mb-1">Notes / Target (Optional)</label>
             <input type="text" id="regNotes" placeholder="e.g. 10k pace group" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
           </div>
@@ -411,6 +427,12 @@
                             title="Assign or edit AprilTag 16h5 ID (0-29)"
                             class="font-mono text-[10px] px-1.5 py-0.5 rounded border {% if p.apriltag_id is not none %}bg-sky-950/60 border-sky-500/40 text-sky-300{% else %}bg-slate-800/70 border-slate-700 text-slate-400 hover:text-sky-300{% endif %}">
                       {% if p.apriltag_id is not none %}AT #{{ '%02d' % p.apriltag_id }}{% else %}+AT{% endif %}
+                    </button>
+                    {%- set rgoal = lb_by_bib.get(p.bib_number, {}).get('goal') %}
+                    <button type="button" onclick="editRunnerGoal({{ p.bib_number }}, {{ (rgoal.label if rgoal else '') | tojson | safe }})"
+                            title="Set single goal (laps, distance, or time)"
+                            class="font-mono text-[10px] px-1.5 py-0.5 rounded border {% if rgoal %}bg-emerald-950/60 border-emerald-500/40 text-emerald-300{% else %}bg-slate-800/70 border-slate-700 text-slate-400 hover:text-emerald-300{% endif %}">
+                      {% if rgoal %}🎯 {{ rgoal.label }}{% else %}+Goal{% endif %}
                     </button>
                   </div>
                 </td>
@@ -711,6 +733,55 @@
       }
     }
 
+    function updateRegGoalPlaceholder() {
+      const sel = document.getElementById("regGoalType");
+      const inp = document.getElementById("regGoalValue");
+      if (!sel || !inp) return;
+      const t = sel.value;
+      inp.disabled = !t;
+      if (!t) { inp.value = ""; inp.placeholder = "Select goal type"; }
+      else if (t === "laps") inp.placeholder = "e.g. 25";
+      else if (t === "distance") inp.placeholder = "e.g. 5 (for 5 km)";
+      else if (t === "time") inp.placeholder = "e.g. 30:00";
+    }
+
+    function parseGoalPromptInput(raw) {
+      const s = (raw || "").trim().toLowerCase();
+      if (!s) return { goal_type: null, goal_value: null };
+      if (s.includes(":")) return { goal_type: "time", goal_value: s };
+      const kmMatch = s.match(/^(\d+(?:\.\d+)?)\s*(km|k)$/);
+      if (kmMatch) return { goal_type: "distance", goal_value: parseFloat(kmMatch[1]) * 1000 };
+      const miMatch = s.match(/^(\d+(?:\.\d+)?)\s*(mi|mile|miles)$/);
+      if (miMatch) return { goal_type: "distance", goal_value: parseFloat(miMatch[1]) * 1609.34 };
+      const mMatch = s.match(/^(\d+(?:\.\d+)?)\s*m$/);
+      if (mMatch) return { goal_type: "distance", goal_value: parseFloat(mMatch[1]) };
+      const minMatch = s.match(/^(\d+(?:\.\d+)?)\s*(min|mins|m|minutes)$/);
+      if (minMatch) return { goal_type: "time", goal_value: parseFloat(minMatch[1]) * 60 };
+      const lapMatch = s.match(/^(\d+)\s*(lap|laps)?$/);
+      if (lapMatch) return { goal_type: "laps", goal_value: parseInt(lapMatch[1], 10) };
+      return null;
+    }
+
+    async function editRunnerGoal(bib, currentLabel) {
+      const val = prompt(
+        `Set ONE goal for Bib #${bib} (leave blank to clear):\nExamples: "10 laps", "5 km", "1600 m", "3 miles", or "30:00"`,
+        currentLabel || ""
+      );
+      if (val === null) return;
+      const parsed = parseGoalPromptInput(val);
+      if (!parsed) {
+        alert("Couldn't understand that goal. Try e.g. '10 laps', '5 km', '1600 m', or '30:00'.");
+        return;
+      }
+      const res = await fetch(`/api/participants/${bib}/goal`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed)
+      });
+      if (res.ok) window.location.reload();
+      else await alertFailure(res, "Could not update goal");
+    }
+
     async function registerRunner(e) {
       e.preventDefault();
       const bib_number = parseInt(document.getElementById("regBib").value);
@@ -718,13 +789,24 @@
       const epc = document.getElementById("regEpc").value;
       const atRaw = document.getElementById("regApriltag").value.trim();
       const apriltag_id = atRaw === "" ? null : parseInt(atRaw, 10);
+      const goalTypeSel = document.getElementById("regGoalType").value || null;
+      const goalValRaw = document.getElementById("regGoalValue").value.trim();
+      let goal_type = goalTypeSel;
+      let goal_value = null;
+      if (goal_type && goalValRaw) {
+        if (goal_type === "distance") goal_value = parseFloat(goalValRaw) * 1000;
+        else if (goal_type === "laps") goal_value = parseInt(goalValRaw, 10);
+        else goal_value = goalValRaw;
+      } else {
+        goal_type = null;
+      }
       const notes = document.getElementById("regNotes").value;
       const email = document.getElementById("regEmail").value;
 
       const res = await fetch("/api/participants", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bib_number, name, epc, apriltag_id, notes, email })
+        body: JSON.stringify({ bib_number, name, epc, apriltag_id, goal_type, goal_value, notes, email })
       });
 
       if (res.ok) {
