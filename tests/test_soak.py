@@ -27,7 +27,6 @@ class ShortSoakTest(unittest.TestCase):
         result = run_fast(runners=24, hours=0.25, seed=3, report=lines.append, track_memory=False)
         self.assertTrue(result["ok"], result["app_errors"][:5])
         self.assertEqual(result["unknown_tags"], 0)
-        self.assertEqual(result["too_soon_prompts"], 0)
         self.assertGreater(result["laps"], 200)
         self.assertGreater(result["corrupted_frames"], 100)
         self.assertGreaterEqual(result["rows"][-1]["rearms"], 2, "routine re-arm every 300 s")

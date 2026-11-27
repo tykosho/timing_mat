@@ -149,7 +149,6 @@ class StalledClientDuringLapsTest(unittest.TestCase):
         self.engine = LapEngine(db=self.db, on_lap_completed=self.app.on_lap_completed,
                                 on_runner_started=self.app.on_runner_started,
                                 on_runner_resumed=self.app.on_runner_resumed,
-                                on_crossing_too_soon=self.app.on_crossing_too_soon,
                                 on_unassigned_tag=self.app.on_unassigned_tag)
 
     def test_laps_are_recorded_without_waiting_for_the_stalled_phone(self):

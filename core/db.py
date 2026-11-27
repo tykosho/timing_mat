@@ -16,6 +16,9 @@ logger = logging.getLogger("Database")
 EVENT_STATUSES = ("setup", "running", "paused", "ended")
 RESTART_FLAG_REASON = "Timer restart during this lap: time off is estimated, check the lap time"
 DEFAULT_EVENT_NAME = "Take Back the Track!"
+# Notes on a placeholder made for an unknown tag crossing the mat mid-race. It is not timed
+# until someone enters a name, which clears the note.
+WALKUP_NOTE = "Auto-registered walk-up tag"
 _HEX_RE = re.compile(r"^[0-9A-F]+$")
 
 
@@ -29,6 +32,11 @@ class EventStateError(ValueError):
 
 class LapEditError(ValueError):
     """A manual lap edit was rejected (runner not started, lap would end in the future, ...)."""
+
+
+def is_unclaimed(participant: Optional[Dict[str, Any]]) -> bool:
+    """A walk-up placeholder still waiting for a name: listed nowhere public and not timed."""
+    return bool(participant) and (participant.get("notes") or "") == WALKUP_NOTE
 
 
 def normalize_epc(epc: Optional[str]) -> Optional[str]:
@@ -567,6 +575,10 @@ class Database:
                 owner = self._find_tag_owner(conn, eid, epc, exclude_bib=bib_number)
                 if owner:
                     raise RegistrationError(f"Tag {epc} is already assigned to #{owner['bib_number']} {owner['name']}")
+            new_name = (name or "").strip() or current["name"]
+            new_notes = (notes or "").strip()
+            if new_notes == WALKUP_NOTE and new_name != current["name"]:
+                new_notes = ""  # a walk-up placeholder given a name: timed from its next crossing
             next_at = current["apriltag_id"] if apriltag_id is ... else (
                 int(apriltag_id) if apriltag_id is not None else None
             )
@@ -591,13 +603,13 @@ class Database:
             conn.execute("""
                 UPDATE participants SET name = ?, epc = ?, notes = ?, email = ?, apriltag_id = ?, goal_type = ?, goal_value = ?
                 WHERE event_id = ? AND bib_number = ?;""",
-                ((name or "").strip() or current["name"], epc, (notes or "").strip(),
+                (new_name, epc, new_notes,
                  current["email"] if email is None else email.strip(), next_at, next_g_type, next_g_val, eid, bib_number))
         return True
 
     def add_placeholder_participant(self, epc: str, event_id: Optional[int] = None,
                                     apriltag_id: Optional[int] = None) -> Dict[str, Any]:
-        """Auto-registers an unrecognized tag on the mat as 'Runner #<bib>' so laps time immediately."""
+        """Gives an unrecognized tag on the mat a placeholder 'Runner #<bib>' (not timed until named)."""
         eid = self._eid(event_id)
         epc = normalize_epc(epc)
         if not epc:
@@ -625,8 +637,8 @@ class Database:
             name = f"Runner #{bib}"
             conn.execute(
                 """INSERT INTO participants (event_id, bib_number, name, email, epc, notes, created_at, apriltag_id)
-                   VALUES (?, ?, ?, '', ?, 'Auto-registered walk-up tag', ?, ?);""",
-                (eid, bib, name, epc, clock.now(), int(apriltag_id) if apriltag_id is not None else None),
+                   VALUES (?, ?, ?, '', ?, ?, ?, ?);""",
+                (eid, bib, name, epc, WALKUP_NOTE, clock.now(), int(apriltag_id) if apriltag_id is not None else None),
             )
             row = conn.execute(
                 "SELECT * FROM participants WHERE event_id = ? AND bib_number = ?;", (eid, bib)
@@ -646,7 +658,7 @@ class Database:
             if not current:
                 raise RegistrationError(f"Bib #{bib_number} is not registered")
             notes = current["notes"] or ""
-            if notes == "Auto-registered walk-up tag":
+            if notes == WALKUP_NOTE:
                 notes = ""
             conn.execute(
                 "UPDATE participants SET name = ?, notes = ? WHERE event_id = ? AND bib_number = ?;",
@@ -1301,6 +1313,7 @@ class Database:
                     p.name,
                     p.start_time,
                     p.last_crossing_time,
+                    p.notes = ? AS unclaimed,
                     p.goal_type,
                     p.goal_value,
                     COUNT(l.id) AS total_laps,
@@ -1317,13 +1330,14 @@ class Database:
                 WHERE p.event_id = ? AND (? IS NULL OR p.bib_number = ?)
                 GROUP BY p.bib_number, p.name
                 ORDER BY total_laps DESC, (last_crossing_time_laps IS NULL), last_crossing_time_laps ASC;""",
-                (eid, bib_number, bib_number)).fetchall()
+                (WALKUP_NOTE, eid, bib_number, bib_number)).fetchall()
             on_break = {r["bib_number"] for r in conn.execute(
                 "SELECT bib_number FROM breaks WHERE event_id = ? AND end_time = 0.0;", (eid,)).fetchall()}
 
         results = []
         for r in rows:
             item = dict(r)
+            item["unclaimed"] = bool(item["unclaimed"])
             item["distance_m"] = round(item["total_laps"] * track_m, 1)
             item["goal"] = compute_goal_progress(
                 item.get("goal_type"),

@@ -222,6 +222,7 @@
       const tbody = document.getElementById("leaderboardBody");
       tbody.innerHTML = "";
       
+      data = data.filter(r => !r.unclaimed);  // walk-up tags waiting for a name aren't listed
       let totalLaps = 0;
       let totalDistM = 0;
       document.getElementById("runnerCount").innerText = `${data.length} Runners`;

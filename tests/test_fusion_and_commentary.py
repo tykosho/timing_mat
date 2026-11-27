@@ -191,8 +191,8 @@ class TestSensorFusion(unittest.TestCase):
         runner = self.db.get_participant_by_apriltag(12)
         self.assertIsNotNone(runner)
         self.assertEqual(runner["apriltag_id"], 12)
-        self.assertEqual(len(self.started), 1)
-        self.assertEqual(self.started[0]["source"], "apriltag")
+        # Walk-up tags get a placeholder but are not timed until a name is entered (PR #135)
+        self.assertEqual(len(self.started), 0)
 
     def test_apriltag_assignment_swaps_between_runners(self):
         self.db.add_participant(1, "Runner A", "E28000000001", apriltag_id=3)

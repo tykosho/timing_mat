@@ -20,9 +20,10 @@ from core import exports
 from core import clock
 from core.cloud_sync import CloudSyncClient
 from core.commentary import CommentaryEngine
-from core.db import Database, RegistrationError, EventStateError, LapEditError
+from core.db import Database, RegistrationError, EventStateError, LapEditError, is_unclaimed
 from core.goals import compute_goal_progress
 from core.models import epc_to_apriltag
+from core.predict5k import Predict5KManager
 from core.registration_import import parse_registration_csv
 from core.lap_engine import LapEngine
 from hardware.apriltag_reader import (
@@ -166,12 +167,6 @@ async def on_unassigned_tag(tag_data: Dict[str, Any]):
         "data": tag_data,
     }, admin_only=True)
 
-async def on_crossing_too_soon(too_soon_data: Dict[str, Any]):
-    await broadcast_ws({
-        "type": "crossing_too_soon",
-        "data": too_soon_data,
-    }, admin_only=True)
-
 # Callback when any tag is detected (used for Admin auto-fill / registration)
 # Raw tag reads arrive 5-20 per crossing per runner. Only the admin and Prepare Bibs pages use
 # them, so they go only to admin connections, combined per tag: one message per tag every
@@ -250,7 +245,6 @@ lap_engine = LapEngine(
     on_runner_resumed=on_runner_resumed,
     on_tag_detected=on_tag_detected,
     on_unassigned_tag=on_unassigned_tag,
-    on_crossing_too_soon=on_crossing_too_soon,
     auto_register_unassigned=True,
 )
 # A Pi without an RTC boots with the wrong time. Mid-race, carry on the race's own timeline
@@ -258,6 +252,19 @@ lap_engine = LapEngine(
 lap_engine.resume_clock()
 
 lap_engine.refresh_event()
+
+def _on_predict_finished(entry_payload: Dict[str, Any]):
+    if main_event_loop is None:
+        return
+    async def _push():
+        await broadcast_ws({
+            "type": "predict_finished",
+            "entry": entry_payload,
+            "state": predict_5k.get_state(),
+        })
+    asyncio.run_coroutine_threadsafe(_push(), main_event_loop)
+
+predict_5k = Predict5KManager(lambda: db.db_path, on_runner_finished=_on_predict_finished)
 
 def on_reader_tag(tag_read):
     """Called on the reader's thread for every read. Hands it to the event loop, so the lap
@@ -268,6 +275,7 @@ def on_reader_tag(tag_read):
         return  # reader started before the app; can't happen via lifespan, but never crash it
     try:
         loop.call_soon_threadsafe(lap_engine.process_tag_read, tag_read)
+        loop.call_soon_threadsafe(predict_5k.process_tag_read, tag_read)
     except RuntimeError:
         pass  # loop already closed during shutdown
 
@@ -483,6 +491,18 @@ async def crossings_page(request: Request):
         }
     )
 
+@app.get("/predict", response_class=HTMLResponse)
+async def predict_page(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="predict.html",
+        context={
+            "predict_state": predict_5k.get_state(),
+            "is_mock": use_mock,
+            "camera_running": apriltag_reader.is_running,
+        }
+    )
+
 @app.get("/leaderboard", response_class=HTMLResponse)
 async def leaderboard_page(request: Request):
     return templates.TemplateResponse(
@@ -559,8 +579,8 @@ async def get_replay_data():
     event_state = db.get_event_state()
     start_time = event_state.get("start_time")
     laps = db.get_all_laps()
-    participants = {p["bib_number"]: p["name"] for p in db.get_all_participants()}
-    
+    participants = {p["bib_number"]: p["name"] for p in db.get_all_participants() if not is_unclaimed(p)}
+
     runners_data = {}
     for bib, name in participants.items():
         runners_data[bib] = {
@@ -814,6 +834,34 @@ async def add_participant(p: ParticipantRequest):
     await push_leaderboard()
     return {"status": "created"}
 
+async def _claim_placeholder(bib: int, name: str) -> Dict[str, Any]:
+    """Names a runner from the trackside page. A walk-up placeholder isn't timed until it has a
+    name, so if the race is on, its clock starts now: they are standing at the mat."""
+    before = db.get_participant_by_bib(bib)
+    updated = db.rename_participant(bib, name)
+    await broadcast_ws({
+        "type": "participant_renamed",
+        "bib_number": bib,
+        "name": updated["name"],
+    })
+    event_state = db.get_event_state()
+    if (is_unclaimed(before) and not updated.get("start_time")
+            and event_state.get("status") == "running" and event_state.get("start_time")):
+        now = clock.now()
+        db.set_participant_start(bib, now, flag_reason=None)
+        lap_engine.mark_tag_started_on_mat(updated.get("epc"), now)
+        updated = db.get_participant_by_bib(bib)
+        await on_runner_started({
+            "bib_number": bib,
+            "name": updated["name"],
+            "start_time": now,
+            "event_offset_seconds": round(now - event_state["start_time"], 1),
+            "peak_rssi": -45.0,
+            "start_flag_reason": None,
+        })
+    await push_leaderboard()
+    return updated
+
 class SelfRegisterRequest(BaseModel):
     name: str
     epc: str
@@ -833,14 +881,8 @@ async def self_register_participant(req: SelfRegisterRequest):
         raise RegistrationError("Tag EPC is required")
 
     existing = db.get_participant_by_epc(epc)
-    if existing and (existing.get("notes") or "") == "Auto-registered walk-up tag":
-        updated = db.rename_participant(existing["bib_number"], req.name)
-        await broadcast_ws({
-            "type": "participant_renamed",
-            "bib_number": updated["bib_number"],
-            "name": updated["name"],
-        })
-        await push_leaderboard()
+    if is_unclaimed(existing):
+        updated = await _claim_placeholder(existing["bib_number"], req.name)
         return {
             "status": "created",
             "started": bool(updated.get("start_time")),
@@ -933,13 +975,7 @@ class RenameParticipantRequest(BaseModel):
 @app.patch("/api/participants/{bib}/name")
 async def rename_participant_endpoint(bib: int, req: RenameParticipantRequest):
     """Inline rename from the trackside crossings feed / unclaimed tags list."""
-    updated = db.rename_participant(bib, req.name)
-    await broadcast_ws({
-        "type": "participant_renamed",
-        "bib_number": bib,
-        "name": updated["name"],
-    })
-    await push_leaderboard()
+    updated = await _claim_placeholder(bib, req.name)
     return {"status": "renamed", "bib_number": bib, "participant": updated}
 
 class TagRequest(BaseModel):
@@ -1083,22 +1119,6 @@ async def keep_start(bib_number: int):
     db.keep_start(bib_number)
     await _flagged_changed()
     return {"status": "kept"}
-
-class AcceptTooSoonRequest(BaseModel):
-    bib_number: int
-    crossing_time: float
-    peak_rssi: float = -45.0
-
-@app.post("/api/crossings/accept-too-soon")
-async def accept_too_soon_crossing(req: AcceptTooSoonRequest):
-    """Records a debounced (too-soon) crossing after operator confirmation."""
-    lap = await lap_engine.accept_too_soon_crossing(req.bib_number, req.crossing_time, req.peak_rssi)
-    if lap is None:
-        raise HTTPException(
-            status_code=409,
-            detail="Crossing could not be accepted (event not running or superseded).",
-        )
-    return {"status": "accepted", "lap": lap}
 
 @app.post("/api/participants/{bib}/quick-add-lap")
 async def quick_add_lap(bib: int, req: Optional[QuickLapAdjustRequest] = None):
@@ -1364,6 +1384,122 @@ async def api_receive_remote_snapshot(request: Request):
 @app.get("/api/remote/status")
 async def api_remote_status():
     return {"cloud_mode": cloud_mode, "sync": cloud_sync.status()}
+
+# ----------------- PREDICT 5K API -----------------
+class PredictEntryRequest(BaseModel):
+    name: str
+    predicted_time: Any
+    epc: Optional[str] = None
+    apriltag_id: Optional[int] = None
+
+class PredictSettingsRequest(BaseModel):
+    name: Optional[str] = None
+    countdown_seconds: Optional[int] = Field(default=None, ge=0, le=120)
+    min_finish_seconds: Optional[int] = Field(default=None, ge=1, le=7200)
+
+class PredictStartRequest(BaseModel):
+    countdown_seconds: Optional[int] = Field(default=None, ge=0, le=120)
+
+class PredictNewRequest(BaseModel):
+    name: str = "Club Predict 5K"
+
+class PredictUpdateGuessRequest(BaseModel):
+    predicted_time: Any
+
+async def _broadcast_predict_state():
+    state = predict_5k.get_state()
+    await broadcast_ws({"type": "predict_state", "state": state})
+    return state
+
+@app.get("/api/predict/state")
+async def api_predict_state():
+    return predict_5k.get_state()
+
+@app.post("/api/predict/entries")
+async def api_predict_add_entry(req: PredictEntryRequest):
+    try:
+        entry = predict_5k.add_entry(
+            name=req.name,
+            predicted_time=req.predicted_time,
+            epc=req.epc,
+            apriltag_id=req.apriltag_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    state = await _broadcast_predict_state()
+    return {"status": "created", "entry": entry, "state": state}
+
+@app.delete("/api/predict/entries/{entry_id}")
+async def api_predict_delete_entry(entry_id: int):
+    if not predict_5k.delete_entry(entry_id):
+        raise HTTPException(status_code=404, detail="Entry not found")
+    state = await _broadcast_predict_state()
+    return {"status": "deleted", "state": state}
+
+@app.patch("/api/predict/entries/{entry_id}/prediction")
+async def api_predict_update_prediction(entry_id: int, req: PredictUpdateGuessRequest):
+    try:
+        updated = predict_5k.update_entry_prediction(entry_id, req.predicted_time)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    state = await _broadcast_predict_state()
+    return {"status": "updated", "entry": updated, "state": state}
+
+@app.post("/api/predict/settings")
+async def api_predict_settings(req: PredictSettingsRequest):
+    predict_5k.update_settings(
+        name=req.name,
+        countdown_seconds=req.countdown_seconds,
+        min_finish_seconds=req.min_finish_seconds,
+    )
+    state = await _broadcast_predict_state()
+    return {"status": "updated", "state": state}
+
+@app.post("/api/predict/start")
+async def api_predict_start(req: Optional[PredictStartRequest] = None):
+    cd = req.countdown_seconds if req else None
+    state = predict_5k.start_race(countdown_override=cd)
+    await broadcast_ws({"type": "predict_state", "state": state})
+    return {"status": "started", "state": state}
+
+@app.post("/api/predict/reset")
+async def api_predict_reset():
+    predict_5k.reset_race()
+    state = await _broadcast_predict_state()
+    return {"status": "reset", "state": state}
+
+@app.post("/api/predict/new")
+async def api_predict_new(req: PredictNewRequest):
+    predict_5k.new_session(req.name)
+    state = await _broadcast_predict_state()
+    return {"status": "created", "state": state}
+
+@app.post("/api/predict/entries/{entry_id}/finish")
+async def api_predict_manual_finish(entry_id: int):
+    payload = predict_5k.record_finish(entry_id, source="manual")
+    if not payload:
+        raise HTTPException(status_code=409, detail="Runner already finished, race not running, or under minimum finish time.")
+    state = predict_5k.get_state()
+    await broadcast_ws({"type": "predict_finished", "entry": payload, "state": state})
+    return {"status": "finished", "entry": payload, "state": state}
+
+@app.post("/api/predict/reveal/start")
+async def api_predict_reveal_start():
+    try:
+        predict_5k.start_reveal()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    state = await _broadcast_predict_state()
+    return {"status": "revealing", "state": state}
+
+@app.post("/api/predict/reveal/next")
+async def api_predict_reveal_next():
+    try:
+        predict_5k.reveal_next()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    state = await _broadcast_predict_state()
+    return {"status": "revealed", "state": state}
 
 from web.simulator_routes import router as simulator_router  # noqa: E402
 app.include_router(simulator_router)

@@ -134,18 +134,12 @@ class ParkedTagTest(EngineTestCase):
             t += every
         return outcomes
 
-    def too_soon_events(self):
-        events = []
-        self.engine.on_crossing_too_soon = events.append
-        return events
-
     def leave(self, t):
         """The tag leaves the field after its last read at `t`."""
         asyncio.run(self.engine.flush_once(t + 5.0))
 
     def test_parked_tag_is_resolved_and_buffer_stays_small(self):
         self.db.start_event(at=1000.0)
-        too_soon = self.too_soon_events()
         sizes = self.feed(1000.0, 60.0)
         # Resolved after ~MAX_BURST_SECONDS instead of never; the buffer never grows past one burst
         self.assertEqual(self.db.get_participant_by_bib(101)["start_time"], 1000.0)
@@ -153,18 +147,15 @@ class ParkedTagTest(EngineTestCase):
         self.leave(1060.0)
         # Issue #85: 60 s parked is one visit to the mat, not a start plus laps every 8 s
         self.assertEqual(self.durations(), [])
-        self.assertEqual(too_soon, [])
 
     def test_lingering_after_a_lap_adds_no_phantom_laps(self):
         # The repro from issue #85: min lap 45 s, a tag left on the mat for 180 s after a real lap
         self.db.update_event_settings(min_lap_seconds=45.0, max_lap_rest_seconds=600.0)
         self.db.start_event(at=1000.0)
-        too_soon = self.too_soon_events()
         self.cross(1000.0)
         self.feed(1100.0, 180.0)
         self.leave(1280.0)
         self.assertEqual(self.durations(), [100.0])
-        self.assertEqual(too_soon, [])
         # Once it has left the field, the next crossing is an ordinary lap again
         self.feed(1400.0, 1.0)
         self.leave(1401.0)
@@ -248,7 +239,6 @@ class ParkedTagTest(EngineTestCase):
         laps are recorded until they actually leave the field for >= min_lap_seconds."""
         self.db.update_event_settings(min_lap_seconds=45.0, max_lap_rest_seconds=600.0)
         self.db.start_event(at=1000.0)
-        too_soon = self.too_soon_events()
         self.cross(1000.0)   # Start
         self.cross(1100.0)   # Real Lap 1 (100s)
         self.assertEqual(self.durations(), [100.0])
@@ -260,7 +250,6 @@ class ParkedTagTest(EngineTestCase):
             asyncio.run(self.engine.flush_once(t + 2.0))
 
         self.assertEqual(self.durations(), [100.0], "intermittent reads near mat must not record phantom laps")
-        self.assertEqual(len(too_soon), 1, "too-soon prompt fires once, not on every 6 s fringe ping")
 
         # Now the runner actually leaves for 70 s (>= 45 s min_lap) and finishes Lap 2
         self.engine.process_tag_read(TagRead(epc=EPC, timestamp=1280.0 + 70.0, rssi=-44.0))
@@ -280,6 +269,18 @@ class ParkedTagTest(EngineTestCase):
         # 50 s of true silence after 1055.0 -> valid lap!
         self.assertEqual(self.cross(1105.0), "lap")
         self.assertEqual(self.durations(), [105.0])
+
+
+class SlowLapTest(EngineTestCase):
+    def test_slow_lap_is_not_flagged_for_review(self):
+        """A lap twice the runner's usual (a walk, a chat) is just a slow lap: no Needs Review
+        'missed reading' flag. A missed read is fixed with +1 Lap on /crossings instead."""
+        self.db.update_event_settings(min_lap_seconds=45.0, max_lap_rest_seconds=600.0)
+        self.db.start_event(at=1000.0)
+        for t in (1000.0, 1100.0, 1200.0, 1300.0, 1500.0):
+            self.cross(t)
+        self.assertEqual(self.durations(), [100.0, 100.0, 100.0, 200.0])
+        self.assertEqual([lap["flag_reason"] for lap in self.db.get_laps_for_runner(101)], [None] * 4)
 
 
 class ManualBreakTest(EngineTestCase):
@@ -332,19 +333,6 @@ class ManualBreakTest(EngineTestCase):
             self.assertEqual(self.db.end_manual_break(101)["status"], "not_on_break")
         self.assertEqual(self.breaks(), [])
         self.assertEqual(self.cross(1060.0), "lap")
-        self.assertEqual(self.durations(), [60.0])
-
-    def test_accepted_too_soon_crossing_ends_a_manual_break(self):
-        self.db.start_event(at=1000.0)
-        self.cross(1000.0)
-        with self.at(1005.0):
-            self.db.start_manual_break(101)
-        self.assertEqual(self.cross(1015.0), "debounced")  # back after 10 s: below the min lap
-        self.assertIsNotNone(self.db.get_open_break(101))
-        result = asyncio.run(self.engine.accept_too_soon_crossing(101, 1015.0))
-        self.assertTrue(result["resumed"])
-        self.assertEqual(self.breaks(), [(1005.0, 1015.0, 10.0)])
-        self.assertEqual(self.cross(1075.0), "lap")
         self.assertEqual(self.durations(), [60.0])
 
     def test_crossing_read_as_end_is_pressed_ends_the_break_there(self):

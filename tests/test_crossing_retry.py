@@ -35,8 +35,6 @@ class CrossingRetryTest(unittest.TestCase):
         self.db.add_participant(102, "Sam", EPC_B)
         self.db.update_event_settings(min_lap_seconds=20.0, max_lap_rest_seconds=600.0)
         self.engine = LapEngine(db=self.db, crossing_window=1.0)
-        self.too_soon = []
-        self.engine.on_crossing_too_soon = self.too_soon.append
         self.db.start_event(at=1000.0)
         self.engine.refresh_event()                  # as flush_loop does every tick
         asyncio.run(self.engine._resolve_crossing(EPC, [(1000.0, -50.0)]))
@@ -61,7 +59,6 @@ class CrossingRetryTest(unittest.TestCase):
         self.assertEqual(self.laps(), [60.0])
         self.flush(1064.0)
         self.assertEqual(self.laps(), [60.0], "exactly once")
-        self.assertEqual(self.too_soon, [])
 
     def test_failure_after_the_lap_was_written_does_not_count_it_twice(self):
         self.read(1060.0)
@@ -70,7 +67,6 @@ class CrossingRetryTest(unittest.TestCase):
             self.flush(1062.0)
         self.flush(1063.0)
         self.assertEqual(self.laps(), [60.0])
-        self.assertEqual(self.too_soon, [], "the retry is not a crossing too soon after itself")
 
     def test_other_runners_are_not_held_up_by_a_failing_one(self):
         self.read(1060.0)
@@ -127,7 +123,6 @@ class CrossingRetryTest(unittest.TestCase):
                 self.flush(1062.0)
             self.db.update_participant_last_crossing(101, 1065.0)   # e.g. an operator's +1 lap
             self.flush(1066.0)
-        self.assertEqual(self.too_soon, [])
         self.assertEqual(self.engine.failed_bursts, [])
 
 if __name__ == "__main__":
