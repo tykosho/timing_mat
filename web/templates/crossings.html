@@ -1463,6 +1463,10 @@
           ? `<div class="quip-pill ${c.commentary.category === 'pr' ? 'quip-pr' : (c.commentary.category === 'fast' ? 'quip-fast' : 'quip-burn')}">${c.commentary.category === 'pr' ? '⚡ ' : (c.commentary.category === 'burn' ? '🔥 ' : '✨ ')}${esc(c.commentary.quip)}</div>`
           : "";
 
+        const goalHtml = (c.goal && c.goal.badge_text)
+          ? `<div class="quip-pill ${c.goal.completed ? 'quip-pr' : 'quip-fast'}">${c.goal.completed ? '🏆 ' : '🎯 '}${esc(c.goal.badge_text)} <span class="opacity-75 font-mono text-[11px]">(${esc(c.goal.label)})</span></div>`
+          : "";
+
         const sourceBadgeHtml = c.source === "fused"
           ? `<span class="sensor-badge sensor-fused" title="Fused RFID + AprilTag camera read">RFID+CAM</span>`
           : (c.source === "apriltag"
@@ -1474,7 +1478,7 @@
             <div class="bib-pill">#${c.bib_number}</div>
             <div class="min-w-0 flex-1">
               ${nameHtml}
-              ${quipHtml}
+              <div class="flex flex-wrap items-center gap-1.5">${goalHtml}${quipHtml}</div>
               <div class="flex items-center gap-2 flex-wrap mt-0.5">
                 ${sourceBadgeHtml}
                 ${timeAgoHtml}
@@ -1490,6 +1494,34 @@
         `;
         feed.appendChild(row);
       });
+    }
+
+    async function editGoalFromCrossings(bib, currentLabel) {
+      const raw = prompt(
+        `Set ONE goal for Bib #${bib} (leave blank to clear):\nExamples: "10 laps", "5 km", "1600 m", "3 miles", or "30:00"`,
+        currentLabel || ""
+      );
+      if (raw === null) return;
+      const s = raw.trim().toLowerCase();
+      let payload = { goal_type: null, goal_value: null };
+      if (s) {
+        if (s.includes(":")) payload = { goal_type: "time", goal_value: s };
+        else if (/^(\d+(?:\.\d+)?)\s*(km|k)$/.test(s)) payload = { goal_type: "distance", goal_value: parseFloat(s) * 1000 };
+        else if (/^(\d+(?:\.\d+)?)\s*(mi|mile|miles)$/.test(s)) payload = { goal_type: "distance", goal_value: parseFloat(s) * 1609.34 };
+        else if (/^(\d+(?:\.\d+)?)\s*m$/.test(s)) payload = { goal_type: "distance", goal_value: parseFloat(s) };
+        else if (/^(\d+(?:\.\d+)?)\s*(min|mins|minutes)$/.test(s)) payload = { goal_type: "time", goal_value: parseFloat(s) * 60 };
+        else if (/^(\d+)\s*(lap|laps)?$/.test(s)) payload = { goal_type: "laps", goal_value: parseInt(s, 10) };
+        else { alert("Try e.g. '10 laps', '5 km', '1600 m', or '30:00'."); return; }
+      }
+      const res = await fetch(`/api/participants/${bib}/goal`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        alert(d.detail || "Could not update goal");
+      }
     }
 
     async function quickAddLap(bib) {
@@ -1609,6 +1641,9 @@
         const quipBadge = (q && q.quip)
           ? `<div class="quip-pill ${q.category === 'pr' ? 'quip-pr' : (q.category === 'fast' ? 'quip-fast' : 'quip-burn')}" style="font-size:0.7rem;padding:0.12rem 0.5rem;margin-top:0.2rem;">${q.category === 'pr' ? '⚡ ' : (q.category === 'burn' ? '🔥 ' : '✨ ')}${esc(q.quip)}</div>`
           : "";
+        const goalBadge = (r.goal && r.goal.badge_text)
+          ? `<button type="button" onclick="editGoalFromCrossings(${r.bib_number}, ${JSON.stringify(r.goal.label)})" class="quip-pill ${r.goal.completed ? 'quip-pr' : 'quip-fast'}" style="font-size:0.7rem;padding:0.12rem 0.5rem;margin-top:0.2rem;cursor:pointer;" title="Click to edit goal">${r.goal.completed ? '🏆 ' : '🎯 '}${esc(r.goal.badge_text)}</button>`
+          : "";
         const statusDot = r.status === "on_break"
           ? `<span class="text-[10px] text-amber-300 font-mono ml-1">☕</span>`
           : (r.start_time ? `<span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 ml-1"></span>` : "");
@@ -1621,9 +1656,10 @@
                 <button type="button" onclick="openRenameModalByBib(${r.bib_number})" class="font-bold text-white hover:text-emerald-300 text-left truncate max-w-[160px]" title="Click to rename">
                   ${esc(r.name)}
                 </button>
+                <button type="button" onclick="editGoalFromCrossings(${r.bib_number}, ${JSON.stringify(r.goal ? r.goal.label : '')})" class="text-[11px] text-slate-500 hover:text-emerald-300" title="Set goal (laps, distance, or time)">🎯</button>
                 ${statusDot}
               </div>
-              ${quipBadge}
+              <div class="flex flex-wrap items-center gap-1">${goalBadge}${quipBadge}</div>
             </td>
             <td class="text-center font-mono font-black text-base text-white">${r.total_laps || 0}</td>
             <td class="text-right font-mono text-emerald-300">${r.last_lap_seconds ? formatTime(r.last_lap_seconds) : "--:--"}</td>
@@ -1672,7 +1708,8 @@
             added_at: (msg.lap.crossing_time ? msg.lap.crossing_time * 1000 : raceNowSec() * 1000),
             is_start: false,
             source: msg.lap.source || "rfid",
-            commentary: msg.lap.commentary || null
+            commentary: msg.lap.commentary || null,
+            goal: msg.lap.goal || null
           };
           if (crossing.commentary && crossing.commentary.quip) {
             latestQuipByBib.set(crossing.bib_number, crossing.commentary);
