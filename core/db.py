@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from typing import Optional, List, Dict, Any, Tuple
 
 from core import clock
+from core.goals import compute_goal_progress, normalize_goal
 
 logger = logging.getLogger("Database")
 
@@ -183,6 +184,8 @@ class Database:
                 ("participants", "start_flag_reason", "TEXT DEFAULT NULL"),  # missed start (#72)
                 ("events", "clock_shift_seconds", "REAL DEFAULT 0.0"),  # re-syncs since End (#129)
                 ("participants", "apriltag_id", "INTEGER DEFAULT NULL"),     # RFID + AprilTag fusion
+                ("participants", "goal_type", "TEXT DEFAULT NULL"),          # 'laps' | 'distance' | 'time'
+                ("participants", "goal_value", "REAL DEFAULT NULL"),         # laps / meters / seconds
             ]:
                 cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table});")]
                 if column not in cols:
@@ -499,7 +502,8 @@ class Database:
 
     def add_participant(self, bib_number: int, name: str, epc: Optional[str] = None, notes: str = "",
                         email: str = "", event_id: Optional[int] = None,
-                        apriltag_id: Optional[int] = None) -> bool:
+                        apriltag_id: Optional[int] = None,
+                        goal_type: Optional[str] = None, goal_value: Any = None) -> bool:
         eid = self._eid(event_id)
         epc = normalize_epc(epc)
         name = (name or "").strip()
@@ -507,6 +511,10 @@ class Database:
             raise RegistrationError("Name is required")
         if apriltag_id is not None and not (0 <= int(apriltag_id) < 30):
             raise RegistrationError("AprilTag 16h5 ID must be between 0 and 29")
+        try:
+            g_type, g_val = normalize_goal(goal_type, goal_value)
+        except ValueError as e:
+            raise RegistrationError(str(e)) from e
         with self.connect() as conn:
             if conn.execute("SELECT 1 FROM participants WHERE event_id = ? AND bib_number = ?;", (eid, bib_number)).fetchone():
                 raise RegistrationError(f"Bib #{bib_number} is already registered")
@@ -521,15 +529,34 @@ class Database:
                         f"AprilTag #{int(apriltag_id)} is already assigned to #{at_owner['bib_number']} {at_owner['name']}"
                     )
             conn.execute("""
-                INSERT INTO participants (event_id, bib_number, name, email, epc, notes, created_at, apriltag_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?);""",
+                INSERT INTO participants (event_id, bib_number, name, email, epc, notes, created_at, apriltag_id, goal_type, goal_value)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);""",
                 (eid, bib_number, name, (email or "").strip(), epc, (notes or "").strip(), clock.now(),
-                 int(apriltag_id) if apriltag_id is not None else None))
+                 int(apriltag_id) if apriltag_id is not None else None, g_type, g_val))
         return True
+
+    def set_participant_goal(self, bib_number: int, goal_type: Optional[str], goal_value: Any = None,
+                             event_id: Optional[int] = None) -> Dict[str, Any]:
+        """Sets (or clears) a participant's single goal (laps, distance in meters, or time in seconds)."""
+        eid = self._eid(event_id)
+        try:
+            g_type, g_val = normalize_goal(goal_type, goal_value)
+        except ValueError as e:
+            raise RegistrationError(str(e)) from e
+        with self.connect() as conn:
+            row = conn.execute("SELECT 1 FROM participants WHERE event_id = ? AND bib_number = ?;", (eid, bib_number)).fetchone()
+            if not row:
+                raise RegistrationError(f"Bib #{bib_number} is not registered")
+            conn.execute(
+                "UPDATE participants SET goal_type = ?, goal_value = ? WHERE event_id = ? AND bib_number = ?;",
+                (g_type, g_val, eid, bib_number),
+            )
+            updated = conn.execute("SELECT * FROM participants WHERE event_id = ? AND bib_number = ?;", (eid, bib_number)).fetchone()
+            return dict(updated)
 
     def update_participant(self, bib_number: int, name: str, epc: Optional[str] = None, notes: str = "",
                            email: Optional[str] = None, event_id: Optional[int] = None,
-                           apriltag_id: Any = ...) -> bool:
+                           apriltag_id: Any = ..., goal_type: Any = ..., goal_value: Any = ...) -> bool:
         eid = self._eid(event_id)
         epc = normalize_epc(epc)
         with self.connect() as conn:
@@ -551,11 +578,21 @@ class Database:
                     raise RegistrationError(
                         f"AprilTag #{next_at} is already assigned to #{at_owner['bib_number']} {at_owner['name']}"
                     )
+            if goal_type is ... and goal_value is ...:
+                next_g_type, next_g_val = current["goal_type"], current["goal_value"]
+            else:
+                try:
+                    next_g_type, next_g_val = normalize_goal(
+                        None if goal_type is ... else goal_type,
+                        None if goal_value is ... else goal_value,
+                    )
+                except ValueError as e:
+                    raise RegistrationError(str(e)) from e
             conn.execute("""
-                UPDATE participants SET name = ?, epc = ?, notes = ?, email = ?, apriltag_id = ?
+                UPDATE participants SET name = ?, epc = ?, notes = ?, email = ?, apriltag_id = ?, goal_type = ?, goal_value = ?
                 WHERE event_id = ? AND bib_number = ?;""",
                 ((name or "").strip() or current["name"], epc, (notes or "").strip(),
-                 current["email"] if email is None else email.strip(), next_at, eid, bib_number))
+                 current["email"] if email is None else email.strip(), next_at, next_g_type, next_g_val, eid, bib_number))
         return True
 
     def add_placeholder_participant(self, epc: str, event_id: Optional[int] = None,
@@ -1264,6 +1301,8 @@ class Database:
                     p.name,
                     p.start_time,
                     p.last_crossing_time,
+                    p.goal_type,
+                    p.goal_value,
                     COUNT(l.id) AS total_laps,
                     MAX(l.crossing_time) AS last_crossing_time_laps,
                     MIN(l.lap_duration_seconds) AS fastest_lap_seconds,
@@ -1286,6 +1325,14 @@ class Database:
         for r in rows:
             item = dict(r)
             item["distance_m"] = round(item["total_laps"] * track_m, 1)
+            item["goal"] = compute_goal_progress(
+                item.get("goal_type"),
+                item.get("goal_value"),
+                total_laps=item["total_laps"],
+                total_time_seconds=item["total_time_seconds"],
+                track_length_m=track_m,
+                last_lap_seconds=item.get("last_lap_seconds"),
+            )
             if not item["start_time"]:
                 item["status"] = "not_started"
             elif ev["status"] == "ended":

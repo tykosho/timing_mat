@@ -19,6 +19,7 @@ from core import exports
 from core import clock
 from core.commentary import CommentaryEngine
 from core.db import Database, RegistrationError, EventStateError, LapEditError
+from core.goals import compute_goal_progress
 from core.models import epc_to_apriltag
 from core.registration_import import parse_registration_csv
 from core.lap_engine import LapEngine
@@ -111,22 +112,38 @@ commentary_engine = CommentaryEngine(
 
 # Callback when a lap is completed
 async def on_lap_completed(lap_data: Dict[str, Any]):
+    bib = lap_data["bib_number"]
+    all_laps = db.get_laps_for_runner(bib)
+    if "goal" not in lap_data:
+        participant = db.get_participant_by_bib(bib)
+        ev = db.get_event_state()
+        total_time = sum((l.get("lap_duration_seconds") or 0.0) for l in all_laps)
+        lap_data["goal"] = compute_goal_progress(
+            participant.get("goal_type") if participant else None,
+            participant.get("goal_value") if participant else None,
+            total_laps=len(all_laps) or (lap_data.get("lap_number") or 1),
+            total_time_seconds=total_time or (lap_data.get("lap_duration_seconds") or 0.0),
+            track_length_m=ev.get("track_length_m") or 400.0,
+            last_lap_seconds=lap_data.get("lap_duration_seconds"),
+        )
     if "commentary" not in lap_data:
         prior = [
             l["lap_duration_seconds"]
-            for l in db.get_laps_for_runner(lap_data["bib_number"])
+            for l in all_laps
             if l["id"] != lap_data.get("id") and l.get("lap_duration_seconds")
         ]
         prev_best = min(prior) if prior else None
         prev_avg = (sum(prior) / len(prior)) if prior else None
+        goal_speech = lap_data["goal"]["speech_text"] if lap_data.get("goal") else None
         lap_data["commentary"] = commentary_engine.for_lap(
-            name=lap_data.get("name") or f"Bib {lap_data['bib_number']}",
+            name=lap_data.get("name") or f"Bib {bib}",
             lap_number=lap_data.get("lap_number") or 1,
             lap_duration_seconds=lap_data.get("lap_duration_seconds") or 0.0,
             prev_best_seconds=prev_best,
             prev_avg_seconds=prev_avg,
+            goal_speech=goal_speech,
         )
-    await broadcast_runner_change({"type": "lap_completed", "lap": lap_data}, lap_data["bib_number"])
+    await broadcast_runner_change({"type": "lap_completed", "lap": lap_data}, bib)
 
 # Callback when a runner begins (Chip Start / Lap 0)
 async def on_runner_started(start_data: Dict[str, Any]):
@@ -756,6 +773,8 @@ class ParticipantRequest(BaseModel):
     notes: Optional[str] = ""
     email: Optional[str] = ""
     apriltag_id: Optional[int] = None
+    goal_type: Optional[str] = None
+    goal_value: Optional[Any] = None
 
 @app.get("/api/participants")
 async def list_participants():
@@ -764,7 +783,8 @@ async def list_participants():
 @app.post("/api/participants")
 async def add_participant(p: ParticipantRequest):
     db.add_participant(
-        p.bib_number, p.name, p.epc, p.notes or "", p.email or "", apriltag_id=p.apriltag_id
+        p.bib_number, p.name, p.epc, p.notes or "", p.email or "",
+        apriltag_id=p.apriltag_id, goal_type=p.goal_type, goal_value=p.goal_value,
     )
     await push_leaderboard()
     return {"status": "created"}
@@ -855,10 +875,22 @@ async def import_participants(req: ImportRequest):
 @app.put("/api/participants/{bib}")
 async def edit_participant(bib: int, p: ParticipantRequest):
     db.update_participant(
-        bib, p.name, p.epc, p.notes or "", p.email, apriltag_id=p.apriltag_id
+        bib, p.name, p.epc, p.notes or "", p.email,
+        apriltag_id=p.apriltag_id, goal_type=p.goal_type, goal_value=p.goal_value,
     )
     await push_leaderboard()
     return {"status": "updated"}
+
+class GoalUpdateRequest(BaseModel):
+    goal_type: Optional[str] = None
+    goal_value: Optional[Any] = None
+
+@app.patch("/api/participants/{bib}/goal")
+async def set_participant_goal_endpoint(bib: int, req: GoalUpdateRequest):
+    """Sets or clears a participant's single goal (laps, distance in meters, or time in seconds/MM:SS)."""
+    updated = db.set_participant_goal(bib, req.goal_type, req.goal_value)
+    await push_leaderboard()
+    return {"status": "updated", "bib": bib, "participant": updated}
 
 class AprilTagAssignRequest(BaseModel):
     apriltag_id: Optional[int] = None
