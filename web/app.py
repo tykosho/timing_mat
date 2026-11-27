@@ -1326,6 +1326,9 @@ class PredictStartRequest(BaseModel):
 class PredictNewRequest(BaseModel):
     name: str = "Club Predict 5K"
 
+class PredictUpdateGuessRequest(BaseModel):
+    predicted_time: Any
+
 async def _broadcast_predict_state():
     state = predict_5k.get_state()
     await broadcast_ws({"type": "predict_state", "state": state})
@@ -1355,6 +1358,15 @@ async def api_predict_delete_entry(entry_id: int):
         raise HTTPException(status_code=404, detail="Entry not found")
     state = await _broadcast_predict_state()
     return {"status": "deleted", "state": state}
+
+@app.patch("/api/predict/entries/{entry_id}/prediction")
+async def api_predict_update_prediction(entry_id: int, req: PredictUpdateGuessRequest):
+    try:
+        updated = predict_5k.update_entry_prediction(entry_id, req.predicted_time)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    state = await _broadcast_predict_state()
+    return {"status": "updated", "entry": updated, "state": state}
 
 @app.post("/api/predict/settings")
 async def api_predict_settings(req: PredictSettingsRequest):

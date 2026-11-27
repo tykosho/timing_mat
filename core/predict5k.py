@@ -224,6 +224,25 @@ class Predict5KManager:
             cur = conn.execute("DELETE FROM predict_entries WHERE id = ?;", (entry_id,))
             return cur.rowcount > 0
 
+    def update_entry_prediction(self, entry_id: int, predicted_time: Any) -> Dict[str, Any]:
+        """Update a runner's 5K prediction while the session is still in setup."""
+        pred_secs = parse_predicted_time(predicted_time)
+        with self._lock, self._connect() as conn:
+            sess = self._active_session_row(conn)
+            if sess["status"] != "setup":
+                raise ValueError("Predictions are locked once the race has started.")
+            row = conn.execute(
+                "SELECT id, name FROM predict_entries WHERE id = ? AND session_id = ?;",
+                (entry_id, sess["id"]),
+            ).fetchone()
+            if not row:
+                raise ValueError("Runner entry not found.")
+            conn.execute(
+                "UPDATE predict_entries SET predicted_seconds = ? WHERE id = ?;",
+                (pred_secs, entry_id),
+            )
+            return {"id": row["id"], "name": row["name"]}
+
     def update_settings(
         self,
         name: Optional[str] = None,

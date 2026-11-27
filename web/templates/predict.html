@@ -277,14 +277,8 @@
             </div>
             <div class="sm:col-span-3">
               <label class="block text-xs font-medium text-slate-400 mb-1">5K Guess (MM:SS)</label>
-              <div class="relative flex items-center">
-                <input id="entryGuess" type="password" inputmode="numeric" required placeholder="24:30" autocomplete="off"
-                       class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 pr-9 text-sm font-mono text-white focus:outline-none focus:border-emerald-500">
-                <button type="button" onclick="toggleGuessMask()" title="Show/hide while typing"
-                        class="absolute right-2 text-slate-400 hover:text-white text-xs p-1">
-                  <i id="guessMaskIcon" class="fa-solid fa-eye"></i>
-                </button>
-              </div>
+              <input id="entryGuess" type="text" inputmode="numeric" required placeholder="24:30" autocomplete="off"
+                     class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-emerald-500">
             </div>
             <div class="sm:col-span-2">
               <label class="block text-xs font-medium text-slate-400 mb-1">AprilTag #</label>
@@ -320,6 +314,42 @@
       </div>
     </div>
   </main>
+
+  <!-- Confirm Edit Prediction Modal (triggered when an already-registered runner shows their tag before race start) -->
+  <div id="editGuessModal" role="dialog" aria-modal="true"
+       class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+       onclick="if (event.target === this) closeEditGuessModal()">
+    <div class="bg-slate-900 border border-sky-500/50 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-black text-white"><i class="fa-solid fa-tag text-sky-400 mr-1.5"></i>Edit Prediction?</h3>
+        <button type="button" onclick="closeEditGuessModal()" class="text-slate-400 hover:text-white p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <p id="editGuessPromptText" class="text-sm text-slate-300"></p>
+      <div id="editGuessConfirmStep" class="flex items-center justify-end gap-2">
+        <button type="button" onclick="closeEditGuessModal()" class="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+          Keep Current
+        </button>
+        <button type="button" onclick="revealEditGuessForm()" class="px-4 py-1.5 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white">
+          Yes, Edit Time
+        </button>
+      </div>
+      <form id="editGuessForm" onsubmit="submitEditGuess(event)" class="hidden space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">New 5K Guess (MM:SS)</label>
+          <input id="editGuessInput" type="text" inputmode="numeric" required placeholder="24:30" autocomplete="off"
+                 class="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-3 py-2 text-sm font-mono text-white outline-none">
+        </div>
+        <div class="flex items-center justify-end gap-2">
+          <button type="button" onclick="closeEditGuessModal()" class="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+            Cancel
+          </button>
+          <button type="submit" class="px-4 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white">
+            Save New Guess
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <script>
     let predictState = {{ predict_state | tojson | safe }};
@@ -531,6 +561,9 @@
         const finishBtn = (status === "running" && !e.finished)
           ? `<button type="button" onclick="manualFinish(${e.id})" class="px-2 py-1 rounded bg-emerald-700/40 hover:bg-emerald-600 text-emerald-200 text-xs font-bold mr-1">Finish Now</button>`
           : "";
+        const editBtn = (status === "setup")
+          ? `<button type="button" onclick="promptEditGuess(${e.id}, ${JSON.stringify(e.name)})" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 text-xs font-bold mr-1" title="Edit prediction">Edit</button>`
+          : "";
         const delBtn = (status === "setup")
           ? `<button type="button" onclick="deleteEntry(${e.id})" class="px-2 py-1 rounded bg-rose-950/40 hover:bg-rose-800 text-rose-300 text-xs"><i class="fa-solid fa-trash"></i></button>`
           : "";
@@ -540,7 +573,7 @@
             <td class="py-2.5 px-3 space-x-1">${atPill}${rfidPill || (!atPill ? '<span class="text-xs text-slate-500">manual</span>' : '')}</td>
             <td class="py-2.5 px-3 text-right font-mono text-slate-500 text-xs"><i class="fa-solid fa-lock mr-1"></i>Locked</td>
             <td class="py-2.5 px-3 text-center">${statusBadge}</td>
-            <td class="py-2.5 px-3 text-right">${finishBtn}${delBtn}</td>
+            <td class="py-2.5 px-3 text-right">${finishBtn}${editBtn}${delBtn}</td>
           </tr>
         `;
       }).join("");
@@ -611,15 +644,6 @@
       return data;
     }
 
-    function toggleGuessMask() {
-      const inp = document.getElementById("entryGuess");
-      const icon = document.getElementById("guessMaskIcon");
-      if (!inp) return;
-      const showing = inp.type === "text";
-      inp.type = showing ? "password" : "text";
-      if (icon) icon.className = showing ? "fa-solid fa-eye" : "fa-solid fa-eye-slash";
-    }
-
     async function addEntry(e) {
       e.preventDefault();
       const name = document.getElementById("entryName").value.trim();
@@ -635,9 +659,6 @@
         });
         document.getElementById("entryName").value = "";
         document.getElementById("entryGuess").value = "";
-        document.getElementById("entryGuess").type = "password";
-        const icon = document.getElementById("guessMaskIcon");
-        if (icon) icon.className = "fa-solid fa-eye";
         document.getElementById("entryApriltag").value = "";
         document.getElementById("entryEpc").value = "";
         document.getElementById("entryName").focus();
@@ -789,6 +810,49 @@
       });
     }
 
+    // ---- Edit Prediction Confirmation (on tag scan or Edit click before start) ----
+    let editingEntryId = null;
+    const tagEditCooldown = new Map();
+
+    function promptEditGuess(entryId, name) {
+      if (!predictState.session || predictState.session.status !== "setup") return;
+      editingEntryId = entryId;
+      document.getElementById("editGuessPromptText").innerHTML =
+        `Tag matched <strong class="text-white">${esc(name)}</strong>. Do you want to update your 5K prediction?`;
+      document.getElementById("editGuessConfirmStep").classList.remove("hidden");
+      document.getElementById("editGuessForm").classList.add("hidden");
+      document.getElementById("editGuessInput").value = "";
+      document.getElementById("editGuessModal").classList.remove("hidden");
+    }
+
+    function revealEditGuessForm() {
+      document.getElementById("editGuessConfirmStep").classList.add("hidden");
+      document.getElementById("editGuessForm").classList.remove("hidden");
+      document.getElementById("editGuessInput").focus();
+    }
+
+    function closeEditGuessModal() {
+      editingEntryId = null;
+      document.getElementById("editGuessModal").classList.add("hidden");
+    }
+
+    async function submitEditGuess(e) {
+      e.preventDefault();
+      if (editingEntryId == null) return;
+      const predicted_time = document.getElementById("editGuessInput").value.trim();
+      try {
+        const res = await fetch(`/api/predict/entries/${editingEntryId}/prediction`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ predicted_time }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || "Could not update prediction");
+        if (data.state) applyPredictState(data.state);
+        closeEditGuessModal();
+      } catch (err) { alert(err.message); }
+    }
+
     // ---- WebSocket Live Sync ----
     function connectWS() {
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -804,15 +868,30 @@
           applyCameraHealth(msg.camera);
         } else if (msg.type === "tag_detected" && msg.data && predictState.session.status === "setup") {
           const hint = document.getElementById("lastScannedHint");
-          if (msg.data.apriltag_id != null) {
-            hint.textContent = `Scanned AprilTag #${msg.data.apriltag_id}`;
-            if (document.activeElement !== document.getElementById("entryApriltag") && !document.getElementById("entryApriltag").value) {
-              document.getElementById("entryApriltag").value = String(msg.data.apriltag_id);
+          const atid = msg.data.apriltag_id;
+          const epc = (msg.data.epc || "").toUpperCase();
+          const matched = (predictState.entries || []).find(ent =>
+            (atid != null && ent.apriltag_id === atid) || (epc && ent.epc === epc)
+          );
+          if (matched) {
+            const key = `entry:${matched.id}`;
+            const now = Date.now();
+            if (editingEntryId == null && (!tagEditCooldown.has(key) || (now - tagEditCooldown.get(key)) > 10000)) {
+              tagEditCooldown.set(key, now);
+              hint.textContent = `Tag matched ${matched.name}`;
+              promptEditGuess(matched.id, matched.name);
             }
-          } else if (msg.data.epc) {
-            hint.textContent = `Scanned RFID ${msg.data.epc.slice(-6)}`;
+            return;
+          }
+          if (atid != null) {
+            hint.textContent = `Scanned AprilTag #${atid}`;
+            if (document.activeElement !== document.getElementById("entryApriltag") && !document.getElementById("entryApriltag").value) {
+              document.getElementById("entryApriltag").value = String(atid);
+            }
+          } else if (epc) {
+            hint.textContent = `Scanned RFID ${epc.slice(-6)}`;
             if (document.activeElement !== document.getElementById("entryEpc") && !document.getElementById("entryEpc").value) {
-              document.getElementById("entryEpc").value = msg.data.epc;
+              document.getElementById("entryEpc").value = epc;
             }
           }
         }
