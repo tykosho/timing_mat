@@ -165,7 +165,7 @@ def run_fast(runners: int = 60, hours: float = 3.0, seed: int = 1, step: float =
 
             r200 = FakeR200(clock=now, seed=seed, faults=soak_faults(), max_tags_per_poll=4)
             groups = make_runners(r200, epcs, lap_seconds, seed)
-            unknown, too_soon, board_ms = [], [], []
+            unknown, board_ms = [], []
 
             def on_lap(_lap):
                 # What web/app.py does on every lap before broadcasting it
@@ -174,7 +174,7 @@ def run_fast(runners: int = 60, hours: float = 3.0, seed: int = 1, step: float =
                 board_ms.append((time.perf_counter() - t0) * 1000)
 
             engine = LapEngine(db=db, crossing_window=2.5, on_lap_completed=on_lap,
-                               on_unassigned_tag=unknown.append, on_crossing_too_soon=too_soon.append)
+                               on_unassigned_tag=unknown.append)
             reader = SerialReader(on_tag_read=engine.process_tag_read, clock=now)
             # What SerialReader's thread does on connect, without the thread: the port is the
             # fake one, read without waiting, so the race runs as fast as the CPU allows
@@ -248,11 +248,11 @@ def run_fast(runners: int = 60, hours: float = 3.0, seed: int = 1, step: float =
                 "mode": "fast", "runners": runners, "race_hours": hours, "rows": rows,
                 "laps": sum(laps_by_epc.values()), "expected_laps": sum(max(0, n - 1) for n in crossings.values()),
                 "app_errors": app_errors, "reader_misses": reader_misses, **starts_from_db(db_path),
-                "unknown_tags": len(unknown), "too_soon_prompts": len(too_soon), "flagged_laps": flagged,
+                "unknown_tags": len(unknown), "flagged_laps": flagged,
                 "corrupted_frames": r200.corrupted, "dropped_frames": r200.dropped, "polls": r200.polls,
                 "poll_limit_stops": r200.stops_at_limit,
             }
-            result["ok"] = (not app_errors and not unknown and not too_soon
+            result["ok"] = (not app_errors and not unknown
                             and not result["missed_starts_not_flagged"])
             return result
     finally:
@@ -469,7 +469,6 @@ async def _live_loop(http, port, server, db_path, csv_path, clients, minutes, sa
         "mode": "live", "minutes": minutes, "clients": clients, "rows": rows,
         "server_alive": server.poll() is None,
         "unknown_tags": admin["types"].get("unassigned_tag_detected", 0),
-        "too_soon_prompts": admin["types"].get("crossing_too_soon", 0),
         "ws_reconnects": sum(s["connects"] - 1 for s in public if s["connects"]),
         "ws_errors": sum(s["errors"] for s in public),
         "ws_last_error": next((s["last_error"] for s in public if s["last_error"]), None),
@@ -481,7 +480,7 @@ def summarize(result: Dict[str, Any]) -> str:
     rows = result.get("rows") or []
     lines = [f"\nSOAK {result['mode'].upper()}: {'PASS' if result['ok'] else 'FAIL'}",
              f"  laps counted {result['laps']} / run {result['expected_laps']}; "
-             f"unknown tags {result['unknown_tags']}; too-soon prompts {result['too_soon_prompts']}",
+             f"unknown tags {result['unknown_tags']}",
              f"  faults injected: {result['corrupted_frames']} corrupted, {result['dropped_frames']} dropped frames"]
     for problem in result["app_errors"][:10]:
         lines.append(f"  APP ERROR {problem}")

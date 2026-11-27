@@ -199,13 +199,6 @@ class RebootTest(RestartTestCase):
         self.cross()
         self.assertEqual(self.last_lap(), (135.0, RESTART_FLAG_REASON))
 
-    def test_confirmed_too_soon_crossing_is_flagged(self):
-        self.race_with_corrected_clock()
-        self.pi.reboot(self.pi.wall_t)
-        self.launch()
-        asyncio.run(self.engine.accept_too_soon_crossing(1, clock_module.now() + 1))
-        self.assertEqual(self.last_lap()[1], RESTART_FLAG_REASON)
-
     def test_manual_lap_timed_now_is_flagged_but_typed_duration_is_not(self):
         self.race_with_corrected_clock()
         self.pi.reboot(self.pi.wall_t + 60)
