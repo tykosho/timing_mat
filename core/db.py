@@ -1380,6 +1380,92 @@ class Database:
                 conn.execute(f"DELETE FROM {table} WHERE event_id = ?;", (eid,))
             conn.execute("UPDATE events SET status = 'setup', start_time = NULL, end_time = NULL WHERE id = ?;", (eid,))
 
+    def export_snapshot(self, event_id: Optional[int] = None) -> Dict[str, Any]:
+        """Exports the active event's state, participants, laps, and breaks for remote cloud sync."""
+        eid = self._eid(event_id)
+        with self.connect() as conn:
+            ev = dict(conn.execute("SELECT * FROM events WHERE id = ?;", (eid,)).fetchone())
+            participants = [
+                dict(r) for r in conn.execute(
+                    "SELECT * FROM participants WHERE event_id = ? ORDER BY bib_number ASC;", (eid,)
+                ).fetchall()
+            ]
+            laps = [
+                dict(r) for r in conn.execute(
+                    "SELECT * FROM laps WHERE event_id = ? ORDER BY crossing_time ASC, id ASC;", (eid,)
+                ).fetchall()
+            ]
+            breaks = [
+                dict(r) for r in conn.execute(
+                    "SELECT * FROM breaks WHERE event_id = ? ORDER BY start_time ASC, id ASC;", (eid,)
+                ).fetchall()
+            ]
+        return {"event": ev, "participants": participants, "laps": laps, "breaks": breaks}
+
+    def apply_snapshot(self, snapshot: Dict[str, Any], event_id: Optional[int] = None) -> None:
+        """Atomically mirrors a trackside snapshot into the active event on a remote cloud instance."""
+        eid = self._eid(event_id)
+        ev = snapshot.get("event") or {}
+        participants = snapshot.get("participants") or []
+        laps = snapshot.get("laps") or []
+        breaks = snapshot.get("breaks") or []
+        with self.connect() as conn:
+            conn.execute(
+                """UPDATE events SET name = ?, status = ?, start_time = ?, end_time = ?, paused_at = ?,
+                   min_lap_seconds = ?, max_lap_rest_seconds = ?, track_length_m = ?
+                   WHERE id = ?;""",
+                (
+                    ev.get("name") or self.default_event_name,
+                    ev.get("status") or "setup",
+                    ev.get("start_time"),
+                    ev.get("end_time"),
+                    ev.get("paused_at"),
+                    ev.get("min_lap_seconds", 45.0),
+                    ev.get("max_lap_rest_seconds", 600.0),
+                    ev.get("track_length_m", 400.0),
+                    eid,
+                ),
+            )
+            conn.execute("DELETE FROM laps WHERE event_id = ?;", (eid,))
+            conn.execute("DELETE FROM breaks WHERE event_id = ?;", (eid,))
+            conn.execute("DELETE FROM participants WHERE event_id = ?;", (eid,))
+            for p in participants:
+                conn.execute(
+                    """INSERT INTO participants
+                       (event_id, bib_number, name, email, epc, notes, start_time, last_crossing_time,
+                        created_at, start_flag_reason, apriltag_id, goal_type, goal_value)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);""",
+                    (
+                        eid, p["bib_number"], p["name"], p.get("email", ""),
+                        p.get("epc"), p.get("notes", ""), p.get("start_time"),
+                        p.get("last_crossing_time"), p.get("created_at") or clock.now(),
+                        p.get("start_flag_reason"), p.get("apriltag_id"),
+                        p.get("goal_type"), p.get("goal_value"),
+                    ),
+                )
+            for lap in laps:
+                conn.execute(
+                    """INSERT INTO laps
+                       (event_id, bib_number, lap_number, crossing_time, lap_duration_seconds,
+                        peak_rssi, manual_entry, flag_reason)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?);""",
+                    (
+                        eid, lap["bib_number"], lap["lap_number"], lap["crossing_time"],
+                        lap["lap_duration_seconds"], lap.get("peak_rssi", 0.0),
+                        1 if lap.get("manual_entry") else 0, lap.get("flag_reason"),
+                    ),
+                )
+            for brk in breaks:
+                conn.execute(
+                    """INSERT INTO breaks
+                       (event_id, bib_number, break_number, start_time, end_time, duration_seconds)
+                       VALUES (?, ?, ?, ?, ?, ?);""",
+                    (
+                        eid, brk["bib_number"], brk["break_number"], brk["start_time"],
+                        brk["end_time"], brk["duration_seconds"],
+                    ),
+                )
+
     def seed_demo_runners(self):
         """Fills the *current* event with sample runners, but only if it has no participants yet."""
         if self.get_all_participants():

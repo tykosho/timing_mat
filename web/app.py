@@ -1,5 +1,6 @@
 import os
 import re
+import hmac
 import json
 import secrets
 import asyncio
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from core import exports
 from core import clock
+from core.cloud_sync import CloudSyncClient
 from core.commentary import CommentaryEngine
 from core.db import Database, RegistrationError, EventStateError, LapEditError, is_unclaimed
 from core.goals import compute_goal_progress
@@ -54,8 +56,9 @@ def _flag(env_name: str, config_value: Any, default: bool) -> bool:
         return env.lower() in ("true", "1", "yes")
     return default if config_value is None else bool(config_value)
 
-# Hardware setup (Mock vs Serial)
-use_mock = _flag("MOCK_HARDWARE", config.get("hardware", {}).get("mock"), True)
+# Hardware setup (Cloud Passive vs Mock vs Serial)
+cloud_mode = _flag("CLOUD_MODE", (config.get("server") or {}).get("cloud_mode"), False)
+use_mock = False if cloud_mode else _flag("MOCK_HARDWARE", config.get("hardware", {}).get("mock"), True)
 serial_port = os.getenv("SERIAL_PORT", config.get("hardware", {}).get("serial_port", "/dev/ttyUSB0"))
 baud_rate = int(os.getenv("BAUD_RATE", config.get("hardware", {}).get("baud_rate", 115200)))
 
@@ -93,6 +96,7 @@ async def broadcast_ws(message: Dict[str, Any], admin_only: bool = False):
 async def push_leaderboard():
     full_board.pushed_now()
     await broadcast_ws({"type": "leaderboard_update", "leaderboard": db.get_leaderboard()})
+    cloud_sync.mark_dirty()
 
 # Full leaderboard at most every FULL_BOARD_INTERVAL s while laps come in (issue #71)
 full_board = CoalescedPush(push_leaderboard)
@@ -105,6 +109,7 @@ async def broadcast_runner_change(message: Dict[str, Any], bib_number: int):
     await broadcast_ws(message)
     if active_connections:
         full_board.mark_dirty()
+    cloud_sync.mark_dirty()
 
 # Trackside voice & display commentary engine (non-repeating shuffle deck)
 commentary_engine = CommentaryEngine(
@@ -283,7 +288,24 @@ apriltag_reader = AprilTagCameraReader(
     camera_index=apriltag_camera_index,
 )
 
-if use_mock:
+class _CloudPassiveReader:
+    """No-op reader for Cloud Run remote spectator hosting (receives snapshots from trackside)."""
+    def start(self): pass
+    def stop(self): pass
+    def health(self) -> Dict[str, Any]:
+        return {"kind": "CloudRemote", "running": True, "connected": True, "last_error": None}
+
+cloud_sync = CloudSyncClient(
+    cloud_url=os.getenv("CLOUD_SYNC_URL"),
+    token=os.getenv("CLOUD_SYNC_TOKEN") or admin_auth.pin,
+    snapshot_fn=db.export_snapshot,
+)
+
+if cloud_mode:
+    reader = _CloudPassiveReader()
+    apriltag_enabled_default = False
+    logger.info("Operating in CLOUD REMOTE mode (receiving trackside snapshots via /api/remote/snapshot).")
+elif use_mock:
     reader = MockReader(on_tag_read=on_reader_tag, speed_multiplier=5.0)
     lap_engine.speed_multiplier = 5.0
     logger.info("Operating in MOCK reader mode (Simulated runners active at 5.0x).")
@@ -338,9 +360,11 @@ async def lifespan(app: FastAPI):
     reader.start()
     if apriltag_enabled_default and APRILTAG_AVAILABLE and reader is not apriltag_reader:
         apriltag_reader.start()
+    cloud_sync.start()
 
     yield
 
+    cloud_sync.stop()
     if reader is not apriltag_reader:
         apriltag_reader.stop()
     reader.stop()
@@ -411,6 +435,7 @@ async def push_event_status(include_leaderboard: bool = True):
     if include_leaderboard:
         message["leaderboard"] = db.get_leaderboard()
     await broadcast_ws(message)
+    cloud_sync.mark_dirty()
 
 # ----------------- LOGIN -----------------
 @app.get("/login", response_class=HTMLResponse)
@@ -1332,6 +1357,33 @@ async def api_test_announcer(req: AnnouncerTestRequest):
         prev_avg_seconds=88.0 if req.category == "fast" else 84.0,
         force_category=req.category,
     )
+
+# ----------------- REMOTE CLOUD SYNC API -----------------
+def _expected_sync_token() -> Optional[str]:
+    tok = (os.getenv("CLOUD_SYNC_TOKEN") or "").strip()
+    return tok or admin_auth.pin
+
+@app.post("/api/remote/snapshot")
+async def api_receive_remote_snapshot(request: Request):
+    """Receives an atomic race snapshot pushed from the trackside timing machine."""
+    expected = _expected_sync_token()
+    provided = (request.headers.get("X-Sync-Token") or "").strip()
+    if not expected or not provided or not hmac.compare_digest(provided.encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Sync-Token")
+    snapshot = await request.json()
+    db.apply_snapshot(snapshot)
+    lap_engine.refresh_event()
+    await broadcast_ws({
+        "type": "event_status",
+        "event": db.get_event_state(),
+        "leaderboard": db.get_leaderboard(),
+        "server_now": clock.now(),
+    })
+    return {"status": "synced", "total_laps": db.get_total_laps_count()}
+
+@app.get("/api/remote/status")
+async def api_remote_status():
+    return {"cloud_mode": cloud_mode, "sync": cloud_sync.status()}
 
 # ----------------- PREDICT 5K API -----------------
 class PredictEntryRequest(BaseModel):

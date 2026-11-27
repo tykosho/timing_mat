@@ -37,6 +37,7 @@ PUBLIC_ROUTES = [
     ("POST", r"/logout"),
     ("GET", r"/api/leaderboard"),
     ("GET", r"/api/event"),
+    ("POST", r"/api/remote/snapshot"),
     ("GET", r"/favicon\.ico"),
 ]
 _PUBLIC = [(m, re.compile(p + r"/?")) for m, p in PUBLIC_ROUTES]
