@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,17 +9,35 @@
   <link rel="stylesheet" href="/static/fontawesome/all.min.css">
   <style>
     @keyframes slide-in {
-      from { opacity: 0; transform: translateY(-14px) scale(0.98); }
-      to { opacity: 1; transform: translateY(0) scale(1); }
+      from {
+        opacity: 0;
+        transform: translateY(-14px) scale(0.98);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
     }
+
     @keyframes pulse-glow {
-      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-      70% { box-shadow: 0 0 0 14px rgba(16, 185, 129, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+      0% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+      }
+
+      70% {
+        box-shadow: 0 0 0 14px rgba(16, 185, 129, 0);
+      }
+
+      100% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+      }
     }
+
     .crossing-row-enter {
       animation: slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1), pulse-glow 1.4s ease-out;
     }
+
     :root {
       --ui-scale: 1.25;
       --bg-page: #020617;
@@ -37,6 +56,7 @@
       --fg-lap: #f8fafc;
       --fg-split: #34d399;
     }
+
     body[data-theme="high-contrast"] {
       --bg-page: #000000;
       --bg-header: #000000;
@@ -54,6 +74,7 @@
       --fg-lap: #ffffff;
       --fg-split: #bef264;
     }
+
     body[data-theme="light"] {
       --bg-page: #f1f5f9;
       --bg-header: #ffffff;
@@ -71,6 +92,7 @@
       --fg-lap: #0f172a;
       --fg-split: #059669;
     }
+
     body[data-theme="amber"] {
       --bg-page: #0c0a09;
       --bg-header: #1c1917;
@@ -88,22 +110,33 @@
       --fg-lap: #fde68a;
       --fg-split: #fbbf24;
     }
+
     body.trackside-body {
       background-color: var(--bg-page);
       color: var(--fg-name);
     }
+
     header.trackside-header {
       background-color: var(--bg-header);
       border-bottom-color: var(--border-header);
     }
+
     /* Cumulative laps banner (#49); scales with Display Settings */
-    .cumulative-total { font-size: calc(2.6rem * var(--ui-scale)); line-height: 1; }
-    .cumulative-sub { font-size: calc(1rem * var(--ui-scale)); }
+    .cumulative-total {
+      font-size: calc(2.6rem * var(--ui-scale));
+      line-height: 1;
+    }
+
+    .cumulative-sub {
+      font-size: calc(1rem * var(--ui-scale));
+    }
+
     .trackside-shell {
       max-width: 1120px;
       width: 100%;
       margin: 0 auto;
     }
+
     .crossing-row {
       display: flex;
       align-items: center;
@@ -115,10 +148,12 @@
       border: 2px solid var(--border-row);
       transition: border-color 0.2s ease, background-color 0.2s ease;
     }
+
     .crossing-row.is-newest {
       background-color: var(--bg-newest);
       border-color: var(--border-newest);
     }
+
     .bib-pill {
       min-width: calc(4.25rem * var(--ui-scale));
       text-align: center;
@@ -133,6 +168,7 @@
       border: 1px solid var(--border-bib);
       flex-shrink: 0;
     }
+
     .runner-name {
       font-size: calc(1.55rem * var(--ui-scale));
       line-height: 1.2;
@@ -142,10 +178,12 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+
     .card-time-ago {
       color: var(--fg-muted);
       font-size: calc(0.75rem * max(1, var(--ui-scale) * 0.85));
     }
+
     .lap-count-pill {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-weight: 900;
@@ -157,6 +195,7 @@
       color: var(--fg-lap);
       white-space: nowrap;
     }
+
     .split-value {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-weight: 900;
@@ -167,6 +206,7 @@
       min-width: calc(5.8rem * var(--ui-scale));
       text-align: right;
     }
+
     .quick-btn {
       width: 2.35rem;
       height: 2.35rem;
@@ -178,6 +218,7 @@
       justify-content: center;
       transition: background-color 0.15s ease, color 0.15s ease;
     }
+
     .settings-preset-btn {
       padding: 0.4rem 0.7rem;
       border-radius: 0.5rem;
@@ -188,21 +229,39 @@
       color: rgb(226 232 240);
       cursor: pointer;
     }
+
     .settings-preset-btn.is-active {
       background: rgb(16 185 129);
       color: rgb(2 44 34);
       border-color: rgb(52 211 153);
     }
+
     @media (max-width: 640px) {
       .crossing-row {
         flex-wrap: wrap;
         padding: 0.75rem 1rem;
       }
-      .runner-name { font-size: calc(1.2rem * var(--ui-scale)); }
-      .bib-pill { font-size: calc(1.1rem * var(--ui-scale)); min-width: 3.5rem; padding: 0.45rem 0.5rem; }
-      .split-value { font-size: calc(1.4rem * var(--ui-scale)); min-width: 5rem; }
-      .lap-count-pill { font-size: calc(1.05rem * var(--ui-scale)); }
+
+      .runner-name {
+        font-size: calc(1.2rem * var(--ui-scale));
+      }
+
+      .bib-pill {
+        font-size: calc(1.1rem * var(--ui-scale));
+        min-width: 3.5rem;
+        padding: 0.45rem 0.5rem;
+      }
+
+      .split-value {
+        font-size: calc(1.4rem * var(--ui-scale));
+        min-width: 5rem;
+      }
+
+      .lap-count-pill {
+        font-size: calc(1.05rem * var(--ui-scale));
+      }
     }
+
     .sim-dock {
       position: fixed;
       right: 1rem;
@@ -211,6 +270,7 @@
       width: 292px;
       max-width: calc(100vw - 2rem);
     }
+
     .sim-card {
       position: relative;
       background: rgba(15, 23, 42, 0.96);
@@ -220,6 +280,7 @@
       backdrop-filter: blur(8px);
       padding: 0.45rem;
     }
+
     .sim-min-btn {
       position: absolute;
       top: 0.3rem;
@@ -232,11 +293,17 @@
       border-radius: 0.25rem;
       cursor: pointer;
     }
-    .sim-min-btn:hover { color: #ffffff; background: rgb(30 41 59); }
+
+    .sim-min-btn:hover {
+      color: #ffffff;
+      background: rgb(30 41 59);
+    }
+
     .sim-track-wrap {
       position: relative;
       width: 100%;
     }
+
     .sim-infield-controls {
       position: absolute;
       left: 50%;
@@ -249,6 +316,7 @@
       width: 56%;
       pointer-events: auto;
     }
+
     .sim-play-icon-btn {
       display: inline-flex;
       align-items: center;
@@ -264,16 +332,19 @@
       cursor: pointer;
       transition: background-color 0.15s ease, border-color 0.15s ease;
     }
+
     .sim-play-icon-btn:hover {
       background: rgb(51 65 85);
       border-color: rgb(148 163 184);
     }
+
     .sim-slider-row {
       width: 100%;
       display: flex;
       align-items: center;
       gap: 0.4rem;
     }
+
     .sim-speed-slider {
       -webkit-appearance: none;
       appearance: none;
@@ -285,6 +356,7 @@
       outline: none;
       cursor: pointer;
     }
+
     .sim-speed-slider::-webkit-slider-thumb {
       -webkit-appearance: none;
       appearance: none;
@@ -295,6 +367,7 @@
       border: 2px solid #022c22;
       cursor: pointer;
     }
+
     .sim-speed-slider::-moz-range-thumb {
       width: 12px;
       height: 12px;
@@ -303,6 +376,7 @@
       border: 2px solid #022c22;
       cursor: pointer;
     }
+
     .sim-speed-label {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 0.65rem;
@@ -310,12 +384,14 @@
       color: rgb(203 213 225);
       white-space: nowrap;
     }
+
     .header-actions {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 0.5rem;
     }
+
     .header-btn {
       display: inline-flex;
       align-items: center;
@@ -333,19 +409,270 @@
       white-space: nowrap;
       transition: background-color 0.15s ease, border-color 0.15s ease;
     }
+
     .header-btn:hover {
       background-color: rgb(51 65 85);
       border-color: rgb(100 116 139);
     }
+
     .header-btn svg {
       width: 15px;
       height: 15px;
       flex-shrink: 0;
     }
+
+    .header-btn.is-active {
+      background-color: rgba(16, 185, 129, 0.22);
+      border-color: rgba(52, 211, 153, 0.6);
+      color: #6ee7b7;
+    }
+
+    .quip-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      margin-top: 0.3rem;
+      padding: 0.22rem 0.65rem;
+      border-radius: 9999px;
+      font-size: calc(0.82rem * max(1, var(--ui-scale) * 0.88));
+      font-weight: 700;
+      line-height: 1.25;
+      max-width: 100%;
+    }
+
+    .quip-pr {
+      background: rgba(16, 185, 129, 0.2);
+      border: 1px solid rgba(52, 211, 153, 0.55);
+      color: #6ee7b7;
+    }
+
+    .quip-fast {
+      background: rgba(14, 165, 233, 0.18);
+      border: 1px solid rgba(56, 189, 248, 0.5);
+      color: #7dd3fc;
+    }
+
+    .quip-burn {
+      background: rgba(245, 158, 11, 0.18);
+      border: 1px solid rgba(251, 191, 36, 0.5);
+      color: #fcd34d;
+    }
+
+    .sensor-badge {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.66rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      padding: 0.14rem 0.42rem;
+      border-radius: 0.38rem;
+      white-space: nowrap;
+      border: 1px solid rgba(100, 116, 139, 0.45);
+      color: #cbd5e1;
+      background: rgba(30, 41, 59, 0.85);
+    }
+
+    .sensor-fused {
+      color: #6ee7b7;
+      background: rgba(6, 78, 59, 0.55);
+      border-color: rgba(52, 211, 153, 0.55);
+    }
+
+    .sensor-apriltag {
+      color: #7dd3fc;
+      background: rgba(12, 74, 110, 0.55);
+      border-color: rgba(56, 189, 248, 0.5);
+    }
+
+    .voice-bar {
+      background: var(--bg-row);
+      border: 1px solid var(--border-row);
+      border-radius: 1rem;
+      padding: 0.6rem 0.9rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.65rem;
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .voice-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.55rem;
+      font-size: 0.78rem;
+      max-width: 100%;
+      min-width: 0;
+    }
+
+    .voice-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.35rem 0.65rem;
+      border-radius: 0.55rem;
+      font-weight: 800;
+      font-size: 0.76rem;
+      border: 1px solid rgb(51 65 85);
+      background: rgb(30 41 59);
+      color: #e2e8f0;
+      cursor: pointer;
+    }
+
+    .voice-btn.is-on {
+      background: rgba(16, 185, 129, 0.22);
+      border-color: rgba(52, 211, 153, 0.6);
+      color: #6ee7b7;
+    }
+
+    .voice-select {
+      background: #020617;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      border-radius: 0.45rem;
+      padding: 0.28rem 0.5rem;
+      font-size: 0.74rem;
+      max-width: 150px;
+      min-width: 0;
+    }
+
+    .voice-latest {
+      font-size: 0.82rem;
+      color: var(--fg-muted);
+      font-style: italic;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+      min-width: 0;
+      flex: 1 1 160px;
+    }
+
+    .camera-drawer {
+      background: var(--bg-row);
+      border: 1px solid var(--border-row);
+      border-radius: 1rem;
+      padding: 0.9rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .camera-drawer.hidden {
+      display: none;
+    }
+
+    .camera-feed-frame {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      max-height: 460px;
+      object-fit: contain;
+      border-radius: 0.75rem;
+      background: #020617;
+      border: 1px solid #1e293b;
+    }
+
+    .trackside-grid {
+      max-width: 1120px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+    }
+
+    @media (min-width: 1024px) {
+      .trackside-grid.has-camera {
+        max-width: 1480px;
+        display: grid;
+        grid-template-columns: minmax(420px, 46%) minmax(0, 1fr);
+        align-items: start;
+        gap: 1.15rem;
+      }
+
+      .trackside-grid.has-camera .camera-drawer {
+        position: sticky;
+        top: 5.25rem;
+      }
+    }
+
+    .announcer-ticker-box {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      background: #020617;
+      border: 1px solid #1e293b;
+      border-radius: 0.75rem;
+      padding: 0.55rem 0.75rem;
+      font-size: 0.84rem;
+      color: #e2e8f0;
+      min-width: 0;
+    }
+
+    .ticker-badge {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.66rem;
+      font-weight: 900;
+      letter-spacing: 0.06em;
+      padding: 0.2rem 0.48rem;
+      border-radius: 0.4rem;
+      background: rgba(51, 65, 85, 0.8);
+      color: #cbd5e1;
+      flex-shrink: 0;
+    }
+
+    .ticker-badge.is-pr { background: rgba(16, 185, 129, 0.25); color: #6ee7b7; }
+    .ticker-badge.is-fast { background: rgba(14, 165, 233, 0.25); color: #7dd3fc; }
+    .ticker-badge.is-burn { background: rgba(245, 158, 11, 0.25); color: #fcd34d; }
+
+    .lb-panel {
+      background: var(--bg-row);
+      border: 1px solid var(--border-row);
+      border-radius: 1rem;
+      overflow: hidden;
+      max-width: 100%;
+    }
+
+    .lb-table-wrap {
+      overflow-x: auto;
+      max-width: 100%;
+    }
+
+    .lb-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.86rem;
+      text-align: left;
+    }
+
+    .lb-table th {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--fg-muted);
+      padding: 0.55rem 0.7rem;
+      border-bottom: 1px solid var(--border-row);
+      background: rgba(2, 6, 23, 0.45);
+      white-space: nowrap;
+    }
+
+    .lb-table td {
+      padding: 0.55rem 0.7rem;
+      border-bottom: 1px solid var(--border-row);
+      vertical-align: middle;
+    }
+
+    .lb-table tr:last-child td {
+      border-bottom: none;
+    }
   </style>
   <script src="/static/live_board.js"></script>
 </head>
-<body class="trackside-body bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased" data-theme="dark">
+
+<body class="trackside-body bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased"
+  data-theme="dark">
 
   <!-- Minimal Trackside Header -->
   <header class="trackside-header bg-slate-900 border-b border-slate-800 px-4 md:px-6 py-3 sticky top-0 z-40">
@@ -354,9 +681,11 @@
         <div id="statusDot" class="w-3.5 h-3.5 rounded-full bg-slate-500 flex-shrink-0"></div>
         <div>
           <div class="flex items-center gap-2">
-            <h1 id="eventNameLabel" class="text-lg md:text-xl font-black text-white tracking-tight">{{ event.name }}</h1>
+            <h1 id="eventNameLabel" class="text-lg md:text-xl font-black text-white tracking-tight">{{ event.name }}
+            </h1>
             {% if is_mock %}
-            <span class="text-[11px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">SIM</span>
+            <span
+              class="text-[11px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">SIM</span>
             {% endif %}
           </div>
           <div id="statusText" class="text-[11px] uppercase font-bold text-slate-400 tracking-wider">NOT STARTED</div>
@@ -365,100 +694,269 @@
 
       <div class="header-actions">
         <!-- Big Event Clock -->
-        <div id="raceTimer" class="text-2xl md:text-3xl font-mono font-black text-emerald-400 tabular-nums bg-slate-950 border border-slate-800 px-3.5 py-1 rounded-xl">
+        <div id="raceTimer"
+          class="text-2xl md:text-3xl font-mono font-black text-emerald-400 tabular-nums bg-slate-950 border border-slate-800 px-3.5 py-1 rounded-xl">
           00:00:00
         </div>
 
+        <!-- Quick Start / Pause Event -->
+        <button id="headerStartPauseBtn" onclick="toggleEventStartPause()" class="header-btn" title="Start or Pause Timing Session">
+          <i id="headerStartPauseIcon" class="fa-solid fa-play text-emerald-400"></i>
+          <span id="headerStartPauseLabel">Start</span>
+        </button>
+
         <!-- Find Runner / Edit Laps -->
         <button onclick="openSearchModal()" class="header-btn" title="Find Runner / Edit Laps (⌘K)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
           <span>Find Runner</span>
         </button>
 
         <!-- Sound Toggle -->
         <button id="soundToggle" onclick="toggleSound()" class="header-btn" title="Toggle Crossing Chime">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+            <line x1="22" y1="9" x2="16" y2="15" />
+            <line x1="16" y1="9" x2="22" y2="15" />
+          </svg>
           <span>Sound Off</span>
+        </button>
+
+        <!-- AprilTag Camera Toggle -->
+        <button id="cameraDrawerBtn" onclick="toggleCameraDrawer()" class="header-btn"
+          title="AprilTag Optical Camera (Fused with RFID)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+            <circle cx="12" cy="13" r="3" />
+          </svg>
+          <span id="cameraBtnLabel">Camera</span>
         </button>
 
         <!-- Display Settings -->
         <button onclick="openSettingsModal()" class="header-btn" title="Display Settings (Font Size, Theme)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <line x1="4" y1="21" x2="4" y2="14" />
+            <line x1="4" y1="10" x2="4" y2="3" />
+            <line x1="12" y1="21" x2="12" y2="12" />
+            <line x1="12" y1="8" x2="12" y2="3" />
+            <line x1="20" y1="21" x2="20" y2="16" />
+            <line x1="20" y1="12" x2="20" y2="3" />
+            <line x1="1" y1="14" x2="7" y2="14" />
+            <line x1="9" y1="8" x2="15" y2="8" />
+            <line x1="17" y1="16" x2="23" y2="16" />
+          </svg>
           <span>Display</span>
         </button>
 
         <a href="/leaderboard" class="header-btn" title="Full Standings">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+            <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+            <path d="M4 22h16" />
+            <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+            <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+            <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
+          </svg>
           <span>Standings</span>
         </a>
         <a href="/admin" class="header-btn" title="Race Admin">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
           <span>Admin</span>
         </a>
       </div>
     </div>
   </header>
 
-  <!-- Single-Column Most Recent Crossings -->
+  <!-- Unified Trackside Workspace: Side-by-side Live Camera + Crossings Feed -->
   <main class="flex-1 px-4 md:px-6 py-5">
-    <div class="trackside-shell flex flex-col gap-3">
-      <!-- Cumulative laps for the whole event (#49), updated on every live message -->
-      <section id="cumulativeBanner" aria-label="Event totals"
-               class="bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3 flex items-center justify-between gap-4">
-        <div>
-          <div class="text-xs font-bold uppercase tracking-wider text-slate-400">Total laps, all runners</div>
-          <div id="cumulativeLaps" class="cumulative-total font-black text-emerald-400 tabular-nums">0</div>
+    <div id="tracksideGrid" class="trackside-grid{% if camera_running %} has-camera{% endif %}">
+      <!-- Left Panel (on desktop): Live AprilTag Camera Viewport -->
+      <section id="cameraDrawer" aria-label="Live AprilTag camera viewport" class="camera-drawer{% if not camera_running %} hidden{% endif %}">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-xs font-bold uppercase tracking-wider text-sky-300">
+              <i class="fa-solid fa-video mr-1"></i>Live Camera
+            </span>
+            <select id="cameraSelect" onchange="onCameraSelectChange(this.value)" class="voice-select">
+              <option value="0">Camera 0</option>
+            </select>
+            <button type="button" onclick="refreshCameraList()" class="voice-btn" title="Rescan connected cameras">↻</button>
+            <button id="cameraStartStopBtn" type="button" onclick="toggleCameraRunning()" class="voice-btn">
+              Start Camera
+            </button>
+          </div>
+          <span id="cameraStatusBadge" class="sensor-badge">OFF</span>
         </div>
-        <div class="text-right cumulative-sub text-slate-400 tabular-nums">
-          <div id="cumulativeDistance">0.00 km</div>
-          <div id="cumulativeRunners">0 runners</div>
+        <div id="cameraErrorMsg" class="hidden text-xs text-amber-300"></div>
+        <img id="cameraStreamImg" class="camera-feed-frame hidden" alt="Live AprilTag camera stream">
+        <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300">
+          <label class="flex items-center gap-2">
+            <span class="font-semibold text-slate-300">Finish Line:</span>
+            <input id="camFinishLineSlider" type="range" min="10" max="90" step="2" value="50"
+                   oninput="previewFinishLine(this.value)" onchange="pushCameraOptions()"
+                   class="w-24 accent-emerald-400 cursor-pointer">
+            <span id="camFinishLineLabel" class="font-mono text-emerald-300 w-8">50%</span>
+          </label>
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input id="camDebugCheck" type="checkbox" checked onchange="pushCameraOptions()"> Overlay
+            </label>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input id="camMirrorCheck" type="checkbox" onchange="pushCameraOptions()"> Mirror
+            </label>
+            <a href="/api/tags/printable" target="_blank" class="voice-btn" title="Open printable AprilTag 16h5 bibs">
+              Print Bibs (0–29)
+            </a>
+          </div>
+        </div>
+        <div class="announcer-ticker-box" role="status" aria-live="polite">
+          <span id="announcerBadge" class="ticker-badge">ANNOUNCER</span>
+          <span id="announcerTickerText" class="truncate">Ready at the line — wave a tag or click Test.</span>
         </div>
       </section>
 
-      <!-- Walk-up tags waiting for a name (not timed until named): click any pill to enter one -->
-      <section id="unclaimedRunnersBar" aria-label="Unclaimed tags"
-               class="hidden bg-amber-950/30 border border-amber-500/40 rounded-2xl px-4 py-2.5 flex flex-wrap items-center gap-2">
-        <span class="text-xs font-bold uppercase tracking-wider text-amber-300 mr-1">
-          <i class="fa-solid fa-tag mr-1"></i>Unnamed Tags, not timed (click to set name):
-        </span>
-        <div id="unclaimedRunnersList" class="flex flex-wrap items-center gap-2"></div>
-      </section>
+      <!-- Right Panel: Totals, Voice & Cooldown Bar, Live Runner Leaderboard, and Recent Crossings -->
+      <div class="flex flex-col gap-3 min-w-0">
+        <!-- Cumulative laps for the whole event (#49), updated on every live message -->
+        <section id="cumulativeBanner" aria-label="Event totals"
+          class="bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3 flex items-center justify-between gap-4">
+          <div>
+            <div class="text-xs font-bold uppercase tracking-wider text-slate-400">Total laps, all runners</div>
+            <div id="cumulativeLaps" class="cumulative-total font-black text-emerald-400 tabular-nums">0</div>
+          </div>
+          <div class="text-right cumulative-sub text-slate-400 tabular-nums">
+            <div id="cumulativeDistance">0.00 km</div>
+            <div id="cumulativeRunners">0 runners</div>
+          </div>
+        </section>
 
-      <div class="flex items-center justify-between px-1">
-        <span class="text-xs font-bold uppercase tracking-wider text-slate-400">
-          Most Recent Crossings (Last <span id="feedLimitLabel">10</span>)
-        </span>
-        <span id="trackLengthLabel" class="text-xs font-mono text-slate-500">
-          {{ event.track_length_m | int }}m Track
-        </span>
-      </div>
+        <!-- Trackside Voice Announcer, Cooldown & Roast Controls -->
+        <section id="voiceAnnouncerBar" aria-label="Voice announcer and cooldown" class="voice-bar">
+          <div class="voice-controls">
+            <button id="voiceToggleBtn" type="button" onclick="toggleVoiceAnnouncer()" class="voice-btn is-on"
+              title="Speak lap times &amp; quips aloud">
+              <i class="fa-solid fa-bullhorn"></i>
+              <span id="voiceToggleLabel">Voice On</span>
+            </button>
+            <label class="flex items-center gap-1.5 text-slate-300"
+              title="Minimum seconds between laps (lower for desk testing, 25-45s on track)">
+              <span class="text-xs font-bold text-emerald-300">Cooldown</span>
+              <input id="cooldownSlider" type="range" min="3" max="120" step="1" value="{{ event.min_lap_seconds | int }}"
+                oninput="previewCooldown(this.value)" onchange="saveCooldown(parseInt(this.value, 10))"
+                class="w-20 accent-emerald-400 cursor-pointer">
+              <span id="cooldownLabel" class="font-mono text-xs text-emerald-300 w-8">{{ event.min_lap_seconds | int }}s</span>
+            </label>
+            <label class="flex items-center gap-1.5 text-slate-300"
+              title="How often to drop a friendly roast (non-repeating deck)">
+              <span class="text-xs font-bold text-amber-300">Roast</span>
+              <input id="burnFreqSlider" type="range" min="0" max="100" step="5" value="25"
+                oninput="previewBurnFreq(this.value)" onchange="saveBurnFreq(parseInt(this.value, 10))"
+                class="w-20 accent-amber-400 cursor-pointer">
+              <span id="burnFreqLabel" class="font-mono text-xs text-amber-300 w-8">25%</span>
+            </label>
+            <select id="voiceSelect" onchange="selectAnnouncerVoice(this.value)" class="voice-select"
+              title="Browser speech voice">
+              <option value="">Default Voice</option>
+            </select>
+            <button type="button" onclick="testVoiceAnnouncer()" class="voice-btn"
+              title="Test announcer with a sample roast">
+              Test
+            </button>
+          </div>
+          <div id="voiceLatestLine" class="voice-latest">Voice announcer ready</div>
+        </section>
 
-      <div id="crossingFeed" class="flex flex-col gap-3">
-        <!-- Populated dynamically -->
-      </div>
+        <!-- Unclaimed auto-registered tags currently timing: click any pill to enter your name -->
+        <section id="unclaimedRunnersBar" aria-label="Unclaimed tags"
+          class="hidden bg-amber-950/30 border border-amber-500/40 rounded-2xl px-4 py-2.5 flex flex-wrap items-center gap-2">
+          <span class="text-xs font-bold uppercase tracking-wider text-amber-300 mr-1">
+            <i class="fa-solid fa-tag mr-1"></i>Unclaimed Tags (click to set name):
+          </span>
+          <div id="unclaimedRunnersList" class="flex flex-wrap items-center gap-2"></div>
+        </section>
 
-      <div id="emptyFeedState" class="hidden bg-slate-900/60 border border-dashed border-slate-800 rounded-2xl p-12 text-center text-slate-500">
-        <i class="fa-solid fa-satellite-dish text-3xl mb-3 text-slate-600"></i>
-        <div class="text-lg font-bold text-slate-300">Waiting for Runners...</div>
-        <p class="text-sm text-slate-500 mt-1">The 10 most recent mat crossings will appear here.</p>
+        <!-- Live Runner Leaderboard (always visible, like AprilTag Tracker) -->
+        <section id="liveLeaderboardPanel" aria-label="Live runner leaderboard" class="lb-panel">
+          <div class="flex items-center justify-between px-3.5 py-2.5 border-b border-slate-800">
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-200">
+              <i class="fa-solid fa-ranking-star text-emerald-400 mr-1.5"></i>Live Runner Leaderboard
+            </span>
+            <span id="lbSummaryLabel" class="text-xs font-mono text-slate-400">0 runners</span>
+          </div>
+          <div class="lb-table-wrap">
+            <table class="lb-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Runner</th>
+                  <th class="text-center">Laps</th>
+                  <th class="text-right">Last</th>
+                  <th class="text-right">Best</th>
+                  <th class="text-right">Adjust</th>
+                </tr>
+              </thead>
+              <tbody id="liveLeaderboardBody">
+                <tr>
+                  <td colspan="6" class="text-center text-slate-500 py-6 text-xs">
+                    No runners yet — wave an AprilTag or RFID bib to register &amp; start timing.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <div class="flex items-center justify-between px-1">
+          <span class="text-xs font-bold uppercase tracking-wider text-slate-400">
+            Most Recent Crossings (Last <span id="feedLimitLabel">10</span>)
+          </span>
+          <span id="trackLengthLabel" class="text-xs font-mono text-slate-500">
+            {{ event.track_length_m | int }}m Track
+          </span>
+        </div>
+
+        <div id="crossingFeed" class="flex flex-col gap-3">
+          <!-- Populated dynamically -->
+        </div>
+
+        <div id="emptyFeedState"
+          class="hidden bg-slate-900/60 border border-dashed border-slate-800 rounded-2xl p-12 text-center text-slate-500">
+          <i class="fa-solid fa-flag-checkered text-3xl mb-3 text-slate-600"></i>
+          <div class="text-lg font-bold text-slate-300">Waiting for Runners...</div>
+          <p class="text-sm text-slate-500 mt-1">Cross the camera finish line or RFID timing mat to record laps.</p>
+        </div>
       </div>
     </div>
   </main>
 
   <!-- Quick Search / Edit Runner Modal -->
-  <div id="searchModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-start justify-center p-4 pt-16">
+  <div id="searchModal"
+    class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-start justify-center p-4 pt-16">
     <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden">
       <div class="p-4 border-b border-slate-800 flex items-center gap-3 bg-slate-950/70">
         <i class="fa-solid fa-magnifying-glass text-emerald-400 text-lg"></i>
         <input type="text" id="runnerSearchInput" placeholder="Search by Bib # or Runner Name..."
-               class="bg-transparent text-white placeholder-slate-500 font-medium text-base focus:outline-none flex-1"
-               oninput="filterRunners()">
+          class="bg-transparent text-white placeholder-slate-500 font-medium text-base focus:outline-none flex-1"
+          oninput="filterRunners()">
         <button onclick="closeSearchModal()" class="text-slate-400 hover:text-white p-1 rounded-lg">
           <i class="fa-solid fa-xmark text-lg"></i>
         </button>
       </div>
       <div id="searchResults" class="max-h-96 overflow-y-auto divide-y divide-slate-800 p-2"></div>
-      <div class="bg-slate-950/90 px-4 py-2.5 border-t border-slate-800 flex justify-between items-center text-xs text-slate-500">
+      <div
+        class="bg-slate-950/90 px-4 py-2.5 border-t border-slate-800 flex justify-between items-center text-xs text-slate-500">
         <span>Adjust lap count for runners with a missed or bad tag</span>
         <button onclick="closeSearchModal()" class="hover:text-slate-300 font-semibold">Done [ESC]</button>
       </div>
@@ -466,8 +964,11 @@
   </div>
 
   <!-- Display Settings Modal -->
-  <div id="settingsModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-start justify-center p-4 pt-16" onclick="if (event.target === this) closeSettingsModal()">
-    <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden text-slate-100">
+  <div id="settingsModal"
+    class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-start justify-center p-4 pt-16"
+    onclick="if (event.target === this) closeSettingsModal()">
+    <div
+      class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden text-slate-100">
       <div class="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
         <div class="flex items-center gap-2.5">
           <i class="fa-solid fa-sliders text-emerald-400"></i>
@@ -486,13 +987,17 @@
             <span id="fontScaleReadout" class="font-mono text-xs text-emerald-400 font-bold">1.25x</span>
           </div>
           <input id="fontScaleSlider" type="range" min="0.9" max="2.0" step="0.05" value="1.25"
-                 oninput="updateSetting('fontScale', parseFloat(this.value))"
-                 class="w-full accent-emerald-500 cursor-pointer mb-2">
+            oninput="updateSetting('fontScale', parseFloat(this.value))"
+            class="w-full accent-emerald-500 cursor-pointer mb-2">
           <div class="grid grid-cols-4 gap-2" id="fontPresetButtons">
-            <button type="button" onclick="updateSetting('fontScale', 1.0)" data-scale="1.0" class="settings-preset-btn">Normal</button>
-            <button type="button" onclick="updateSetting('fontScale', 1.25)" data-scale="1.25" class="settings-preset-btn">Large</button>
-            <button type="button" onclick="updateSetting('fontScale', 1.5)" data-scale="1.5" class="settings-preset-btn">XL</button>
-            <button type="button" onclick="updateSetting('fontScale', 1.8)" data-scale="1.8" class="settings-preset-btn">XXL</button>
+            <button type="button" onclick="updateSetting('fontScale', 1.0)" data-scale="1.0"
+              class="settings-preset-btn">Normal</button>
+            <button type="button" onclick="updateSetting('fontScale', 1.25)" data-scale="1.25"
+              class="settings-preset-btn">Large</button>
+            <button type="button" onclick="updateSetting('fontScale', 1.5)" data-scale="1.5"
+              class="settings-preset-btn">XL</button>
+            <button type="button" onclick="updateSetting('fontScale', 1.8)" data-scale="1.8"
+              class="settings-preset-btn">XXL</button>
           </div>
         </div>
 
@@ -500,10 +1005,14 @@
         <div>
           <label class="block font-bold text-slate-200 mb-2">Color Scheme</label>
           <div class="grid grid-cols-2 gap-2" id="themePresetButtons">
-            <button type="button" onclick="updateSetting('theme', 'dark')" data-theme-opt="dark" class="settings-preset-btn">Trackside Dark</button>
-            <button type="button" onclick="updateSetting('theme', 'high-contrast')" data-theme-opt="high-contrast" class="settings-preset-btn">High Contrast</button>
-            <button type="button" onclick="updateSetting('theme', 'light')" data-theme-opt="light" class="settings-preset-btn">Daylight Light</button>
-            <button type="button" onclick="updateSetting('theme', 'amber')" data-theme-opt="amber" class="settings-preset-btn">Night Amber</button>
+            <button type="button" onclick="updateSetting('theme', 'dark')" data-theme-opt="dark"
+              class="settings-preset-btn">Trackside Dark</button>
+            <button type="button" onclick="updateSetting('theme', 'high-contrast')" data-theme-opt="high-contrast"
+              class="settings-preset-btn">High Contrast</button>
+            <button type="button" onclick="updateSetting('theme', 'light')" data-theme-opt="light"
+              class="settings-preset-btn">Daylight Light</button>
+            <button type="button" onclick="updateSetting('theme', 'amber')" data-theme-opt="amber"
+              class="settings-preset-btn">Night Amber</button>
           </div>
         </div>
 
@@ -511,10 +1020,14 @@
         <div>
           <label class="block font-bold text-slate-200 mb-2">Crossings Shown</label>
           <div class="grid grid-cols-4 gap-2" id="rowsPresetButtons">
-            <button type="button" onclick="updateSetting('maxRows', 5)" data-rows="5" class="settings-preset-btn">5</button>
-            <button type="button" onclick="updateSetting('maxRows', 8)" data-rows="8" class="settings-preset-btn">8</button>
-            <button type="button" onclick="updateSetting('maxRows', 10)" data-rows="10" class="settings-preset-btn">10</button>
-            <button type="button" onclick="updateSetting('maxRows', 15)" data-rows="15" class="settings-preset-btn">15</button>
+            <button type="button" onclick="updateSetting('maxRows', 5)" data-rows="5"
+              class="settings-preset-btn">5</button>
+            <button type="button" onclick="updateSetting('maxRows', 8)" data-rows="8"
+              class="settings-preset-btn">8</button>
+            <button type="button" onclick="updateSetting('maxRows', 10)" data-rows="10"
+              class="settings-preset-btn">10</button>
+            <button type="button" onclick="updateSetting('maxRows', 15)" data-rows="15"
+              class="settings-preset-btn">15</button>
           </div>
         </div>
 
@@ -522,18 +1035,22 @@
         <div class="space-y-2.5 pt-1 border-t border-slate-800">
           <label class="flex items-center justify-between cursor-pointer">
             <span class="font-semibold text-slate-200">Show +1 / -1 Quick Buttons</span>
-            <input id="toggleQuickButtons" type="checkbox" checked onchange="updateSetting('showQuickButtons', this.checked)" class="w-4 h-4 accent-emerald-500">
+            <input id="toggleQuickButtons" type="checkbox" checked
+              onchange="updateSetting('showQuickButtons', this.checked)" class="w-4 h-4 accent-emerald-500">
           </label>
           <label class="flex items-center justify-between cursor-pointer">
             <span class="font-semibold text-slate-200">Show Time Ago Subtitle</span>
-            <input id="toggleTimeAgo" type="checkbox" checked onchange="updateSetting('showTimeAgo', this.checked)" class="w-4 h-4 accent-emerald-500">
+            <input id="toggleTimeAgo" type="checkbox" checked onchange="updateSetting('showTimeAgo', this.checked)"
+              class="w-4 h-4 accent-emerald-500">
           </label>
         </div>
       </div>
 
       <div class="bg-slate-950/90 px-4 py-3 border-t border-slate-800 flex justify-between items-center text-xs">
-        <button onclick="resetDisplaySettings()" class="text-slate-400 hover:text-amber-300 font-semibold">Reset Defaults</button>
-        <button onclick="closeSettingsModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3.5 py-1.5 rounded-lg">Done</button>
+        <button onclick="resetDisplaySettings()" class="text-slate-400 hover:text-amber-300 font-semibold">Reset
+          Defaults</button>
+        <button onclick="closeSettingsModal()"
+          class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3.5 py-1.5 rounded-lg">Done</button>
       </div>
     </div>
   </div>
@@ -551,8 +1068,10 @@
           <!-- Track lane surface -->
           <rect x="27" y="31" width="206" height="94" rx="47" ry="47" fill="none" stroke="#1e293b" stroke-width="14" />
           <!-- Double oval borders (outer & inner track lines) -->
-          <rect x="20" y="24" width="220" height="108" rx="54" ry="54" fill="none" stroke="#64748b" stroke-width="1.4" />
-          <rect x="34" y="38" width="192" height="80" rx="40" ry="40" fill="#0f172a" stroke="#64748b" stroke-width="1.4" />
+          <rect x="20" y="24" width="220" height="108" rx="54" ry="54" fill="none" stroke="#64748b"
+            stroke-width="1.4" />
+          <rect x="34" y="38" width="192" height="80" rx="40" ry="40" fill="#0f172a" stroke="#64748b"
+            stroke-width="1.4" />
           <!-- Standard track start/finish timing mat at upper left -->
           <rect x="72" y="24" width="4" height="14" rx="1" fill="#10b981" />
           <!-- Runners (directional triangles + initials) -->
@@ -561,30 +1080,34 @@
 
         <!-- Infield Controls: Play/Pause + Speed Slider -->
         <div class="sim-infield-controls">
-          <button id="simPlayPauseBtn" onclick="toggleSimPlayPause()" title="Play / Pause Simulator" class="sim-play-icon-btn">
+          <button id="simPlayPauseBtn" onclick="toggleSimPlayPause()" title="Play / Pause Simulator"
+            class="sim-play-icon-btn">
             <i class="fa-solid fa-play text-emerald-400"></i>
             <i class="fa-solid fa-pause text-slate-400"></i>
           </button>
           <div class="sim-slider-row">
             <input id="simSpeedSlider" type="range" min="1" max="40" step="1" value="5"
-                   oninput="previewSimSpeed(this.value)" onchange="setSimSpeed(parseFloat(this.value))"
-                   class="sim-speed-slider" title="Simulator Speed">
+              oninput="previewSimSpeed(this.value)" onchange="setSimSpeed(parseFloat(this.value))"
+              class="sim-speed-slider" title="Simulator Speed">
             <span class="sim-speed-label">speed <span id="simSpeedBadge" class="text-emerald-400">5x</span></span>
           </div>
         </div>
       </div>
 
       <!-- Event Status Hint (only when event is not running) -->
-      <div id="simEventHint" class="hidden mt-1 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1 flex items-center justify-between gap-2">
+      <div id="simEventHint"
+        class="hidden mt-1 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1 flex items-center justify-between gap-2">
         <span class="text-[10px] text-amber-300 font-semibold">Event paused</span>
-        <button onclick="startEventFromSim()" class="text-[10px] font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 px-2 py-0.5 rounded">
+        <button onclick="startEventFromSim()"
+          class="text-[10px] font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 px-2 py-0.5 rounded">
           Start Event
         </button>
       </div>
     </div>
 
     <!-- Minimized Pill -->
-    <button id="simMinimizedPill" onclick="toggleSimMinimize()" class="hidden ml-auto flex items-center gap-2 bg-slate-900/95 hover:bg-slate-800 border border-slate-700 text-slate-200 px-3 py-2 rounded-full shadow-lg text-xs font-mono font-bold">
+    <button id="simMinimizedPill" onclick="toggleSimMinimize()"
+      class="hidden ml-auto flex items-center gap-2 bg-slate-900/95 hover:bg-slate-800 border border-slate-700 text-slate-200 px-3 py-2 rounded-full shadow-lg text-xs font-mono font-bold">
       <span id="simMiniDot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
       <span>Track</span>
       <span id="simMiniSpeed" class="text-emerald-400">5x</span>
@@ -594,7 +1117,7 @@
 
   <!-- Unrecognized Tag Self-Registration Prompt (stacked list) -->
   <div id="unrecognizedTagPrompt" role="dialog" aria-labelledby="unrecognizedTagTitle"
-       class="hidden fixed bottom-4 left-4 right-4 sm:right-auto sm:w-96 z-50 bg-slate-900/95 backdrop-blur border border-amber-500/60 rounded-2xl shadow-2xl p-4 text-slate-100">
+    class="hidden fixed bottom-4 left-4 right-4 sm:right-auto sm:w-96 z-50 bg-slate-900/95 backdrop-blur border border-amber-500/60 rounded-2xl shadow-2xl p-4 text-slate-100">
     <div class="flex items-center gap-2 mb-2">
       <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
       <h2 id="unrecognizedTagTitle" class="text-sm font-bold text-white">New Tag Detected — Enter Name</h2>
@@ -604,8 +1127,8 @@
 
   <!-- Inline / Quick Rename Runner Modal -->
   <div id="renameRunnerModal" role="dialog" aria-modal="true" aria-labelledby="renameRunnerTitle"
-       class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
-       onclick="if (event.target === this) closeRenameModal()">
+    class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+    onclick="if (event.target === this) closeRenameModal()">
     <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full p-5 shadow-2xl text-slate-100">
       <div class="flex items-center justify-between mb-3">
         <h3 id="renameRunnerTitle" class="text-base font-bold text-white">Edit Runner Name</h3>
@@ -619,16 +1142,16 @@
             Runner Name (<span id="renameRunnerBibLabel" class="font-mono text-emerald-400"></span>)
           </label>
           <input id="renameRunnerInput" type="text" required autocomplete="name" placeholder="Enter your name"
-                 class="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 outline-none" />
+            class="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 outline-none" />
         </div>
         <p id="renameRunnerError" class="hidden text-xs text-rose-400 font-medium"></p>
         <div class="flex items-center justify-end gap-2 pt-1">
           <button type="button" onclick="closeRenameModal()"
-                  class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+            class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
             Cancel
           </button>
           <button id="renameRunnerSubmitBtn" type="submit"
-                  class="px-4 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow transition">
+            class="px-4 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow transition">
             Save Name
           </button>
         </div>
@@ -664,7 +1187,7 @@
         gain.connect(audioCtx.destination);
         osc.start();
         osc.stop(audioCtx.currentTime + 0.35);
-      } catch(e) {}
+      } catch (e) { }
     }
 
     // Seconds the phone/TV clock is behind the race clock (a Pi without an RTC may be far off).
@@ -698,7 +1221,7 @@
     function saveDisplaySettings() {
       try {
         localStorage.setItem(DISPLAY_SETTINGS_KEY, JSON.stringify(displaySettings));
-      } catch (e) {}
+      } catch (e) { }
     }
 
     function applyDisplaySettings() {
@@ -793,10 +1316,10 @@
     }
 
     const STATUS_BADGES = {
-      setup:   { text: "NOT STARTED", color: "text-slate-400", dot: "bg-slate-500" },
+      setup: { text: "NOT STARTED", color: "text-slate-400", dot: "bg-slate-500" },
       running: { text: "LIVE", color: "text-emerald-400", dot: "bg-emerald-400 animate-pulse" },
-      paused:  { text: "PAUSED", color: "text-amber-300", dot: "bg-amber-400" },
-      ended:   { text: "FINAL RESULTS", color: "text-rose-300", dot: "bg-rose-400" },
+      paused: { text: "PAUSED", color: "text-amber-300", dot: "bg-amber-400" },
+      ended: { text: "FINAL RESULTS", color: "text-rose-300", dot: "bg-rose-400" },
     };
 
     function applyEventStatus() {
@@ -809,6 +1332,8 @@
       document.getElementById("eventNameLabel").innerText = eventState.name || "";
       document.getElementById("trackLengthLabel").innerText = `${Math.round(getTrackMeters())}m Track`;
       updateTimerValue();
+      syncHeaderStartPauseBtn();
+      syncCooldownSlider();
     }
 
     function updateTimerValue() {
@@ -912,16 +1437,34 @@
                </button>
              </div>`;
 
+        const quipHtml = (c.commentary && c.commentary.quip)
+          ? `<div class="quip-pill ${c.commentary.category === 'pr' ? 'quip-pr' : (c.commentary.category === 'fast' ? 'quip-fast' : 'quip-burn')}">${c.commentary.category === 'pr' ? '⚡ ' : (c.commentary.category === 'burn' ? '🔥 ' : '✨ ')}${esc(c.commentary.quip)}</div>`
+          : "";
+
+        const goalHtml = (c.goal && c.goal.badge_text)
+          ? `<div class="quip-pill ${c.goal.completed ? 'quip-pr' : 'quip-fast'}">${c.goal.completed ? '🏆 ' : '🎯 '}${esc(c.goal.badge_text)} <span class="opacity-75 font-mono text-[11px]">(${esc(c.goal.label)})</span></div>`
+          : "";
+
+        const sourceBadgeHtml = c.source === "fused"
+          ? `<span class="sensor-badge sensor-fused" title="Fused RFID + AprilTag camera read">RFID+CAM</span>`
+          : (c.source === "apriltag"
+            ? `<span class="sensor-badge sensor-apriltag" title="Detected by AprilTag camera">CAM</span>`
+            : (c.source === "rfid" ? `<span class="sensor-badge" title="Detected by RFID reader">RFID</span>` : ""));
+
         row.innerHTML = `
           <div class="flex items-center gap-3 md:gap-4 min-w-0 flex-1">
             <div class="bib-pill">#${c.bib_number}</div>
             <div class="min-w-0 flex-1">
               ${nameHtml}
-              ${timeAgoHtml}
+              <div class="flex flex-wrap items-center gap-1.5">${goalHtml}${quipHtml}</div>
+              <div class="flex items-center gap-2 flex-wrap mt-0.5">
+                ${sourceBadgeHtml}
+                ${timeAgoHtml}
+              </div>
             </div>
           </div>
 
-          <div class="flex items-center gap-3 md:gap-5 flex-shrink-0">
+          <div class="flex items-center gap-3 md:gap-5 flex-shrink-0 max-w-full">
             <div class="lap-count-pill">${lapLabel}</div>
             <div class="split-value">${splitText}</div>
             ${quickButtonsHtml}
@@ -929,6 +1472,34 @@
         `;
         feed.appendChild(row);
       });
+    }
+
+    async function editGoalFromCrossings(bib, currentLabel) {
+      const raw = prompt(
+        `Set ONE goal for Bib #${bib} (leave blank to clear):\nExamples: "10 laps", "5 km", "1600 m", "3 miles", or "30:00"`,
+        currentLabel || ""
+      );
+      if (raw === null) return;
+      const s = raw.trim().toLowerCase();
+      let payload = { goal_type: null, goal_value: null };
+      if (s) {
+        if (s.includes(":")) payload = { goal_type: "time", goal_value: s };
+        else if (/^(\d+(?:\.\d+)?)\s*(km|k)$/.test(s)) payload = { goal_type: "distance", goal_value: parseFloat(s) * 1000 };
+        else if (/^(\d+(?:\.\d+)?)\s*(mi|mile|miles)$/.test(s)) payload = { goal_type: "distance", goal_value: parseFloat(s) * 1609.34 };
+        else if (/^(\d+(?:\.\d+)?)\s*m$/.test(s)) payload = { goal_type: "distance", goal_value: parseFloat(s) };
+        else if (/^(\d+(?:\.\d+)?)\s*(min|mins|minutes)$/.test(s)) payload = { goal_type: "time", goal_value: parseFloat(s) * 60 };
+        else if (/^(\d+)\s*(lap|laps)?$/.test(s)) payload = { goal_type: "laps", goal_value: parseInt(s, 10) };
+        else { alert("Try e.g. '10 laps', '5 km', '1600 m', or '30:00'."); return; }
+      }
+      const res = await fetch(`/api/participants/${bib}/goal`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        alert(d.detail || "Could not update goal");
+      }
     }
 
     async function quickAddLap(bib) {
@@ -1018,7 +1589,9 @@
       });
     }
 
-    // Cumulative laps banner (#49): totals from the current leaderboard
+    // Cumulative laps banner (#49) + Live Runner Leaderboard table
+    const latestQuipByBib = new Map();
+
     function renderCumulative() {
       const board = Array.isArray(currentLeaderboard) ? currentLeaderboard : [];
       const laps = board.reduce((sum, r) => sum + (r.total_laps || 0), 0);
@@ -1027,6 +1600,55 @@
       document.getElementById("cumulativeLaps").innerText = laps.toLocaleString();
       document.getElementById("cumulativeDistance").innerText = `${(meters / 1000).toFixed(2)} km`;
       document.getElementById("cumulativeRunners").innerText = `${runners} runner${runners === 1 ? "" : "s"} on course`;
+      renderInlineLeaderboard();
+    }
+
+    function renderInlineLeaderboard() {
+      const tbody = document.getElementById("liveLeaderboardBody");
+      const summary = document.getElementById("lbSummaryLabel");
+      if (!tbody) return;
+      const board = Array.isArray(currentLeaderboard) ? currentLeaderboard : [];
+      if (summary) summary.textContent = `${board.length} runner${board.length === 1 ? "" : "s"}`;
+      if (board.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center text-slate-500 py-6 text-xs">No runners yet — wave an AprilTag or RFID bib to register &amp; start timing.</td></tr>`;
+        return;
+      }
+      const ended = isEventEnded();
+      tbody.innerHTML = board.map((r, idx) => {
+        const q = latestQuipByBib.get(r.bib_number);
+        const quipBadge = (q && q.quip)
+          ? `<div class="quip-pill ${q.category === 'pr' ? 'quip-pr' : (q.category === 'fast' ? 'quip-fast' : 'quip-burn')}" style="font-size:0.7rem;padding:0.12rem 0.5rem;margin-top:0.2rem;">${q.category === 'pr' ? '⚡ ' : (q.category === 'burn' ? '🔥 ' : '✨ ')}${esc(q.quip)}</div>`
+          : "";
+        const goalBadge = (r.goal && r.goal.badge_text)
+          ? `<button type="button" onclick="editGoalFromCrossings(${r.bib_number}, ${JSON.stringify(r.goal.label)})" class="quip-pill ${r.goal.completed ? 'quip-pr' : 'quip-fast'}" style="font-size:0.7rem;padding:0.12rem 0.5rem;margin-top:0.2rem;cursor:pointer;" title="Click to edit goal">${r.goal.completed ? '🏆 ' : '🎯 '}${esc(r.goal.badge_text)}</button>`
+          : "";
+        const statusDot = r.status === "on_break"
+          ? `<span class="text-[10px] text-amber-300 font-mono ml-1">☕</span>`
+          : (r.start_time ? `<span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 ml-1"></span>` : "");
+        return `
+          <tr>
+            <td class="font-mono font-bold text-slate-400">${idx + 1}</td>
+            <td>
+              <div class="flex items-center gap-1.5">
+                <span class="font-mono text-xs font-bold text-emerald-400">#${r.bib_number}</span>
+                <button type="button" onclick="openRenameModalByBib(${r.bib_number})" class="font-bold text-white hover:text-emerald-300 text-left truncate max-w-[160px]" title="Click to rename">
+                  ${esc(r.name)}
+                </button>
+                <button type="button" onclick="editGoalFromCrossings(${r.bib_number}, ${JSON.stringify(r.goal ? r.goal.label : '')})" class="text-[11px] text-slate-500 hover:text-emerald-300" title="Set goal (laps, distance, or time)">🎯</button>
+                ${statusDot}
+              </div>
+              <div class="flex flex-wrap items-center gap-1">${goalBadge}${quipBadge}</div>
+            </td>
+            <td class="text-center font-mono font-black text-base text-white">${r.total_laps || 0}</td>
+            <td class="text-right font-mono text-emerald-300">${r.last_lap_seconds ? formatTime(r.last_lap_seconds) : "--:--"}</td>
+            <td class="text-right font-mono text-slate-300">${r.best_lap_seconds ? formatTime(r.best_lap_seconds) : "--:--"}</td>
+            <td class="text-right whitespace-nowrap">
+              <button type="button" onclick="quickAddLap(${r.bib_number})" ${ended ? "disabled" : ""} class="px-2 py-0.5 rounded bg-emerald-600/25 hover:bg-emerald-600 text-emerald-200 border border-emerald-500/40 text-xs font-bold mr-1">+1</button>
+              <button type="button" onclick="quickRemoveLap(${r.bib_number})" ${ended ? "disabled" : ""} class="px-2 py-0.5 rounded bg-rose-900/30 hover:bg-rose-700 text-rose-200 border border-rose-700/40 text-xs font-bold">-1</button>
+            </td>
+          </tr>
+        `;
+      }).join("");
     }
     renderCumulative();
 
@@ -1055,18 +1677,26 @@
           if (msg.sim) updateSimWidget(msg.sim);
         } else if (msg.type === "lap_completed") {
           currentLeaderboard = boardFromMessage(currentLeaderboard, msg);
-          addCrossing({
+          const crossing = {
             id: msg.lap.id,
             bib_number: msg.lap.bib_number,
             name: msg.lap.name || `Bib #${msg.lap.bib_number}`,
             lap_number: msg.lap.lap_number,
             lap_duration_seconds: msg.lap.lap_duration_seconds,
             added_at: (msg.lap.crossing_time ? msg.lap.crossing_time * 1000 : raceNowSec() * 1000),
-            is_start: false
-          });
+            is_start: false,
+            source: msg.lap.source || "rfid",
+            commentary: msg.lap.commentary || null,
+            goal: msg.lap.goal || null
+          };
+          if (crossing.commentary && crossing.commentary.quip) {
+            latestQuipByBib.set(crossing.bib_number, crossing.commentary);
+          }
+          addCrossing(crossing);
+          announcer.enqueue(crossing);
         } else if (msg.type === "runner_started") {
           currentLeaderboard = boardFromMessage(currentLeaderboard, msg);
-          addCrossing({
+          const startCrossing = {
             id: null,
             bib_number: msg.data.bib_number,
             name: msg.data.name || `Bib #${msg.data.bib_number}`,
@@ -1074,8 +1704,11 @@
             lap_duration_seconds: 0,
             added_at: (msg.data.start_time ? msg.data.start_time * 1000 : raceNowSec() * 1000),
             is_start: true,
-            is_resume: false
-          });
+            is_resume: false,
+            source: msg.data.source || "rfid"
+          };
+          addCrossing(startCrossing);
+          announcer.speak(`${startCrossing.name}, started!`);
         } else if (msg.type === "runner_resumed") {
           currentLeaderboard = boardFromMessage(currentLeaderboard, msg);
           addCrossing({
@@ -1087,8 +1720,13 @@
             break_duration_seconds: msg.data.break_duration_seconds || 0,
             added_at: (msg.data.crossing_time ? msg.data.crossing_time * 1000 : raceNowSec() * 1000),
             is_start: false,
-            is_resume: true
+            is_resume: true,
+            source: msg.data.source || "rfid"
           });
+        } else if (msg.type === "camera_status") {
+          if (msg.camera) applyCameraHealth(msg.camera);
+        } else if (msg.type === "announcer_config") {
+          if (typeof msg.burn_frequency === "number") applyBurnFreqUI(msg.burn_frequency);
         } else if (msg.type === "lap_removed") {
           currentLeaderboard = boardFromMessage(currentLeaderboard, msg);
           if (msg.removed_lap && msg.removed_lap.id != null) {
@@ -1298,7 +1936,7 @@
           const data = await res.json();
           if (data.sim) updateSimWidget(data.sim);
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     async function setSimSpeed(speed) {
@@ -1312,19 +1950,19 @@
           const data = await res.json();
           if (data.sim) updateSimWidget(data.sim);
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     async function triggerSimRunner(bib) {
       try {
         await fetch(`/api/simulator/trigger/${bib}`, { method: "POST" });
-      } catch (e) {}
+      } catch (e) { }
     }
 
     async function startEventFromSim() {
       try {
         await fetch("/api/event/start", { method: "POST" });
-      } catch (e) {}
+      } catch (e) { }
     }
 
     // Unclaimed placeholder runners bar + click-to-rename modal
@@ -1492,9 +2130,13 @@
       const card = document.createElement("form");
       card.className = "bg-slate-950/85 border border-slate-800 rounded-xl p-3 space-y-2";
       card.setAttribute("data-unreg-id", String(item.id));
+      const apriltagId = (typeof tagOrEpc === "object" && tagOrEpc.apriltag_id != null) ? tagOrEpc.apriltag_id : null;
+      const tagLabel = apriltagId != null
+        ? `<span class="font-mono text-sky-300 font-semibold">AprilTag #${String(apriltagId).padStart(2, "0")}</span>`
+        : `<span class="font-mono text-amber-300 font-semibold">${esc(epc.slice(-6))}</span>`;
       const subtitle = item.bib_number != null
-        ? `Not timed yet. Enter a name to start timing as <strong class="text-amber-300 font-mono">#${item.bib_number}</strong> (tag <span class="font-mono">${esc(epc.slice(-6))}</span>)`
-        : `Tag <span class="font-mono text-amber-300 font-semibold">${esc(epc)}</span> is not registered`;
+        ? `Not timed yet. Enter a name to start timing as <strong class="text-amber-300 font-mono">#${item.bib_number}</strong> (${tagLabel})`
+        : `${tagLabel} is not registered`;
       card.innerHTML = `
         <div class="flex items-start justify-between gap-2">
           <p class="text-xs text-slate-300">${subtitle}</p>
@@ -1592,11 +2234,450 @@
       }
     }, 1000);
 
+    // =========================================================================
+    // Frugal Trackside Voice Announcer (macOS-safe sequential Web Speech queue)
+    // =========================================================================
+    const announcer = (() => {
+      const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
+      let enabled = true;
+      let selectedVoiceURI = localStorage.getItem("trackside_voice_uri") || "";
+      let voices = [];
+      let queue = [];
+      let speaking = false;
+      let activeUtterance = null;
+      let pendingPack = [];
+      let packTimer = null;
+      const PACK_WINDOW_MS = 380;
+      const PREFERRED_VOICES = ["Samantha", "Daniel", "Karen", "Moira", "Alex", "Tessa"];
+
+      function setLatestLine(text, category = "standard") {
+        const el = document.getElementById("voiceLatestLine");
+        if (el) el.textContent = text;
+        const ticker = document.getElementById("announcerTickerText");
+        if (ticker) ticker.textContent = text;
+        const badge = document.getElementById("announcerBadge");
+        if (badge) {
+          badge.className = `ticker-badge ${category === "pr" ? "is-pr" : (category === "fast" ? "is-fast" : (category === "burn" ? "is-burn" : ""))}`;
+          badge.textContent = category === "pr" ? "NEW PR" : (category === "fast" ? "FAST" : (category === "burn" ? "ROAST" : "ANNOUNCER"));
+        }
+      }
+
+      function populateVoices() {
+        if (!synth) return;
+        const select = document.getElementById("voiceSelect");
+        if (!select) return;
+        const all = synth.getVoices() || [];
+        voices = all;
+        const sorted = [...all].sort((a, b) => {
+          const aEn = (a.lang || "").toLowerCase().startsWith("en") ? 0 : 1;
+          const bEn = (b.lang || "").toLowerCase().startsWith("en") ? 0 : 1;
+          if (aEn !== bEn) return aEn - bEn;
+          const aPref = PREFERRED_VOICES.findIndex(p => a.name.includes(p));
+          const bPref = PREFERRED_VOICES.findIndex(p => b.name.includes(p));
+          if (aPref !== -1 || bPref !== -1) {
+            return (aPref === -1 ? 99 : aPref) - (bPref === -1 ? 99 : bPref);
+          }
+          return a.name.localeCompare(b.name);
+        });
+        const prev = selectedVoiceURI || select.value;
+        select.innerHTML = `<option value="">System Default</option>`;
+        sorted.forEach(v => {
+          const opt = document.createElement("option");
+          opt.value = v.voiceURI;
+          opt.textContent = `${v.name} (${v.lang})${v.localService ? "" : " · Cloud"}`;
+          select.appendChild(opt);
+        });
+        if (prev && sorted.some(v => v.voiceURI === prev)) {
+          select.value = prev;
+          selectedVoiceURI = prev;
+        } else {
+          const best = sorted.find(v => v.localService && PREFERRED_VOICES.some(p => v.name.includes(p)));
+          if (best) {
+            select.value = best.voiceURI;
+            selectedVoiceURI = best.voiceURI;
+          }
+        }
+      }
+
+      function drain() {
+        if (speaking || queue.length === 0 || !synth) return;
+        if (!enabled) {
+          queue.length = 0;
+          return;
+        }
+        const text = queue.shift();
+        if (!text) {
+          drain();
+          return;
+        }
+        speaking = true;
+        const utter = new SpeechSynthesisUtterance(text);
+        activeUtterance = utter;
+        utter.rate = 1.12;
+        utter.pitch = 1.0;
+        if (selectedVoiceURI) {
+          const v = voices.find(x => x.voiceURI === selectedVoiceURI);
+          if (v) utter.voice = v;
+        }
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(safetyTimer);
+          activeUtterance = null;
+          speaking = false;
+          drain();
+        };
+        const safetyTimer = setTimeout(finish, 9000);
+        utter.onend = finish;
+        utter.onerror = finish;
+        try {
+          if (synth.paused) synth.resume();
+          synth.speak(utter);
+        } catch (e) {
+          finish();
+        }
+      }
+
+      function speak(text, category = "standard") {
+        if (!text) return;
+        setLatestLine(text, category);
+        if (!enabled || !synth) return;
+        // Cap queue length at 2 so trackside commentary never falls far behind live runners
+        if (queue.length >= 2) queue.splice(0, queue.length - 1);
+        queue.push(text);
+        drain();
+      }
+
+      function flushPack() {
+        packTimer = null;
+        const batch = pendingPack.splice(0, pendingPack.length);
+        if (batch.length === 0) return;
+        if (batch.length === 1) {
+          const c = batch[0];
+          const line = (c.commentary && c.commentary.speech)
+            ? c.commentary.speech
+            : `${c.name}, ${formatTime(c.lap_duration_seconds)}.`;
+          speak(line, (c.commentary && c.commentary.category) || "standard");
+          return;
+        }
+        const names = batch.slice(0, 3).map(c => c.name).join(", ");
+        const extra = batch.length > 3 ? ` plus ${batch.length - 3}` : "";
+        const anyBurn = batch.find(c => c.commentary && c.commentary.category === "burn" && c.commentary.quip);
+        const anyPr = batch.find(c => c.commentary && c.commentary.category === "pr");
+        const tail = anyPr ? "Fast pack!" : (anyBurn ? anyBurn.commentary.quip : "Keep rolling!");
+        speak(`${names}${extra}! ${tail}`, anyPr ? "pr" : (anyBurn ? "burn" : "fast"));
+      }
+
+      function enqueue(crossing) {
+        if (!crossing || crossing.is_start || crossing.is_resume) return;
+        pendingPack.push(crossing);
+        if (packTimer) clearTimeout(packTimer);
+        packTimer = setTimeout(flushPack, PACK_WINDOW_MS);
+      }
+
+      function setEnabled(val) {
+        enabled = Boolean(val);
+        const btn = document.getElementById("voiceToggleBtn");
+        const lbl = document.getElementById("voiceToggleLabel");
+        if (btn) btn.classList.toggle("is-on", enabled);
+        if (lbl) lbl.textContent = enabled ? "Voice On" : "Voice Off";
+        if (!enabled && synth) {
+          queue.length = 0;
+          try { synth.cancel(); } catch (e) {}
+          speaking = false;
+          activeUtterance = null;
+        }
+      }
+
+      function setVoice(uri) {
+        selectedVoiceURI = uri || "";
+        localStorage.setItem("trackside_voice_uri", selectedVoiceURI);
+      }
+
+      if (synth) {
+        populateVoices();
+        if (typeof synth.addEventListener === "function") {
+          synth.addEventListener("voiceschanged", populateVoices);
+        } else {
+          synth.onvoiceschanged = populateVoices;
+        }
+      }
+
+      return { enqueue, speak, setEnabled, setVoice, isEnabled: () => enabled };
+    })();
+
+    function toggleVoiceAnnouncer() {
+      const next = !announcer.isEnabled();
+      announcer.setEnabled(next);
+      if (next) announcer.speak("Voice announcer on.");
+    }
+
+    function selectAnnouncerVoice(name) {
+      announcer.setVoice(name);
+    }
+
+    function applyBurnFreqUI(val) {
+      const slider = document.getElementById("burnFreqSlider");
+      const label = document.getElementById("burnFreqLabel");
+      if (slider) slider.value = String(val);
+      if (label) label.textContent = `${val}%`;
+    }
+
+    function previewCooldown(val) {
+      const lbl = document.getElementById("cooldownLabel");
+      if (lbl) lbl.textContent = `${val}s`;
+    }
+
+    async function saveCooldown(val) {
+      previewCooldown(val);
+      try {
+        await fetch("/api/event/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ min_lap_seconds: val })
+        });
+      } catch (e) {}
+    }
+
+    function syncCooldownSlider() {
+      if (!eventState || typeof eventState.min_lap_seconds !== "number") return;
+      const secs = Math.round(eventState.min_lap_seconds);
+      const slider = document.getElementById("cooldownSlider");
+      const label = document.getElementById("cooldownLabel");
+      if (slider && document.activeElement !== slider) slider.value = String(secs);
+      if (label) label.textContent = `${secs}s`;
+    }
+
+    function previewBurnFreq(val) {
+      const label = document.getElementById("burnFreqLabel");
+      if (label) label.textContent = `${val}%`;
+    }
+
+    async function saveBurnFreq(val) {
+      applyBurnFreqUI(val);
+      try {
+        await fetch("/api/announcer/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ burn_frequency: val })
+        });
+      } catch (e) { }
+    }
+
+    async function testVoiceAnnouncer() {
+      if (!announcer.isEnabled()) announcer.setEnabled(true);
+      try {
+        const res = await fetch("/api/announcer/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "Speedy", category: "burn" })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.speech) announcer.speak(data.speech, data.category || "burn");
+        }
+      } catch (e) { }
+    }
+
+    async function loadAnnouncerConfig() {
+      try {
+        const res = await fetch("/api/announcer/config");
+        if (res.ok) {
+          const data = await res.json();
+          if (typeof data.burn_frequency === "number") applyBurnFreqUI(data.burn_frequency);
+        }
+      } catch (e) { }
+    }
+
+    // =========================================================================
+    // AprilTag Optical Camera Drawer (fused with RFID)
+    // =========================================================================
+    let cameraState = { running: false, connected: false, camera_index: 0, available: false };
+
+    function applyCameraHealth(h) {
+      if (!h) return;
+      cameraState = { ...cameraState, ...h };
+      const btn = document.getElementById("cameraStartStopBtn");
+      const badge = document.getElementById("cameraStatusBadge");
+      const img = document.getElementById("cameraStreamImg");
+      const err = document.getElementById("cameraErrorMsg");
+      const headerBtn = document.getElementById("cameraDrawerBtn");
+      const headerLabel = document.getElementById("cameraBtnLabel");
+
+      if (btn) {
+        btn.textContent = h.running ? "Stop Camera" : "Start Camera";
+        btn.classList.toggle("is-on", Boolean(h.running));
+      }
+      if (badge) {
+        badge.textContent = h.running ? (h.connected ? `LIVE ${h.fps || 0}fps` : "CONNECTING") : "OFF";
+        badge.className = `sensor-badge ${h.running && h.connected ? "sensor-fused" : ""}`;
+      }
+      if (headerBtn) headerBtn.classList.toggle("is-active", Boolean(h.running));
+      if (headerLabel) headerLabel.textContent = h.running ? "Camera Live" : "Camera";
+
+      if (err) {
+        if (h.last_error) {
+          err.textContent = h.last_error;
+          err.classList.remove("hidden");
+        } else {
+          err.textContent = "";
+          err.classList.add("hidden");
+        }
+      }
+      const drawer = document.getElementById("cameraDrawer");
+      const drawerOpen = drawer && !drawer.classList.contains("hidden");
+      if (img) {
+        if (h.running && drawerOpen) {
+          if (!img.getAttribute("src")) img.src = `/api/camera/video_feed?t=${Date.now()}`;
+          img.classList.remove("hidden");
+        } else {
+          img.removeAttribute("src");
+          img.classList.add("hidden");
+        }
+      }
+      const dbg = document.getElementById("camDebugCheck");
+      const mir = document.getElementById("camMirrorCheck");
+      const fls = document.getElementById("camFinishLineSlider");
+      const fll = document.getElementById("camFinishLineLabel");
+      if (dbg && typeof h.debug_overlay === "boolean") dbg.checked = h.debug_overlay;
+      if (mir && typeof h.mirror === "boolean") mir.checked = h.mirror;
+      if (typeof h.finish_line_x === "number") {
+        const pct = Math.round(h.finish_line_x * 100);
+        if (fls && document.activeElement !== fls) fls.value = String(pct);
+        if (fll) fll.textContent = `${pct}%`;
+      }
+    }
+
+    function previewFinishLine(val) {
+      const lbl = document.getElementById("camFinishLineLabel");
+      if (lbl) lbl.textContent = `${val}%`;
+    }
+
+    async function toggleEventStartPause() {
+      const running = eventState && eventState.status === "running";
+      const ended = eventState && eventState.status === "ended";
+      const endpoint = running ? "/api/event/pause" : (ended ? "/api/event/reopen" : "/api/event/start");
+      try {
+        await fetch(endpoint, { method: "POST" });
+      } catch (e) {}
+    }
+
+    function syncHeaderStartPauseBtn() {
+      const btn = document.getElementById("headerStartPauseBtn");
+      const icon = document.getElementById("headerStartPauseIcon");
+      const label = document.getElementById("headerStartPauseLabel");
+      if (!btn || !icon || !label) return;
+      const status = eventState ? eventState.status : "setup";
+      if (status === "running") {
+        icon.className = "fa-solid fa-pause text-amber-300";
+        label.textContent = "Pause";
+        btn.classList.add("is-active");
+      } else if (status === "ended") {
+        icon.className = "fa-solid fa-rotate-left text-sky-300";
+        label.textContent = "Reopen";
+        btn.classList.remove("is-active");
+      } else {
+        icon.className = "fa-solid fa-play text-emerald-400";
+        label.textContent = status === "paused" ? "Resume" : "Start";
+        btn.classList.remove("is-active");
+      }
+    }
+
+    async function refreshCameraList() {
+      try {
+        const res = await fetch("/api/cameras");
+        if (!res.ok) return;
+        const data = await res.json();
+        cameraState.available = Boolean(data.available);
+        const sel = document.getElementById("cameraSelect");
+        if (sel && Array.isArray(data.cameras)) {
+          sel.innerHTML = "";
+          if (data.cameras.length === 0) {
+            sel.innerHTML = `<option value="0">${data.available ? "No cameras found" : "OpenCV not installed"}</option>`;
+          } else {
+            data.cameras.forEach(c => {
+              const opt = document.createElement("option");
+              opt.value = String(c.index);
+              opt.textContent = c.name || `Camera ${c.index}`;
+              if (data.health && data.health.camera_index === c.index) opt.selected = true;
+              sel.appendChild(opt);
+            });
+          }
+        }
+        if (data.health) applyCameraHealth(data.health);
+      } catch (e) { }
+    }
+
+    function toggleCameraDrawer() {
+      const drawer = document.getElementById("cameraDrawer");
+      const grid = document.getElementById("tracksideGrid");
+      if (!drawer) return;
+      const opening = drawer.classList.contains("hidden");
+      drawer.classList.toggle("hidden", !opening);
+      if (grid) grid.classList.toggle("has-camera", opening);
+      if (opening) {
+        refreshCameraList();
+      } else {
+        const img = document.getElementById("cameraStreamImg");
+        if (img) {
+          img.removeAttribute("src");
+          img.classList.add("hidden");
+        }
+      }
+    }
+
+    async function postCameraConfig(payload) {
+      try {
+        const res = await fetch("/api/camera/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const err = document.getElementById("cameraErrorMsg");
+          if (err) {
+            err.textContent = data.detail || "Could not update camera";
+            err.classList.remove("hidden");
+          }
+          return;
+        }
+        if (data.health) applyCameraHealth(data.health);
+      } catch (e) { }
+    }
+
+    function toggleCameraRunning() {
+      const sel = document.getElementById("cameraSelect");
+      const camera_index = sel ? parseInt(sel.value, 10) || 0 : 0;
+      postCameraConfig({ enabled: !cameraState.running, camera_index });
+    }
+
+    function onCameraSelectChange(val) {
+      const idx = parseInt(val, 10);
+      if (!isNaN(idx)) postCameraConfig({ camera_index: idx });
+    }
+
+    function pushCameraOptions() {
+      const dbg = document.getElementById("camDebugCheck");
+      const mir = document.getElementById("camMirrorCheck");
+      const fls = document.getElementById("camFinishLineSlider");
+      postCameraConfig({
+        debug_overlay: dbg ? dbg.checked : true,
+        mirror: mir ? mir.checked : false,
+        finish_line_x: fls ? (parseInt(fls.value, 10) / 100.0) : 0.5
+      });
+    }
+
     applyDisplaySettings();
     applyEventStatus();
+    syncHeaderStartPauseBtn();
     renderCrossingFeed(false);
     renderUnclaimedRunners();
+    loadAnnouncerConfig();
+    refreshCameraList();
     connectWS();
   </script>
 </body>
+
 </html>

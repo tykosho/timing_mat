@@ -42,11 +42,35 @@ class LeaderboardEntry:
     total_rest_seconds: Optional[float] = 0.0
     last_crossing_time: Optional[float] = None
 
+def apriltag_to_epc(tag_id: int) -> str:
+    """Canonical 16-hex-char virtual EPC for an AprilTag 16h5 ID (0..29)."""
+    tid = int(tag_id)
+    if not (0 <= tid < 30):
+        raise ValueError(f"AprilTag 16h5 ID must be 0..29, got {tid}")
+    return f"A71605000000{tid:04X}"
+
+
+def epc_to_apriltag(epc: Optional[str]) -> Optional[int]:
+    """Extract AprilTag ID if `epc` is a virtual AprilTag EPC, else None."""
+    if not epc:
+        return None
+    clean = epc.strip().upper()
+    if len(clean) == 16 and clean.startswith("A71605000000"):
+        try:
+            tid = int(clean[12:], 16)
+            return tid if 0 <= tid < 30 else None
+        except ValueError:
+            return None
+    return None
+
+
 @dataclass
 class TagRead:
     epc: str
     timestamp: float
     rssi: float = 0.0
+    source: str = "rfid"
+    apriltag_id: Optional[int] = None
 
 @dataclass
 class EventStatus:

@@ -10,16 +10,24 @@ from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Form
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from core import exports
 from core import clock
+from core.commentary import CommentaryEngine
 from core.db import Database, RegistrationError, EventStateError, LapEditError, is_unclaimed
+from core.goals import compute_goal_progress
+from core.models import epc_to_apriltag
 from core.registration_import import parse_registration_csv
 from core.lap_engine import LapEngine
+from hardware.apriltag_reader import (
+    APRILTAG_AVAILABLE,
+    AprilTagCameraReader,
+    list_available_cameras,
+)
 from hardware.mock_reader import MockReader
 from hardware.serial_reader import SerialReader, DEFAULT_REARM_INTERVAL, DEFAULT_SILENCE_REARM
 from hardware.frame_capture import open_capture
@@ -97,9 +105,45 @@ async def broadcast_runner_change(message: Dict[str, Any], bib_number: int):
     if active_connections:
         full_board.mark_dirty()
 
+# Trackside voice & display commentary engine (non-repeating shuffle deck)
+commentary_engine = CommentaryEngine(
+    burn_frequency=int(os.getenv("BURN_FREQUENCY", (config.get("event") or {}).get("burn_frequency", 25)))
+)
+
 # Callback when a lap is completed
 async def on_lap_completed(lap_data: Dict[str, Any]):
-    await broadcast_runner_change({"type": "lap_completed", "lap": lap_data}, lap_data["bib_number"])
+    bib = lap_data["bib_number"]
+    all_laps = db.get_laps_for_runner(bib)
+    if "goal" not in lap_data:
+        participant = db.get_participant_by_bib(bib)
+        ev = db.get_event_state()
+        total_time = sum((l.get("lap_duration_seconds") or 0.0) for l in all_laps)
+        lap_data["goal"] = compute_goal_progress(
+            participant.get("goal_type") if participant else None,
+            participant.get("goal_value") if participant else None,
+            total_laps=len(all_laps) or (lap_data.get("lap_number") or 1),
+            total_time_seconds=total_time or (lap_data.get("lap_duration_seconds") or 0.0),
+            track_length_m=ev.get("track_length_m") or 400.0,
+            last_lap_seconds=lap_data.get("lap_duration_seconds"),
+        )
+    if "commentary" not in lap_data:
+        prior = [
+            l["lap_duration_seconds"]
+            for l in all_laps
+            if l["id"] != lap_data.get("id") and l.get("lap_duration_seconds")
+        ]
+        prev_best = min(prior) if prior else None
+        prev_avg = (sum(prior) / len(prior)) if prior else None
+        goal_speech = lap_data["goal"]["speech_text"] if lap_data.get("goal") else None
+        lap_data["commentary"] = commentary_engine.for_lap(
+            name=lap_data.get("name") or f"Bib {bib}",
+            lap_number=lap_data.get("lap_number") or 1,
+            lap_duration_seconds=lap_data.get("lap_duration_seconds") or 0.0,
+            prev_best_seconds=prev_best,
+            prev_avg_seconds=prev_avg,
+            goal_speech=goal_speech,
+        )
+    await broadcast_runner_change({"type": "lap_completed", "lap": lap_data}, bib)
 
 # Callback when a runner begins (Chip Start / Lap 0)
 async def on_runner_started(start_data: Dict[str, Any]):
@@ -159,7 +203,9 @@ def reader_health_snapshot() -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"Reader health unavailable: {e}")
         details = {"kind": "unknown", "running": True, "connected": False, "last_error": f"health check failed: {e}"}
-    return reader_health.snapshot(details, engine=lap_engine.flush_health())
+    snap = reader_health.snapshot(details, engine=lap_engine.flush_health())
+    snap["apriltag"] = apriltag_reader.health()
+    return snap
 
 async def _every(interval: float, name: str, tick):
     """Runs `tick` every `interval` s for good. A failing tick is logged, never fatal (issue #83)."""
@@ -213,10 +259,25 @@ def on_reader_tag(tag_read):
     except RuntimeError:
         pass  # loop already closed during shutdown
 
+# Optical AprilTag webcam reader (runs alongside RFID for sensor fusion, or standalone when ENABLE_RFID=false)
+enable_rfid = _flag("ENABLE_RFID", (config.get("hardware") or {}).get("rfid_enabled"), True)
+apriltag_enabled_default = _flag("ENABLE_APRILTAG", (config.get("hardware") or {}).get("apriltag_enabled"), False)
+apriltag_camera_index = int(os.getenv("CAMERA_INDEX", (config.get("hardware") or {}).get("camera_index", 0)))
+apriltag_reader = AprilTagCameraReader(
+    on_tag_read=on_reader_tag,
+    camera_index=apriltag_camera_index,
+)
+
 if use_mock:
     reader = MockReader(on_tag_read=on_reader_tag, speed_multiplier=5.0)
     lap_engine.speed_multiplier = 5.0
     logger.info("Operating in MOCK reader mode (Simulated runners active at 5.0x).")
+elif not enable_rfid:
+    reader = apriltag_reader
+    apriltag_enabled_default = True
+    # Camera crossings don't need a 2.5s RFID antenna fringe window; flush briskly
+    lap_engine.crossing_window = min(lap_engine.crossing_window, 0.35)
+    logger.info(f"Operating in PRODUCTION CAMERA-ONLY mode (AprilTag webcam index={apriltag_camera_index}, RFID disabled).")
 else:
     hw = config.get("hardware") or {}
 
@@ -258,11 +319,15 @@ async def lifespan(app: FastAPI):
     tag_task = asyncio.create_task(tag_event_loop())
     health_task = asyncio.create_task(reader_health_loop())
 
-    # Start RFID reader
+    # Start RFID reader (and optional AprilTag webcam reader if configured on)
     reader.start()
+    if apriltag_enabled_default and APRILTAG_AVAILABLE and reader is not apriltag_reader:
+        apriltag_reader.start()
 
     yield
 
+    if reader is not apriltag_reader:
+        apriltag_reader.stop()
     reader.stop()
     flush_task.cancel()
     tag_task.cancel()
@@ -381,7 +446,8 @@ async def crossings_page(request: Request):
             "event": event_state,
             "leaderboard": leaderboard,
             "recent_crossings": recent_crossings,
-            "is_mock": use_mock
+            "is_mock": use_mock,
+            "camera_running": apriltag_reader.is_running,
         }
     )
 
@@ -699,6 +765,9 @@ class ParticipantRequest(BaseModel):
     epc: Optional[str] = ""
     notes: Optional[str] = ""
     email: Optional[str] = ""
+    apriltag_id: Optional[int] = None
+    goal_type: Optional[str] = None
+    goal_value: Optional[Any] = None
 
 @app.get("/api/participants")
 async def list_participants():
@@ -706,7 +775,10 @@ async def list_participants():
 
 @app.post("/api/participants")
 async def add_participant(p: ParticipantRequest):
-    db.add_participant(p.bib_number, p.name, p.epc, p.notes or "", p.email or "")
+    db.add_participant(
+        p.bib_number, p.name, p.epc, p.notes or "", p.email or "",
+        apriltag_id=p.apriltag_id, goal_type=p.goal_type, goal_value=p.goal_value,
+    )
     await push_leaderboard()
     return {"status": "created"}
 
@@ -773,7 +845,7 @@ async def self_register_participant(req: SelfRegisterRequest):
         bib = 1
         while bib in used_bibs:
             bib += 1
-    db.add_participant(bib, req.name, epc)
+    db.add_participant(bib, req.name, epc, apriltag_id=epc_to_apriltag(epc))
     participant = db.get_participant_by_bib(bib)
 
     event_state = db.get_event_state()
@@ -817,9 +889,33 @@ async def import_participants(req: ImportRequest):
 
 @app.put("/api/participants/{bib}")
 async def edit_participant(bib: int, p: ParticipantRequest):
-    db.update_participant(bib, p.name, p.epc, p.notes or "", p.email)
+    db.update_participant(
+        bib, p.name, p.epc, p.notes or "", p.email,
+        apriltag_id=p.apriltag_id, goal_type=p.goal_type, goal_value=p.goal_value,
+    )
     await push_leaderboard()
     return {"status": "updated"}
+
+class GoalUpdateRequest(BaseModel):
+    goal_type: Optional[str] = None
+    goal_value: Optional[Any] = None
+
+@app.patch("/api/participants/{bib}/goal")
+async def set_participant_goal_endpoint(bib: int, req: GoalUpdateRequest):
+    """Sets or clears a participant's single goal (laps, distance in meters, or time in seconds/MM:SS)."""
+    updated = db.set_participant_goal(bib, req.goal_type, req.goal_value)
+    await push_leaderboard()
+    return {"status": "updated", "bib": bib, "participant": updated}
+
+class AprilTagAssignRequest(BaseModel):
+    apriltag_id: Optional[int] = None
+
+@app.patch("/api/participants/{bib}/apriltag")
+async def assign_apriltag(bib: int, req: AprilTagAssignRequest):
+    """Pairs (or clears) an AprilTag 16h5 ID (0-29) on a runner for optical / fused timing."""
+    db.set_participant_apriltag(bib, req.apriltag_id, swap=True)
+    await push_leaderboard()
+    return {"status": "assigned", "bib": bib, "participant": db.get_participant_by_bib(bib)}
 
 class RenameParticipantRequest(BaseModel):
     name: str
@@ -1098,6 +1194,117 @@ async def set_simulator_speed(req: SpeedRequest):
         })
         return {"status": "speed_set", "speed": reader.speed_multiplier, "sim": sim}
     raise HTTPException(status_code=400, detail="Hardware is not in mock mode")
+
+# ----------------- APRILTAG CAMERA & VOICE ANNOUNCER API -----------------
+@app.get("/api/cameras")
+async def api_list_cameras():
+    cameras = await asyncio.to_thread(list_available_cameras) if APRILTAG_AVAILABLE else []
+    return {
+        "available": APRILTAG_AVAILABLE,
+        "cameras": cameras,
+        "health": apriltag_reader.health(),
+    }
+
+class CameraConfigRequest(BaseModel):
+    enabled: Optional[bool] = None
+    camera_index: Optional[int] = None
+    debug_overlay: Optional[bool] = None
+    mirror: Optional[bool] = None
+    finish_line_x: Optional[float] = Field(default=None, ge=0.05, le=0.95)
+
+@app.post("/api/camera/config")
+async def api_camera_config(req: CameraConfigRequest):
+    if req.enabled and not APRILTAG_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="OpenCV is not installed in this environment. Install opencv-python and pupil-apriltags to enable the AprilTag camera.",
+        )
+    health = await asyncio.to_thread(
+        apriltag_reader.set_config,
+        enabled=req.enabled,
+        camera_index=req.camera_index,
+        debug_overlay=req.debug_overlay,
+        mirror=req.mirror,
+        finish_line_x=req.finish_line_x,
+    )
+    await broadcast_ws({"type": "camera_status", "camera": health}, admin_only=True)
+    return {"status": "ok", "health": health}
+
+@app.get("/api/camera/video_feed")
+async def api_camera_video_feed(request: Request):
+    boundary = "apriltagframe"
+
+    async def stream():
+        last_seq = 0
+        while True:
+            if await request.is_disconnected():
+                break
+            seq, jpg = await asyncio.to_thread(apriltag_reader.wait_for_jpeg, last_seq, 0.5)
+            if not jpg or seq == last_seq:
+                if not apriltag_reader.is_running:
+                    break
+                continue
+            last_seq = seq
+            header = (
+                f"--{boundary}\r\n"
+                f"Content-Type: image/jpeg\r\n"
+                f"Content-Length: {len(jpg)}\r\n\r\n"
+            ).encode("ascii")
+            yield header + jpg + b"\r\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type=f"multipart/x-mixed-replace; boundary={boundary}",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
+
+@app.get("/api/tags/printable", response_class=HTMLResponse)
+async def api_printable_apriltags():
+    if not APRILTAG_AVAILABLE:
+        return HTMLResponse(
+            "<h2>OpenCV not installed</h2><p>Install opencv-python to generate printable AprilTag 16h5 bibs.</p>",
+            status_code=503,
+        )
+    from apriltag_tracker.generate_tags import render_printable_bibs_html
+    return HTMLResponse(render_printable_bibs_html())
+
+class AnnouncerConfigRequest(BaseModel):
+    burn_frequency: int = Field(ge=0, le=100)
+
+@app.get("/api/announcer/config")
+async def api_get_announcer_config():
+    return {
+        "burn_frequency": commentary_engine.burn_frequency,
+        "counts": commentary_engine.counts(),
+    }
+
+@app.post("/api/announcer/config")
+async def api_set_announcer_config(req: AnnouncerConfigRequest):
+    commentary_engine.set_burn_frequency(req.burn_frequency)
+    await broadcast_ws(
+        {"type": "announcer_config", "burn_frequency": commentary_engine.burn_frequency},
+        admin_only=True,
+    )
+    return {
+        "status": "ok",
+        "burn_frequency": commentary_engine.burn_frequency,
+        "counts": commentary_engine.counts(),
+    }
+
+class AnnouncerTestRequest(BaseModel):
+    name: str = "Speedy"
+    category: str = "burn"
+
+@app.post("/api/announcer/test")
+async def api_test_announcer(req: AnnouncerTestRequest):
+    return commentary_engine.for_lap(
+        name=req.name,
+        lap_number=4,
+        lap_duration_seconds=84.2,
+        prev_best_seconds=86.0 if req.category == "pr" else 78.0,
+        prev_avg_seconds=88.0 if req.category == "fast" else 84.0,
+        force_category=req.category,
+    )
 
 from web.simulator_routes import router as simulator_router  # noqa: E402
 app.include_router(simulator_router)
