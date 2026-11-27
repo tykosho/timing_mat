@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ predict_state.session.name }} - Predict 5K</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/fontawesome/all.min.css">
+  <style>
+    @keyframes reveal-pop {
+      from { opacity: 0; transform: translateY(-16px) scale(0.97); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .reveal-enter {
+      animation: reveal-pop 0.38s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .predict-grid {
+      max-width: 1120px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    @media (min-width: 1024px) {
+      .predict-grid.has-camera {
+        max-width: 1480px;
+        display: grid;
+        grid-template-columns: minmax(380px, 42%) minmax(0, 1fr);
+        align-items: start;
+        gap: 1.15rem;
+      }
+      .predict-grid.has-camera .camera-panel {
+        position: sticky;
+        top: 5.25rem;
+      }
+    }
+    .camera-feed-frame {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      max-height: 420px;
+      object-fit: contain;
+      border-radius: 0.75rem;
+      background: #020617;
+      border: 1px solid #1e293b;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
+
+  <header class="bg-slate-900 border-b border-slate-800 px-4 md:px-6 py-3 sticky top-0 z-40">
+    <div class="max-w-[1480px] mx-auto flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div id="statusDot" class="w-3.5 h-3.5 rounded-full bg-slate-500"></div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 id="sessionNameLabel" class="text-lg md:text-xl font-black text-white tracking-tight">{{ predict_state.session.name }}</h1>
+            <span class="text-[11px] bg-sky-500/20 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded font-mono font-bold">PREDICT 5K</span>
+            {% if is_mock %}
+            <span class="text-[11px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">SIM</span>
+            {% endif %}
+          </div>
+          <div id="statusText" class="text-[11px] uppercase font-bold text-slate-400 tracking-wider">SETUP</div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <button id="voiceToggleBtn" type="button" onclick="toggleVoice()"
+                class="px-3 py-1.5 rounded-xl text-xs font-bold border border-emerald-500/50 bg-emerald-500/20 text-emerald-300 flex items-center gap-1.5">
+          <i class="fa-solid fa-bullhorn"></i>
+          <span id="voiceToggleLabel">Voice On</span>
+        </button>
+
+        <select id="voiceSelect" onchange="selectVoice(this.value)"
+                class="bg-slate-950 border border-slate-700 text-slate-200 rounded-xl px-2.5 py-1.5 text-xs max-w-[160px]">
+          <option value="">System Default</option>
+        </select>
+
+        <button id="cameraToggleBtn" type="button" onclick="toggleCameraPanel()"
+                class="px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-100 flex items-center gap-1.5">
+          <i class="fa-solid fa-video text-sky-400"></i>
+          <span id="cameraBtnLabel">Camera</span>
+        </button>
+
+        <a href="/crossings" class="px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200">
+          Lap Tracker
+        </a>
+        <a href="/admin" class="px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200">
+          Admin
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 px-4 md:px-6 py-5">
+    <div id="predictGrid" class="predict-grid{% if camera_running %} has-camera{% endif %}">
+
+      <!-- Optional Left Panel: Live Camera Viewport (AprilTag + RFID both supported) -->
+      <section id="cameraPanel" class="camera-panel bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3{% if not camera_running %} hidden{% endif %}">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-xs font-bold uppercase tracking-wider text-sky-300">
+              <i class="fa-solid fa-video mr-1"></i>Finish Camera
+            </span>
+            <select id="cameraSelect" onchange="onCameraChange(this.value)"
+                    class="bg-slate-950 border border-slate-700 text-slate-200 rounded-lg px-2 py-1 text-xs max-w-[160px]">
+              <option value="0">Camera 0</option>
+            </select>
+            <button type="button" onclick="refreshCameras()" class="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-xs">↻</button>
+            <button id="camRunBtn" type="button" onclick="toggleCameraRunning()" class="px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-xs font-bold">Start Camera</button>
+          </div>
+          <span id="camStatusBadge" class="text-[11px] font-mono font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300">OFF</span>
+        </div>
+        <div id="camErrorMsg" class="hidden text-xs text-amber-300"></div>
+        <img id="cameraStreamImg" class="camera-feed-frame hidden" alt="Live finish camera">
+        <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300">
+          <label class="flex items-center gap-2">
+            <span>Line:</span>
+            <input id="camFinishLineSlider" type="range" min="10" max="90" step="2" value="50"
+                   oninput="document.getElementById('camFinishLineVal').textContent=this.value+'%'"
+                   onchange="pushCamOpts()" class="w-24 accent-emerald-400">
+            <span id="camFinishLineVal" class="font-mono text-emerald-300 w-8">50%</span>
+          </label>
+          <div class="flex items-center gap-2">
+            <label class="flex items-center gap-1 cursor-pointer"><input id="camOverlayCheck" type="checkbox" checked onchange="pushCamOpts()"> Overlay</label>
+            <label class="flex items-center gap-1 cursor-pointer"><input id="camMirrorCheck" type="checkbox" onchange="pushCamOpts()"> Mirror</label>
+            <a href="/api/tags/printable" target="_blank" class="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-xs font-bold">Print Bibs</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right / Main Column -->
+      <div class="flex flex-col gap-4 min-w-0">
+
+        <!-- 1. Race Control & Countdown Banner -->
+        <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
+          <div class="flex flex-wrap items-center gap-3">
+            <label class="text-xs text-slate-300 flex items-center gap-1.5">
+              <span class="font-bold">Countdown:</span>
+              <select id="countdownSelect" onchange="updateSessionSettings()"
+                      class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white font-mono">
+                <option value="0">0s (Immediate)</option>
+                <option value="5">5s</option>
+                <option value="10">10s</option>
+                <option value="15" selected>15s</option>
+                <option value="30">30s</option>
+                <option value="60">60s</option>
+              </select>
+            </label>
+            <label class="text-xs text-slate-300 flex items-center gap-1.5" title="Minimum time after gun before finish tags count">
+              <span class="font-bold">Min Finish:</span>
+              <select id="minFinishSelect" onchange="updateSessionSettings()"
+                      class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white font-mono">
+                <option value="5">5s (Test)</option>
+                <option value="60">1 min (Short)</option>
+                <option value="600" selected>10 min (5K)</option>
+                <option value="900">15 min (5K)</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <button id="btnStartRace" type="button" onclick="startRace()"
+                    class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-black text-sm shadow">
+              <i class="fa-solid fa-flag-checkered mr-1.5"></i>Start Race
+            </button>
+            <button id="btnStartReveal" type="button" onclick="startReveal()"
+                    class="hidden px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-sm shadow">
+              <i class="fa-solid fa-trophy mr-1.5"></i>Start Reveal
+            </button>
+            <button id="btnResetRace" type="button" onclick="resetRace()"
+                    class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs">
+              Reset Times
+            </button>
+            <button type="button" onclick="newSession()"
+                    class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-bold text-xs">
+              New Session
+            </button>
+          </div>
+        </section>
+
+        <!-- Big Countdown Display (visible during countdown) -->
+        <section id="countdownBanner" class="hidden bg-amber-950/40 border-2 border-amber-400/70 rounded-2xl p-6 text-center">
+          <div class="text-xs font-bold uppercase tracking-widest text-amber-300">Get to the Start Line!</div>
+          <div id="countdownNumber" class="text-6xl md:text-7xl font-mono font-black text-amber-300 my-2 tabular-nums">15</div>
+          <div class="text-sm text-slate-300">Everyone starts together when the gun sounds.</div>
+        </section>
+
+        <!-- Running No-Spoilers Banner -->
+        <section id="runningBanner" class="hidden bg-emerald-950/30 border border-emerald-500/50 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div class="text-xs font-bold uppercase tracking-wider text-emerald-300">Race in Progress — No Spoilers Mode</div>
+            <div class="text-lg font-black text-white mt-0.5">Finish times are locked &amp; hidden until the Reveal Sequence!</div>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-slate-400 uppercase font-bold">Finished</div>
+            <div id="finishedCounter" class="text-3xl font-mono font-black text-emerald-400 tabular-nums">0 / 0</div>
+          </div>
+        </section>
+
+        <!-- 2. Reveal Stage & Growing Worst-to-First Results Board -->
+        <section id="revealSection" class="hidden space-y-4">
+          <div class="bg-slate-900 border border-amber-500/40 rounded-2xl p-5 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 class="text-base font-black text-amber-300 uppercase tracking-wider">
+                  <i class="fa-solid fa-bullhorn mr-1.5"></i>Worst-to-First Reveal
+                </h2>
+                <p id="revealProgressText" class="text-xs text-slate-400 mt-0.5">Click Next Result to reveal the furthest prediction first.</p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <label class="flex items-center gap-1.5 text-xs text-slate-300 bg-slate-950 border border-slate-800 px-2.5 py-1.5 rounded-xl cursor-pointer">
+                  <input id="autoRevealCheck" type="checkbox" onchange="onAutoRevealToggle()" class="accent-amber-400">
+                  <span>Auto</span>
+                  <input id="autoRevealSec" type="number" min="2" max="20" value="5"
+                         class="w-10 bg-slate-900 border border-slate-700 rounded px-1 text-center font-mono text-xs">
+                  <span>s</span>
+                </label>
+                <button id="btnRevealNext" type="button" onclick="revealNext()"
+                        class="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-slate-950 font-black text-sm shadow">
+                  Next Result <span class="text-xs font-mono opacity-75">[Space]</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Spotlight Card for Latest Revealed Runner -->
+            <div id="revealSpotlight" class="hidden bg-slate-950 border border-slate-800 rounded-xl p-4 text-center space-y-1">
+              <div id="spotlightRank" class="text-xs font-mono font-bold uppercase tracking-widest text-amber-300"></div>
+              <div id="spotlightName" class="text-3xl font-black text-white"></div>
+              <div id="spotlightDetails" class="text-sm font-mono text-slate-300"></div>
+            </div>
+          </div>
+
+          <!-- Results Board: new names prepend to the TOP, pushing older names down -->
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+            <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">
+                <i class="fa-solid fa-list-ol text-emerald-400 mr-1.5"></i>Results Board (Closest at Top)
+              </h3>
+              <span class="text-xs text-slate-500">1-second accuracy • Ties share rank</span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-sm">
+                <thead class="bg-slate-950/80 text-xs uppercase text-slate-400 border-b border-slate-800">
+                  <tr>
+                    <th class="py-2.5 px-4">Rank</th>
+                    <th class="py-2.5 px-4">Runner</th>
+                    <th class="py-2.5 px-4 text-right">Predicted</th>
+                    <th class="py-2.5 px-4 text-right">Actual</th>
+                    <th class="py-2.5 px-4 text-right">Delta</th>
+                  </tr>
+                </thead>
+                <tbody id="resultsBoardBody" class="divide-y divide-slate-800">
+                  <tr>
+                    <td colspan="5" class="py-6 text-center text-slate-500 text-xs">Waiting to reveal first result...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. Registration & Roster -->
+        <section id="rosterSection" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-sm font-black uppercase tracking-wider text-slate-200">
+              <i class="fa-solid fa-users text-emerald-400 mr-1.5"></i>Runners &amp; 5K Predictions (<span id="entryCount">0</span>)
+            </h2>
+            <span id="lastScannedHint" class="text-xs font-mono text-sky-300"></span>
+          </div>
+
+          <form id="addEntryForm" onsubmit="addEntry(event)" class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+            <div class="sm:col-span-4">
+              <label class="block text-xs font-medium text-slate-400 mb-1">Runner Name</label>
+              <input id="entryName" type="text" required placeholder="e.g. Elena"
+                     class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+            </div>
+            <div class="sm:col-span-3">
+              <label class="block text-xs font-medium text-slate-400 mb-1">5K Guess (MM:SS)</label>
+              <input id="entryGuess" type="text" inputmode="numeric" required placeholder="24:30" autocomplete="off"
+                     class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-emerald-500">
+            </div>
+            <div class="sm:col-span-2">
+              <label class="block text-xs font-medium text-slate-400 mb-1">AprilTag #</label>
+              <input id="entryApriltag" type="number" min="0" max="29" placeholder="0–29"
+                     class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-sky-500">
+            </div>
+            <div class="sm:col-span-2">
+              <label class="block text-xs font-medium text-slate-400 mb-1">RFID EPC (opt)</label>
+              <input id="entryEpc" type="text" placeholder="Wave tag"
+                     class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white uppercase focus:outline-none focus:border-emerald-500">
+            </div>
+            <div class="sm:col-span-1">
+              <button type="submit" class="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm">Add</button>
+            </div>
+          </form>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-sm">
+              <thead class="bg-slate-950/70 text-xs uppercase text-slate-400 border-b border-slate-800">
+                <tr>
+                  <th class="py-2 px-3">Runner</th>
+                  <th class="py-2 px-3">Tags</th>
+                  <th class="py-2 px-3 text-right">Prediction</th>
+                  <th class="py-2 px-3 text-center">Status</th>
+                  <th class="py-2 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="rosterBody" class="divide-y divide-slate-800"></tbody>
+            </table>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </main>
+
+  <!-- Confirm Edit Prediction Modal (triggered when an already-registered runner shows their tag before race start) -->
+  <div id="editGuessModal" role="dialog" aria-modal="true"
+       class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+       onclick="if (event.target === this) closeEditGuessModal()">
+    <div class="bg-slate-900 border border-sky-500/50 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-black text-white"><i class="fa-solid fa-tag text-sky-400 mr-1.5"></i>Edit Prediction?</h3>
+        <button type="button" onclick="closeEditGuessModal()" class="text-slate-400 hover:text-white p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <p id="editGuessPromptText" class="text-sm text-slate-300"></p>
+      <div id="editGuessConfirmStep" class="flex items-center justify-end gap-2">
+        <button type="button" onclick="closeEditGuessModal()" class="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+          Keep Current
+        </button>
+        <button type="button" onclick="revealEditGuessForm()" class="px-4 py-1.5 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white">
+          Yes, Edit Time
+        </button>
+      </div>
+      <form id="editGuessForm" onsubmit="submitEditGuess(event)" class="hidden space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">New 5K Guess (MM:SS)</label>
+          <input id="editGuessInput" type="text" inputmode="numeric" required placeholder="24:30" autocomplete="off"
+                 class="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-3 py-2 text-sm font-mono text-white outline-none">
+        </div>
+        <div class="flex items-center justify-end gap-2">
+          <button type="button" onclick="closeEditGuessModal()" class="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+            Cancel
+          </button>
+          <button type="submit" class="px-4 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white">
+            Save New Guess
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    let predictState = {{ predict_state | tojson | safe }};
+    let clockOffsetSec = predictState.server_now ? (predictState.server_now - Date.now() / 1000) : 0;
+    function raceNowSec() { return Date.now() / 1000 + clockOffsetSec; }
+
+    function esc(v) {
+      const d = document.createElement("div");
+      d.textContent = v == null ? "" : String(v);
+      return d.innerHTML;
+    }
+
+    // ---- Audio: Neutral Finish Chime + Web Speech API ----
+    let voiceEnabled = true;
+    let selectedVoiceURI = localStorage.getItem("predict_voice_uri") || "";
+    let speechVoices = [];
+    let activeUtterance = null;
+    let audioCtx = null;
+
+    function playNeutralChime() {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        if (!audioCtx) audioCtx = new Ctx();
+        if (audioCtx.state === "suspended") audioCtx.resume();
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(660, now);
+        osc.frequency.exponentialRampToValueAtTime(880, now + 0.09);
+        gain.gain.setValueAtTime(0.14, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.24);
+      } catch (e) {}
+    }
+
+    function populateVoices() {
+      if (!("speechSynthesis" in window)) return;
+      const sel = document.getElementById("voiceSelect");
+      if (!sel) return;
+      speechVoices = (window.speechSynthesis.getVoices() || []).filter(v => (v.lang || "").toLowerCase().startsWith("en"));
+      sel.innerHTML = `<option value="">System Default</option>`;
+      speechVoices.forEach(v => {
+        const opt = document.createElement("option");
+        opt.value = v.voiceURI;
+        opt.textContent = `${v.name} (${v.lang})`;
+        if (v.voiceURI === selectedVoiceURI) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
+    if ("speechSynthesis" in window) {
+      populateVoices();
+      window.speechSynthesis.onvoiceschanged = populateVoices;
+    }
+
+    function speakLine(text, onDone) {
+      if (!voiceEnabled || !("speechSynthesis" in window) || !text) {
+        if (onDone) onDone();
+        return;
+      }
+      const utter = new SpeechSynthesisUtterance(text);
+      activeUtterance = utter;
+      utter.rate = 1.04;
+      if (selectedVoiceURI) {
+        const v = speechVoices.find(x => x.voiceURI === selectedVoiceURI);
+        if (v) utter.voice = v;
+      }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        activeUtterance = null;
+        if (onDone) onDone();
+      };
+      const timer = setTimeout(finish, 12000);
+      utter.onend = finish;
+      utter.onerror = finish;
+      try {
+        if (window.speechSynthesis.paused) window.speechSynthesis.resume();
+        window.speechSynthesis.speak(utter);
+      } catch (e) { finish(); }
+    }
+
+    function toggleVoice() {
+      voiceEnabled = !voiceEnabled;
+      const btn = document.getElementById("voiceToggleBtn");
+      const lbl = document.getElementById("voiceToggleLabel");
+      lbl.textContent = voiceEnabled ? "Voice On" : "Voice Off";
+      btn.className = voiceEnabled
+        ? "px-3 py-1.5 rounded-xl text-xs font-bold border border-emerald-500/50 bg-emerald-500/20 text-emerald-300 flex items-center gap-1.5"
+        : "px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 text-slate-300 flex items-center gap-1.5";
+      if (!voiceEnabled && "speechSynthesis" in window) window.speechSynthesis.cancel();
+    }
+
+    function selectVoice(uri) {
+      selectedVoiceURI = uri || "";
+      localStorage.setItem("predict_voice_uri", selectedVoiceURI);
+    }
+
+    // ---- Countdown & Reveal Timers ----
+    let lastCountdownSpoken = null;
+    let lastRevealedId = null;
+    let autoRevealTimer = null;
+
+    setInterval(() => {
+      const sess = predictState.session;
+      if (!sess || sess.status !== "countdown" || !sess.gun_time) return;
+      const rem = Math.ceil(sess.gun_time - raceNowSec());
+      const numEl = document.getElementById("countdownNumber");
+      if (rem > 0) {
+        if (numEl) numEl.textContent = String(rem);
+        if (rem !== lastCountdownSpoken) {
+          lastCountdownSpoken = rem;
+          if (rem === sess.countdown_seconds && rem > 10) speakLine(`Starting in ${rem} seconds.`);
+          else if (rem === 10 || rem <= 5) speakLine(String(rem));
+        }
+      } else {
+        if (numEl) numEl.textContent = "GO!";
+        if (lastCountdownSpoken !== 0) {
+          lastCountdownSpoken = 0;
+          speakLine("Go!");
+          // Sync promoted 'running' state from server
+          fetch("/api/predict/state").then(r => r.json()).then(applyPredictState).catch(() => {});
+        }
+      }
+    }, 200);
+
+    function scheduleAutoReveal() {
+      clearTimeout(autoRevealTimer);
+      const chk = document.getElementById("autoRevealCheck");
+      const sess = predictState.session;
+      if (!chk || !chk.checked || !sess || sess.status !== "revealing") return;
+      const secs = Math.max(2, Math.min(20, parseInt(document.getElementById("autoRevealSec").value, 10) || 5));
+      autoRevealTimer = setTimeout(() => {
+        if (document.getElementById("autoRevealCheck").checked && predictState.session.status === "revealing") {
+          revealNext();
+        }
+      }, secs * 1000);
+    }
+
+    function onAutoRevealToggle() {
+      if (document.getElementById("autoRevealCheck").checked) scheduleAutoReveal();
+      else clearTimeout(autoRevealTimer);
+    }
+
+    function applyPredictState(state) {
+      if (!state || !state.session) return;
+      if (typeof state.server_now === "number") clockOffsetSec = state.server_now - Date.now() / 1000;
+      const prevStatus = predictState.session ? predictState.session.status : null;
+      predictState = state;
+      const sess = state.session;
+      const status = sess.status;
+
+      document.getElementById("sessionNameLabel").textContent = sess.name;
+      const cdSel = document.getElementById("countdownSelect");
+      const mfSel = document.getElementById("minFinishSelect");
+      if (cdSel && document.activeElement !== cdSel) cdSel.value = String(sess.countdown_seconds);
+      if (mfSel && document.activeElement !== mfSel) mfSel.value = String(sess.min_finish_seconds);
+
+      const statusMeta = {
+        setup:     { text: "SETUP — REGISTER RUNNERS & PREDICTIONS", dot: "bg-slate-400" },
+        countdown: { text: "COUNTDOWN — GET READY!", dot: "bg-amber-400 animate-pulse" },
+        running:   { text: "RUNNING — FINISH TIMES HIDDEN", dot: "bg-emerald-400 animate-pulse" },
+        revealing: { text: "REVEAL SEQUENCE", dot: "bg-amber-400 animate-pulse" },
+        ended:     { text: "FINAL RESULTS", dot: "bg-emerald-400" },
+      }[status] || { text: status.toUpperCase(), dot: "bg-slate-400" };
+
+      document.getElementById("statusText").textContent = statusMeta.text;
+      document.getElementById("statusDot").className = `w-3.5 h-3.5 rounded-full ${statusMeta.dot}`;
+
+      document.getElementById("countdownBanner").classList.toggle("hidden", status !== "countdown");
+      document.getElementById("runningBanner").classList.toggle("hidden", status !== "running");
+      document.getElementById("revealSection").classList.toggle("hidden", status !== "revealing" && status !== "ended");
+      document.getElementById("btnStartRace").classList.toggle("hidden", status !== "setup");
+      document.getElementById("btnStartReveal").classList.toggle("hidden", status !== "running" || sess.total_finishers === 0);
+
+      document.getElementById("finishedCounter").textContent = `${sess.total_finishers} / ${sess.total_entries}`;
+      document.getElementById("entryCount").textContent = String(sess.total_entries);
+
+      if (prevStatus !== "countdown" && status === "countdown") lastCountdownSpoken = null;
+
+      renderRoster(state.entries || [], status);
+      renderResultsBoard(state.revealed_board || [], state.latest_revealed, sess);
+    }
+
+    function renderRoster(entries, status) {
+      const tbody = document.getElementById("rosterBody");
+      if (entries.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" class="py-5 text-center text-slate-500 text-xs">No runners registered yet. Enter a name and 5K prediction above!</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = entries.map(e => {
+        const atPill = e.apriltag_id != null
+          ? `<span class="font-mono text-[11px] bg-sky-950/70 border border-sky-500/40 text-sky-300 px-1.5 py-0.5 rounded">AT #${String(e.apriltag_id).padStart(2, "0")}</span>`
+          : "";
+        const rfidPill = e.epc
+          ? `<span class="font-mono text-[11px] bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 px-1.5 py-0.5 rounded">${esc(e.epc.slice(-6))}</span>`
+          : "";
+        const statusBadge = e.finished
+          ? `<span class="text-xs font-bold text-emerald-300 bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 rounded-full">Finished ✓</span>`
+          : (status === "running"
+              ? `<span class="text-xs text-slate-400">On course...</span>`
+              : `<span class="text-xs text-slate-500">Ready</span>`);
+        const finishBtn = (status === "running" && !e.finished)
+          ? `<button type="button" onclick="manualFinish(${e.id})" class="px-2 py-1 rounded bg-emerald-700/40 hover:bg-emerald-600 text-emerald-200 text-xs font-bold mr-1">Finish Now</button>`
+          : "";
+        const editBtn = (status === "setup")
+          ? `<button type="button" onclick="promptEditGuess(${e.id}, ${JSON.stringify(e.name)})" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 text-xs font-bold mr-1" title="Edit prediction">Edit</button>`
+          : "";
+        const delBtn = (status === "setup")
+          ? `<button type="button" onclick="deleteEntry(${e.id})" class="px-2 py-1 rounded bg-rose-950/40 hover:bg-rose-800 text-rose-300 text-xs"><i class="fa-solid fa-trash"></i></button>`
+          : "";
+        return `
+          <tr>
+            <td class="py-2.5 px-3 font-bold text-white">${esc(e.name)}</td>
+            <td class="py-2.5 px-3 space-x-1">${atPill}${rfidPill || (!atPill ? '<span class="text-xs text-slate-500">manual</span>' : '')}</td>
+            <td class="py-2.5 px-3 text-right font-mono text-slate-500 text-xs"><i class="fa-solid fa-lock mr-1"></i>Locked</td>
+            <td class="py-2.5 px-3 text-center">${statusBadge}</td>
+            <td class="py-2.5 px-3 text-right">${finishBtn}${editBtn}${delBtn}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function formatSignedDelta(sec) {
+      if (sec === 0) return "0s (EXACT!)";
+      return `${sec > 0 ? "+" : "-"}${Math.abs(sec)}s`;
+    }
+
+    function renderResultsBoard(board, latest, sess) {
+      const tbody = document.getElementById("resultsBoardBody");
+      const nextBtn = document.getElementById("btnRevealNext");
+      const progress = document.getElementById("revealProgressText");
+      const spotlight = document.getElementById("revealSpotlight");
+
+      if (nextBtn) nextBtn.disabled = sess.status !== "revealing";
+      if (progress) progress.textContent = `${sess.revealed_count} of ${sess.total_finishers} finishers revealed`;
+
+      if (latest && latest.id !== lastRevealedId) {
+        lastRevealedId = latest.id;
+        spotlight.classList.remove("hidden");
+        document.getElementById("spotlightRank").textContent =
+          latest.is_winner ? (latest.is_tie ? "🏆 CO-WINNER (TIE)" : "🏆 WINNER!") : `RANK #${latest.rank}`;
+        document.getElementById("spotlightName").textContent = latest.name;
+        document.getElementById("spotlightDetails").textContent =
+          `Predicted ${latest.predicted_formatted}  •  Actual ${latest.actual_formatted}  •  ${formatSignedDelta(latest.signed_delta_seconds)}`;
+        speakLine(latest.speech, scheduleAutoReveal);
+      } else if (!latest) {
+        lastRevealedId = null;
+        spotlight.classList.add("hidden");
+      }
+
+      if (board.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-500 text-xs">Waiting to reveal first result...</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = board.map((r, idx) => {
+        const isTopNew = latest && r.id === latest.id;
+        const winBadge = r.is_winner
+          ? `<span class="ml-1.5 text-[10px] font-black bg-amber-500 text-slate-950 px-1.5 py-0.5 rounded">${r.is_tie ? "TIE 1ST" : "WINNER"}</span>`
+          : (r.is_tie ? `<span class="ml-1 text-[10px] font-mono text-slate-400">(tie)</span>` : "");
+        const deltaColor = r.abs_delta_seconds === 0
+          ? "text-emerald-300 font-black"
+          : (r.is_winner ? "text-amber-300 font-black" : "text-slate-200 font-bold");
+        return `
+          <tr class="${isTopNew ? "bg-emerald-950/35 reveal-enter" : ""}">
+            <td class="py-3 px-4 font-mono font-black ${r.is_winner ? "text-amber-300" : "text-slate-400"}">#${r.rank}</td>
+            <td class="py-3 px-4 font-bold text-white">${esc(r.name)}${winBadge}</td>
+            <td class="py-3 px-4 text-right font-mono text-slate-300">${esc(r.predicted_formatted)}</td>
+            <td class="py-3 px-4 text-right font-mono text-white">${esc(r.actual_formatted)}</td>
+            <td class="py-3 px-4 text-right font-mono ${deltaColor}">${formatSignedDelta(r.signed_delta_seconds)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    // ---- API Actions ----
+    async function postJson(url, body) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Request failed");
+      if (data.state) applyPredictState(data.state);
+      return data;
+    }
+
+    async function addEntry(e) {
+      e.preventDefault();
+      const name = document.getElementById("entryName").value.trim();
+      const predicted_time = document.getElementById("entryGuess").value.trim();
+      const atRaw = document.getElementById("entryApriltag").value.trim();
+      const epc = document.getElementById("entryEpc").value.trim();
+      try {
+        await postJson("/api/predict/entries", {
+          name,
+          predicted_time,
+          apriltag_id: atRaw === "" ? null : parseInt(atRaw, 10),
+          epc: epc || null,
+        });
+        document.getElementById("entryName").value = "";
+        document.getElementById("entryGuess").value = "";
+        document.getElementById("entryApriltag").value = "";
+        document.getElementById("entryEpc").value = "";
+        document.getElementById("entryName").focus();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function deleteEntry(id) {
+      const res = await fetch(`/api/predict/entries/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.state) applyPredictState(data.state);
+      }
+    }
+
+    async function updateSessionSettings() {
+      try {
+        await postJson("/api/predict/settings", {
+          countdown_seconds: parseInt(document.getElementById("countdownSelect").value, 10),
+          min_finish_seconds: parseInt(document.getElementById("minFinishSelect").value, 10),
+        });
+      } catch (err) { alert(err.message); }
+    }
+
+    async function startRace() {
+      try {
+        await postJson("/api/predict/start", {
+          countdown_seconds: parseInt(document.getElementById("countdownSelect").value, 10),
+        });
+      } catch (err) { alert(err.message); }
+    }
+
+    async function resetRace() {
+      clearTimeout(autoRevealTimer);
+      try { await postJson("/api/predict/reset"); } catch (err) { alert(err.message); }
+    }
+
+    async function newSession() {
+      const name = prompt("New Predict 5K session name:", "Club Predict 5K");
+      if (!name) return;
+      clearTimeout(autoRevealTimer);
+      try { await postJson("/api/predict/new", { name }); } catch (err) { alert(err.message); }
+    }
+
+    async function manualFinish(id) {
+      try {
+        await postJson(`/api/predict/entries/${id}/finish`);
+        playNeutralChime();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function startReveal() {
+      try {
+        await postJson("/api/predict/reveal/start");
+        // Immediately reveal the first (worst) result!
+        await revealNext();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function revealNext() {
+      clearTimeout(autoRevealTimer);
+      try { await postJson("/api/predict/reveal/next"); } catch (err) { alert(err.message); }
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.code === "Space" && predictState.session && predictState.session.status === "revealing") {
+        const tag = (document.activeElement && document.activeElement.tagName) || "";
+        if (tag !== "INPUT" && tag !== "SELECT" && tag !== "TEXTAREA") {
+          e.preventDefault();
+          revealNext();
+        }
+      }
+    });
+
+    // ---- Camera Controls ----
+    let camState = { running: false };
+    function applyCameraHealth(h) {
+      if (!h) return;
+      camState = h;
+      document.getElementById("camRunBtn").textContent = h.running ? "Stop Camera" : "Start Camera";
+      document.getElementById("camStatusBadge").textContent = h.running ? (h.connected ? `LIVE ${h.fps || 0}fps` : "CONNECTING") : "OFF";
+      const err = document.getElementById("camErrorMsg");
+      if (h.last_error) { err.textContent = h.last_error; err.classList.remove("hidden"); }
+      else err.classList.add("hidden");
+
+      const panelOpen = !document.getElementById("cameraPanel").classList.contains("hidden");
+      const img = document.getElementById("cameraStreamImg");
+      if (h.running && panelOpen) {
+        if (!img.getAttribute("src")) img.src = `/api/camera/video_feed?t=${Date.now()}`;
+        img.classList.remove("hidden");
+      } else {
+        img.removeAttribute("src");
+        img.classList.add("hidden");
+      }
+    }
+
+    async function refreshCameras() {
+      try {
+        const res = await fetch("/api/cameras");
+        if (!res.ok) return;
+        const data = await res.json();
+        const sel = document.getElementById("cameraSelect");
+        sel.innerHTML = "";
+        (data.cameras || []).forEach(c => {
+          const opt = document.createElement("option");
+          opt.value = String(c.index);
+          opt.textContent = c.name || `Camera ${c.index}`;
+          if (data.health && data.health.camera_index === c.index) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        if (!data.cameras || data.cameras.length === 0) sel.innerHTML = `<option value="0">Camera 0</option>`;
+        if (data.health) applyCameraHealth(data.health);
+      } catch (e) {}
+    }
+
+    function toggleCameraPanel() {
+      const panel = document.getElementById("cameraPanel");
+      const grid = document.getElementById("predictGrid");
+      const opening = panel.classList.contains("hidden");
+      panel.classList.toggle("hidden", !opening);
+      grid.classList.toggle("has-camera", opening);
+      if (opening) refreshCameras();
+      else {
+        const img = document.getElementById("cameraStreamImg");
+        img.removeAttribute("src");
+        img.classList.add("hidden");
+      }
+    }
+
+    async function postCam(payload) {
+      const res = await fetch("/api/camera/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.health) applyCameraHealth(data.health);
+    }
+
+    function toggleCameraRunning() {
+      const idx = parseInt(document.getElementById("cameraSelect").value, 10) || 0;
+      postCam({ enabled: !camState.running, camera_index: idx });
+    }
+    function onCameraChange(v) { postCam({ camera_index: parseInt(v, 10) || 0 }); }
+    function pushCamOpts() {
+      postCam({
+        debug_overlay: document.getElementById("camOverlayCheck").checked,
+        mirror: document.getElementById("camMirrorCheck").checked,
+        finish_line_x: parseInt(document.getElementById("camFinishLineSlider").value, 10) / 100.0,
+      });
+    }
+
+    // ---- Edit Prediction Confirmation (on tag scan or Edit click before start) ----
+    let editingEntryId = null;
+    const tagEditCooldown = new Map();
+
+    function promptEditGuess(entryId, name) {
+      if (!predictState.session || predictState.session.status !== "setup") return;
+      editingEntryId = entryId;
+      document.getElementById("editGuessPromptText").innerHTML =
+        `Tag matched <strong class="text-white">${esc(name)}</strong>. Do you want to update your 5K prediction?`;
+      document.getElementById("editGuessConfirmStep").classList.remove("hidden");
+      document.getElementById("editGuessForm").classList.add("hidden");
+      document.getElementById("editGuessInput").value = "";
+      document.getElementById("editGuessModal").classList.remove("hidden");
+    }
+
+    function revealEditGuessForm() {
+      document.getElementById("editGuessConfirmStep").classList.add("hidden");
+      document.getElementById("editGuessForm").classList.remove("hidden");
+      document.getElementById("editGuessInput").focus();
+    }
+
+    function closeEditGuessModal() {
+      editingEntryId = null;
+      document.getElementById("editGuessModal").classList.add("hidden");
+    }
+
+    async function submitEditGuess(e) {
+      e.preventDefault();
+      if (editingEntryId == null) return;
+      const predicted_time = document.getElementById("editGuessInput").value.trim();
+      try {
+        const res = await fetch(`/api/predict/entries/${editingEntryId}/prediction`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ predicted_time }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || "Could not update prediction");
+        if (data.state) applyPredictState(data.state);
+        closeEditGuessModal();
+      } catch (err) { alert(err.message); }
+    }
+
+    // ---- WebSocket Live Sync ----
+    function connectWS() {
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${proto}//${window.location.host}/ws/live?channel=admin`);
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "predict_state" && msg.state) {
+          applyPredictState(msg.state);
+        } else if (msg.type === "predict_finished") {
+          playNeutralChime();
+          if (msg.state) applyPredictState(msg.state);
+        } else if (msg.type === "camera_status" && msg.camera) {
+          applyCameraHealth(msg.camera);
+        } else if (msg.type === "tag_detected" && msg.data && predictState.session.status === "setup") {
+          const hint = document.getElementById("lastScannedHint");
+          const atid = msg.data.apriltag_id;
+          const epc = (msg.data.epc || "").toUpperCase();
+          const matched = (predictState.entries || []).find(ent =>
+            (atid != null && ent.apriltag_id === atid) || (epc && ent.epc === epc)
+          );
+          if (matched) {
+            const key = `entry:${matched.id}`;
+            const now = Date.now();
+            if (editingEntryId == null && (!tagEditCooldown.has(key) || (now - tagEditCooldown.get(key)) > 10000)) {
+              tagEditCooldown.set(key, now);
+              hint.textContent = `Tag matched ${matched.name}`;
+              promptEditGuess(matched.id, matched.name);
+            }
+            return;
+          }
+          if (atid != null) {
+            hint.textContent = `Scanned AprilTag #${atid}`;
+            if (document.activeElement !== document.getElementById("entryApriltag") && !document.getElementById("entryApriltag").value) {
+              document.getElementById("entryApriltag").value = String(atid);
+            }
+          } else if (epc) {
+            hint.textContent = `Scanned RFID ${epc.slice(-6)}`;
+            if (document.activeElement !== document.getElementById("entryEpc") && !document.getElementById("entryEpc").value) {
+              document.getElementById("entryEpc").value = epc;
+            }
+          }
+        }
+      };
+      ws.onclose = () => setTimeout(connectWS, 2000);
+    }
+
+    applyPredictState(predictState);
+    refreshCameras();
+    connectWS();
+  </script>
+</body>
+</html>
